@@ -20,6 +20,10 @@ let state = null;
 let logCursor = 0;
 let logTimer = null;
 let deviceTimer = null;
+let workspaceGeneration = 0;
+let stateRequest = 0;
+let exportBusy = false;
+let exportStarting = false;
 
 // --- Sign in ---------------------------------------------------------------
 
@@ -39,11 +43,17 @@ function renderBuild(build) {
 }
 
 async function refreshState() {
+  const generation = workspaceGeneration;
+  const request = ++stateRequest;
   const { body } = await api('/api/state');
-  if (!body) return;
+  if (!body || generation !== workspaceGeneration || request !== stateRequest) return;
+  const identity = (s) => JSON.stringify(s?.auth || {}, ['connected', 'tenantId', 'account', 'client', 'method']);
+  if (state && identity(state) !== identity(body)) clearWorkspace();
   state = body;
+  if (body.export) exportBusy = exportStarting || !!body.export.running;
   renderBuild(body.build);
   renderAuth();
+  syncJobAdmission();
 }
 
 function renderClients() {
@@ -114,6 +124,7 @@ function renderAuth() {
 }
 
 $('btnBrowser').addEventListener('click', async () => {
+  clearAssessment();
   showSigninError(null);
   const btn = $('btnBrowser');
   btn.disabled = true;
@@ -146,13 +157,16 @@ $('btnBrowser').addEventListener('click', async () => {
 });
 
 $('btnForget').addEventListener('click', async () => {
+  clearAssessment();
   await post('/api/signin/browser/forget');
+  await refreshState();
   $('bsText').textContent = 'Saved browser session cleared.';
   $('browserStatus').classList.remove('hidden');
   setTimeout(() => $('browserStatus').classList.add('hidden'), 2500);
 });
 
 $('btnInteractive').addEventListener('click', async () => {
+  clearAssessment();
   showSigninError(null);
   const { body } = await post('/api/signin/interactive', {
     tenant: $('tenant').value.trim() || 'organizations',
@@ -163,6 +177,7 @@ $('btnInteractive').addEventListener('click', async () => {
 });
 
 $('btnDeviceCode').addEventListener('click', async () => {
+  clearAssessment();
   showSigninError(null);
   const { body } = await post('/api/signin/devicecode', {
     tenant: $('tenant').value.trim() || 'organizations',
@@ -192,6 +207,7 @@ $('btnDeviceCode').addEventListener('click', async () => {
 });
 
 $('btnAzureCli').addEventListener('click', async () => {
+  clearAssessment();
   showSigninError(null);
   const { body } = await post('/api/signin/azurecli');
   if (body && body.error) { showSigninError(body.error); return; }
@@ -199,6 +215,7 @@ $('btnAzureCli').addEventListener('click', async () => {
 });
 
 $('btnMgGraph').addEventListener('click', async () => {
+  clearAssessment();
   showSigninError(null);
   $('btnMgGraph').disabled = true;
   $('btnMgGraph').textContent = 'Check the sign-in window…';
@@ -211,6 +228,10 @@ $('btnMgGraph').addEventListener('click', async () => {
 
 function clearWorkspace() {
   // Everything below belongs to the previous sign-in and must not survive it.
+  workspaceGeneration++;
+  exportBusy = false;
+  exportStarting = false;
+  clearAssessment();
   clearInterval(logTimer);
   logCursor = 0;
   $('log').textContent = '';
@@ -233,8 +254,11 @@ function clearWorkspace() {
 }
 
 $('btnSignout').addEventListener('click', async () => {
+  if (state) state.auth = { connected: false };
+  clearWorkspace();
+  if (state) renderAuth();
   const { body } = await post('/api/signout');
-  if (body && body.error) { alert(body.error); return; }
+  if (body && body.error) { await refreshState(); alert(body.error); return; }
   clearWorkspace();
   if (body && body.outputPath) $('outputPath').value = body.outputPath;
   if (body && body.tenant) $('tenant').value = body.tenant;
@@ -244,9 +268,11 @@ $('btnSignout').addEventListener('click', async () => {
 // --- Configure -------------------------------------------------------------
 
 async function checkFolder() {
+  const generation = workspaceGeneration;
   const path = $('outputPath').value.trim();
   if (!path || !state || !state.auth || !state.auth.connected) return;
   const { body } = await api('/api/checkfolder?path=' + encodeURIComponent(path));
+  if (generation !== workspaceGeneration || path !== $('outputPath').value.trim()) return;
   const el = $('folderWarn');
   if (body && body.conflict) {
     el.innerHTML = body.conflict +
@@ -254,6 +280,7 @@ async function checkFolder() {
     el.classList.remove('hidden');
     const b = $('btnUseSuggestion');
     if (b) b.addEventListener('click', () => {
+      if (generation !== workspaceGeneration || path !== $('outputPath').value.trim()) return;
       $('outputPath').value = body.suggestion;
       el.classList.add('hidden');
     });
@@ -263,6 +290,7 @@ async function checkFolder() {
 }
 
 $('outputPath').addEventListener('change', checkFolder);
+$('tenant').addEventListener('change', clearAssessment);
 $('gitRemoteUrl').addEventListener('change', () => {
   if ($('gitRemoteUrl').value.trim()) {
     $('optPush').checked = true;
@@ -280,6 +308,7 @@ $('btnAll').addEventListener('click', () => sectionBoxes().forEach((b) => { b.ch
 $('btnNone').addEventListener('click', () => sectionBoxes().forEach((b) => { b.checked = false; }));
 
 $('btnExport').addEventListener('click', async () => {
+  if (assessmentBusy || exportBusy) { alert('An export or assessment is already running.'); return; }
   const sections = sectionBoxes().filter((b) => b.checked).map((b) => b.value);
   if (!sections.length) { alert('Select at least one area to document.'); return; }
 
@@ -296,8 +325,27 @@ $('btnExport').addEventListener('click', async () => {
     gitBranch: $('gitBranch').value.trim()
   };
 
-  const { body } = await post('/api/export', payload);
-  if (body && body.error) { alert(body.error); return; }
+  const generation = workspaceGeneration;
+  exportBusy = true;
+  exportStarting = true;
+  syncJobAdmission();
+  let response;
+  try { response = await post('/api/export', payload); }
+  catch (e) {
+    if (generation === workspaceGeneration) {
+      exportStarting = false; exportBusy = false; syncJobAdmission(); alert(e.message);
+    }
+    return;
+  }
+  if (generation !== workspaceGeneration) return;
+  exportStarting = false;
+  const { body } = response;
+  if (!response.ok || (body && body.error)) {
+    exportBusy = false;
+    syncJobAdmission();
+    alert(body?.error || 'Export request failed.');
+    return;
+  }
 
   logCursor = 0;
   $('log').textContent = '';
@@ -317,8 +365,9 @@ function startLogPolling() {
 }
 
 async function pollLog() {
+  const generation = workspaceGeneration;
   const { body } = await api('/api/export/log?from=' + logCursor);
-  if (!body) return;
+  if (!body || generation !== workspaceGeneration) return;
 
   (body.entries || []).forEach((e) => {
     const span = document.createElement('span');
@@ -337,6 +386,8 @@ async function pollLog() {
 
   if (body.done) {
     clearInterval(logTimer);
+    exportBusy = false;
+    syncJobAdmission();
     $('cardConfigure').classList.remove('disabled');
     if (body.error) {
       $('phase').textContent = 'Failed';
@@ -384,7 +435,9 @@ function renderSummary(s) {
 }
 
 async function loadFiles() {
+  const generation = workspaceGeneration;
   const { body } = await api('/api/files');
+  if (generation !== workspaceGeneration) return;
   const host = $('fileList');
   host.innerHTML = '';
   if (!body || !body.files) return;
@@ -395,6 +448,7 @@ async function loadFiles() {
       Array.from(host.children).forEach((c) => c.classList.remove('active'));
       btn.classList.add('active');
       const r = await api('/api/file?path=' + encodeURIComponent(f.path));
+      if (generation !== workspaceGeneration) return;
       $('preview').textContent = r.body && r.body.content ? r.body.content : '(unable to read file)';
       $('preview').scrollTop = 0;
     });
@@ -405,14 +459,18 @@ async function loadFiles() {
 $('btnOpen').addEventListener('click', () => post('/api/open'));
 
 $('btnQuit').addEventListener('click', async () => {
-  if (state && state.export && state.export.running) {
-    alert('An export is still running. Wait for it to finish before stopping the server.');
+  if (exportBusy || assessmentBusy) {
+    alert('An export or assessment is still running. Wait for it to finish before stopping the server.');
     return;
   }
   if (!confirm('Stop the Intune Docs Studio server?')) return;
+  try {
+    const r = await post('/api/quit');
+    if (!r.ok || r.body?.error) { alert(r.body?.error || 'The server could not stop.'); return; }
+  } catch (e) { /* the server goes away mid-request */ }
   clearInterval(logTimer);
   clearInterval(deviceTimer);
-  try { await post('/api/quit'); } catch (e) { /* the server goes away mid-request */ }
+  clearAssessment();
   document.body.innerHTML =
     '<div style="font-family:Segoe UI,system-ui,sans-serif;padding:4rem;text-align:center;color:#9aa4b8">' +
     '<h2 style="color:#e7eaf0">Intune Docs Studio has stopped.</h2>' +
@@ -423,6 +481,391 @@ $('btnAgain').addEventListener('click', () => {
   $('cardRun').classList.add('hidden');
   $('cardConfigure').scrollIntoView({ behavior: 'smooth' });
 });
+
+// --- Assessment ------------------------------------------------------------
+
+const assessmentStatuses = {
+  aligned: 'Aligned', misaligned: 'Misaligned', missing: 'Missing',
+  potentialConflict: 'Potential conflict', notApplicable: 'Not applicable', notAssessed: 'Not assessed'
+};
+const assessmentLimits = 'Configuration alignment only, not device compliance or certification. ' +
+  'Missing means absent/not configured only in the mapped families and policy types read completely for that rule, not tenant-wide absence. ' +
+  'Potential conflict means differing configured values, not proven targeting overlap or an Intune conflict. ' +
+  'Unassigned policies do not establish device coverage; groups, exclusions and filters are not resolved. ' +
+  'Partial inventories cover listed checks only, not a full baseline or benchmark. ' +
+  'User-selected context is not discovered device inventory. Unknown applicability remains not assessed.';
+let assessmentResult = null;
+let assessmentPacks = [];
+let assessmentGeneration = 0;
+let assessmentImporting = false;
+let assessmentBusy = false;
+let assessmentTimer = null;
+let assessmentPolling = false;
+let assessmentCatalogRequest = 0;
+const assessmentPlatforms = {
+  windows11: 'Windows 11', macos: 'macOS', iosIpados: 'iOS/iPadOS', androidEnterprise: 'Android Enterprise'
+};
+const assessmentPackBoxes = () => Array.from(document.querySelectorAll('#assessmentPacks input'));
+const assessmentPlatformBoxes = () => Array.from(document.querySelectorAll('#assessmentPlatforms input'));
+const assessmentIdentity = (p) => `${p.id}@${p.version}#${p.sha256}`;
+const assessmentText = (value) => escapeHtml(typeof value === 'string' ? value : JSON.stringify(value));
+const assessmentPercent = (value) => value == null ? 'not available' : escapeHtml(value) + '%';
+
+function renderAssessmentPacks(catalog) {
+  const selected = new Set(assessmentPackBoxes().filter((b) => b.checked).map((b) => b.value));
+  const platforms = new Set(assessmentPlatformBoxes().filter((b) => b.checked).map((b) => b.value));
+  assessmentPacks = catalog.packs || [];
+  $('assessmentCatalogNote').textContent =
+    'Unavailable platform/profile combinations are disabled; CIS requires your own licensed JSON pack, not a PDF or Intune export. ' +
+    'The Microsoft catalog contains five bundled checks total, all partial inventories: ' +
+    'Windows 26H2 has two shell SmartScreen atomic checks, legacy Endpoint Protection only (Graph beta), not modern baseline/Settings Catalog coverage. ' +
+    'macOS has one FileVault enablement check, legacy Endpoint Protection on Graph beta; the template is deprecated, not current-template, recovery-key or encryption compliance coverage. ' +
+    'iOS/iPadOS has one personal level 1 passcode check, legacy device restrictions only, not organization-owned coverage. ' +
+    'Android has one personally-owned work profile level 2 encryption compliance requirement check, not organization-owned profiles or discovered device encryption. ' +
+    'Unknown OS/enrollment applicability is not assessed; no full-baseline or device-compliance claim.';
+  $('assessmentCatalogErrors').textContent = (catalog.errors || []).map((e) => `${e.origin}: ${e.reason}`).join('\n');
+  $('assessmentPlatforms').innerHTML = '';
+  Object.entries(assessmentPlatforms).forEach(([key, name]) => {
+    const available = assessmentPacks.some((p) => p.platform === key);
+    const label = document.createElement('label');
+    label.className = 'check';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.value = key;
+    box.disabled = !available;
+    box.checked = available && platforms.has(key);
+    box.addEventListener('change', updateAssessmentSelection);
+    const text = document.createElement('span');
+    text.textContent = name + (available ? '' : ' — unavailable, import a pack');
+    label.appendChild(box);
+    label.appendChild(text);
+    $('assessmentPlatforms').appendChild(label);
+  });
+  const profile = $('assessmentProfile');
+  const previous = profile.value;
+  const profiles = Array.from(new Set(assessmentPacks.map((p) => p.profile)));
+  profile.innerHTML = '';
+  ['', ...profiles].forEach((value) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value || 'All available profiles (select packs below)';
+    profile.appendChild(option);
+  });
+  profile.value = profiles.includes(previous) ? previous : '';
+  $('assessmentPacks').innerHTML = '';
+  assessmentPacks.forEach((p) => {
+    const label = document.createElement('label');
+    label.className = 'check assessment-pack';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.value = assessmentIdentity(p);
+    box.checked = selected.has(box.value);
+    box.addEventListener('change', updateAssessmentSelection);
+    const text = document.createElement('span');
+    const classification = p.framework === 'CIS' ? 'CIS — customer-imported local pack'
+      : p.framework === 'Microsoft' ? (p.classification === 'baseline'
+        ? 'Official Microsoft security baseline — partial mapped checks' : 'Microsoft recommendations')
+        : `${p.framework} — local rule pack`;
+    text.innerHTML = `<strong>${escapeHtml(p.id)} @ ${escapeHtml(p.version)}</strong>
+      <small>${escapeHtml(classification)} · ${escapeHtml(p.frameworkVersion)}</small>
+      <small>${escapeHtml(assessmentPlatforms[p.platform])} · ${escapeHtml(p.profile)}</small>
+      <small>${escapeHtml(p.coverage?.inventory)} inventory; source total: ${escapeHtml(p.coverage?.totalSourceControls ?? 'unknown')}.
+        Source revision: ${escapeHtml(p.sourceRevision)}</small>
+      <small>Sources: ${assessmentText(p.sources || [])}</small>
+      <small>SHA-256: ${escapeHtml(p.sha256)}</small>`;
+    label.appendChild(box);
+    label.appendChild(text);
+    $('assessmentPacks').appendChild(label);
+  });
+  updateAssessmentSelection();
+}
+
+function updateAssessmentSelection() {
+  const platforms = assessmentPlatformBoxes().filter((b) => b.checked).map((b) => b.value);
+  const profile = $('assessmentProfile').value;
+  assessmentPackBoxes().forEach((b, i) => {
+    const pack = assessmentPacks[i];
+    b.disabled = !platforms.includes(pack.platform) || (!!profile && profile !== pack.profile);
+    if (b.disabled) b.checked = false;
+  });
+  syncJobAdmission();
+}
+
+$('assessmentProfile').addEventListener('change', updateAssessmentSelection);
+
+function showAssessmentError(message) {
+  $('assessmentError').textContent = message || '';
+  if (message) $('assessmentError').classList.remove('hidden');
+  else $('assessmentError').classList.add('hidden');
+}
+
+function syncJobAdmission() {
+  const busy = exportBusy || assessmentBusy;
+  $('btnExport').disabled = busy || !!(state?.auth && !state.auth.connected);
+  $('btnAssessmentRun').disabled = busy || assessmentImporting || !state?.auth?.connected;
+  $('btnAssessmentImport').disabled = busy || assessmentImporting;
+}
+
+function clearAssessmentEvidence() {
+  assessmentResult = null;
+  ['assessmentResults', 'assessmentSummary', 'assessmentPolicies'].forEach((id) => { $(id).innerHTML = ''; });
+  ['assessmentReportPaths', 'assessmentContextResult', 'assessmentPackResult', 'assessmentIssues',
+    'assessmentProgress'].forEach((id) => { $(id).textContent = ''; });
+  $('assessmentBar').style.width = '0%';
+}
+
+function clearAssessment() {
+  assessmentGeneration++;
+  assessmentCatalogRequest++;
+  clearInterval(assessmentTimer);
+  assessmentTimer = null;
+  assessmentBusy = false;
+  assessmentPolling = false;
+  assessmentImporting = false;
+  clearAssessmentEvidence();
+  $('assessmentOutputPath').value = '';
+  $('assessmentImportFile').value = '';
+  $('assessmentStatusFilter').value = '';
+  Object.keys(assessmentPlatforms).forEach((p) => { $(assessmentOsId(p)).value = ''; });
+  $('assessmentEnrollment').value = '';
+  showAssessmentError(null);
+  syncJobAdmission();
+}
+
+const assessmentOsId = (platform) => 'assessmentOs' + platform[0].toUpperCase() + platform.slice(1);
+
+function assessmentSessionFailure(r) {
+  if (r.status !== 401) return false;
+  clearWorkspace();
+  if (state) state.auth = { connected: false };
+  if (state) renderAuth();
+  syncJobAdmission();
+  showAssessmentError('401: Session expired. Sign in again before assessing policies.');
+  return true;
+}
+
+async function loadAssessmentCatalog() {
+  const generation = assessmentGeneration;
+  const request = ++assessmentCatalogRequest;
+  try {
+    const r = await api('/api/assessment/packs');
+    if (generation !== assessmentGeneration || request !== assessmentCatalogRequest) return;
+    if (!r.ok) throw new Error(`${r.status}: ${r.body?.error || 'Catalog unavailable.'}`);
+    if (Array.isArray(r.body?.packs)) renderAssessmentPacks(r.body);
+  } catch (e) {
+    if (generation === assessmentGeneration && request === assessmentCatalogRequest) showAssessmentError(e.message);
+  }
+}
+
+function startAssessmentPolling() {
+  if (!assessmentTimer) assessmentTimer = setInterval(refreshAssessment, 1000);
+}
+
+async function refreshAssessment() {
+  if (assessmentPolling || !state?.auth?.connected) return;
+  const generation = assessmentGeneration;
+  assessmentPolling = true;
+  try {
+    await refreshState();
+    if (generation !== assessmentGeneration || !state?.auth?.connected) return;
+    const r = await api('/api/assessment');
+    if (generation !== assessmentGeneration) return;
+    if (assessmentSessionFailure(r)) return;
+    if (r.status === 404) {
+      clearAssessment();
+      showAssessmentError('Assessment session reset. Select context and destination again.');
+      return;
+    }
+    if (!r.ok || !r.body) throw new Error(`${r.status}: ${r.body?.error || 'Progress unavailable.'}`);
+    const progress = r.body;
+    if (progress.running && (assessmentResult || $('assessmentReportPaths').textContent)) clearAssessmentEvidence();
+    assessmentBusy = !!progress.running;
+    const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
+    $('assessmentBar').style.width = percent + '%';
+    $('assessmentProgress').textContent = `${percent}% · ${progress.phase || 'Ready'}` +
+      (progress.partial ? ' · Partial evidence — review collection limitations' : '');
+    if (progress.running) startAssessmentPolling();
+    else { clearInterval(assessmentTimer); assessmentTimer = null; }
+    if (progress.error) {
+      clearAssessmentEvidence();
+      throw new Error(progress.error);
+    }
+    if (progress.done) {
+      clearAssessmentEvidence();
+      const results = await api('/api/assessment/results');
+      if (generation !== assessmentGeneration) return;
+      if (assessmentSessionFailure(results)) return;
+      if (results.status === 404) {
+        clearAssessment();
+        showAssessmentError('Assessment results reset. Run a new assessment.');
+        return;
+      }
+      if (!results.ok || !results.body) throw new Error(`${results.status}: ${results.body?.error || 'Results unavailable.'}`);
+      renderAssessmentResult(results.body);
+      $('assessmentBar').style.width = percent + '%';
+      $('assessmentProgress').textContent = `${percent}% · ${progress.phase || 'Complete'}` +
+        (progress.partial ? ' · Partial evidence — review collection limitations' : '');
+      const paths = progress.reportPaths;
+      $('assessmentReportPaths').textContent = paths?.markdownPath && paths?.jsonPath
+        ? `Markdown: ${paths.markdownPath}\nJSON: ${paths.jsonPath}` : '';
+    } else if (!progress.running && (assessmentResult || $('assessmentReportPaths').textContent)) {
+      clearAssessment();
+    }
+    showAssessmentError(null);
+  } catch (e) {
+    if (generation === assessmentGeneration) showAssessmentError(e.message);
+  } finally {
+    if (generation === assessmentGeneration) { assessmentPolling = false; syncJobAdmission(); }
+  }
+}
+
+$('btnAssessmentRun').addEventListener('click', async () => {
+  if (assessmentImporting) { showAssessmentError('Wait for the pack import to finish.'); return; }
+  if (assessmentBusy || exportBusy) { showAssessmentError('An export or assessment is already running.'); return; }
+  if (!state?.auth?.connected) { showAssessmentError('Sign in before assessing policies.'); return; }
+  const platforms = assessmentPlatformBoxes().filter((b) => b.checked && !b.disabled).map((b) => b.value);
+  const identities = new Set(assessmentPackBoxes().filter((b) => b.checked && !b.disabled).map((b) => b.value));
+  const selectedPacks = assessmentPacks.filter((p) => identities.has(assessmentIdentity(p)));
+  if (!platforms.length || platforms.some((p) => !selectedPacks.some((pack) => pack.platform === p))) {
+    showAssessmentError('Every selected platform requires a selected applicable pack; choose at least one platform.');
+    return;
+  }
+  if (!selectedPacks.length || selectedPacks.length > 64 || !$('assessmentOutputPath').value.trim()) {
+    showAssessmentError('Select 1–64 packs and an absolute assessment report destination.');
+    return;
+  }
+  const context = { platforms, osVersions: {}, enrollmentModes: {} };
+  platforms.forEach((p) => {
+    const version = $(assessmentOsId(p)).value.trim();
+    if (version) context.osVersions[p] = version;
+  });
+  if (platforms.includes('androidEnterprise') && $('assessmentEnrollment').value) {
+    context.enrollmentModes.androidEnterprise = $('assessmentEnrollment').value;
+  }
+  const generation = ++assessmentGeneration;
+  clearInterval(assessmentTimer);
+  assessmentTimer = null;
+  assessmentPolling = false;
+  assessmentBusy = true;
+  syncJobAdmission();
+  showAssessmentError(null);
+  try {
+    const r = await post('/api/assessment', {
+      packIds: selectedPacks.map(assessmentIdentity), context, outputPath: $('assessmentOutputPath').value.trim()
+    });
+    if (generation !== assessmentGeneration) return;
+    if (assessmentSessionFailure(r)) return;
+    if (r.status !== 202 || !r.body?.started) throw new Error(`${r.status}: ${r.body?.error || 'Assessment did not start.'}`);
+    clearAssessmentEvidence();
+    $('assessmentProgress').textContent = 'Assessment admitted. Collecting policy evidence…';
+    startAssessmentPolling();
+    await refreshAssessment();
+  } catch (e) {
+    if (generation === assessmentGeneration) {
+      assessmentBusy = false;
+      showAssessmentError(e.message);
+    }
+  } finally {
+    if (generation === assessmentGeneration) syncJobAdmission();
+  }
+});
+
+$('btnAssessmentRefresh').addEventListener('click', async () => {
+  await loadAssessmentCatalog();
+  await refreshAssessment();
+});
+
+$('btnAssessmentImport').addEventListener('click', async () => {
+  if (assessmentImporting || assessmentBusy || exportBusy) return;
+  const generation = assessmentGeneration;
+  assessmentCatalogRequest++;
+  assessmentImporting = true;
+  syncJobAdmission();
+  showAssessmentError(null);
+  try {
+    const file = $('assessmentImportFile').files[0];
+    if (!file || !/\.json$/i.test(file.name) || !file.size || file.size > 10 * 1024 * 1024) {
+      throw new Error('Choose a nonempty JSON rule pack, at most 10 MiB.');
+    }
+    const content = await file.text();
+    if (generation !== assessmentGeneration) return;
+    if (new TextEncoder().encode(content).length > 10 * 1024 * 1024) {
+      throw new Error('Decoded UTF-8 pack exceeds 10 MiB.');
+    }
+    const r = await post('/api/assessment/packs', { content });
+    if (generation !== assessmentGeneration) return;
+    if (assessmentSessionFailure(r)) return;
+    if (!r.ok || !r.body?.pack) throw new Error(`${r.status}: ${r.body?.error || 'Pack import failed.'}`);
+    assessmentCatalogRequest++;
+    const identity = assessmentIdentity(r.body.pack);
+    const packs = assessmentPacks.filter((p) => assessmentIdentity(p) !== identity);
+    renderAssessmentPacks({ packs: [...packs, r.body.pack], errors: [] });
+    $('assessmentProgress').textContent = 'Pack validated and imported locally. Select its platform/profile to assess.';
+  } catch (e) {
+    if (generation === assessmentGeneration) showAssessmentError(e.message);
+  } finally {
+    if (generation === assessmentGeneration) {
+      assessmentImporting = false;
+      syncJobAdmission();
+    }
+  }
+});
+
+function renderAssessmentResult(result) {
+  assessmentResult = result;
+  $('assessmentLimitations').textContent = assessmentLimits;
+  $('assessmentSummary').innerHTML = (result.summaries || []).map((s) => `
+    <div class="assessment-pack">
+      <strong>${escapeHtml(s.packId)} · ${escapeHtml(s.platform)} · ${escapeHtml(s.profile)}</strong>
+      <p>${escapeHtml(s.inventory)} inventory — listed controls only</p>
+      <p>Assessment coverage: ${assessmentPercent(s.coveragePercent)} (${escapeHtml(s.assessed)} assessed /
+        ${escapeHtml(s.coverageDenominator)} applicable or unknown listed controls).
+        Configuration alignment: ${assessmentPercent(s.alignmentPercent)} of assessed controls.</p>
+      <p>${Object.entries(assessmentStatuses).map(([key, label]) =>
+        `${label}: ${escapeHtml((s.counts || {})[key] || 0)}`).join(' · ')}</p>
+    </div>`).join('');
+  $('assessmentContextResult').textContent = 'User-selected context: ' + JSON.stringify(result.context || {});
+  $('assessmentPackResult').textContent = 'Assessed pack identities, sources and coverage: ' + JSON.stringify(result.packs || []);
+  $('assessmentIssues').textContent = 'Collection completeness and limitations: ' +
+    JSON.stringify({ sources: result.sources || [], issues: result.collectionIssues || [] });
+  $('assessmentPolicies').innerHTML = (result.policies || []).map((p) => `
+    <div class="assessment-pack"><strong>${escapeHtml(p.name || p.key)}</strong>
+      <p>${p.assignmentsComplete !== true ? 'Assignment evidence incomplete'
+        : !(p.assignments || []).length ? 'Unassigned' : 'Assignment targets present — effective targeting not resolved'}</p>
+      <pre class="assessment-text">${assessmentText(p)}</pre></div>`).join('');
+  renderAssessmentEvidence();
+}
+
+function renderAssessmentEvidence() {
+  const result = assessmentResult || {};
+  const filter = $('assessmentStatusFilter').value;
+  const policies = new Map((result.policies || []).map((p) => [p.key, p]));
+  $('assessmentResults').innerHTML = (result.controls || [])
+    .filter((c) => !filter || c.status === filter).map((c) => {
+      const evidence = (c.policyResults || []).map((p) => {
+        const policy = policies.get(p.policyKey) || {};
+        const incomplete = p.assignmentsComplete === false || policy.assignmentsComplete === false ||
+          (p.assignmentsComplete !== true && policy.assignmentsComplete !== true);
+        const assignment = (p.assigned === false ? 'Unassigned' : p.assigned === true ? 'Assigned' : 'Assignment unknown') +
+          (incomplete ? ' · Assignment evidence incomplete' : '');
+        return `<div class="assessment-policy"><strong>${escapeHtml(policy.name || p.policyKey)}</strong>
+          <p>${escapeHtml(p.policyKey)} · ${escapeHtml(policy.family)} · ${escapeHtml(policy.policyType)}</p>
+          <p>${escapeHtml(assessmentStatuses[p.status] || p.status)}: ${escapeHtml(p.reason)}</p>
+          <p>${assignment}</p>
+          <pre>${assessmentText(policy.assignments || [])}</pre>
+          <p>Expected: ${assessmentText(p.expected || [])}</p>
+          <p>Configured: ${assessmentText(p.observed || [])}</p></div>`;
+      }).join('');
+      return `<tr><td><strong>${escapeHtml(c.controlId)} ${escapeHtml(c.title)}</strong>
+        <p>${escapeHtml(c.packId)} @ ${escapeHtml(c.packVersion)} · ${escapeHtml(c.platform)} · ${escapeHtml(c.profile)}</p>
+        <details><summary>Framework references</summary><pre>${assessmentText(c.references || [])}</pre></details></td>
+        <td><strong>${escapeHtml(assessmentStatuses[c.status] || c.status)}</strong><p>${escapeHtml(c.reason)}</p></td>
+        <td><p>Expected: ${assessmentText(c.expected)}</p><p>Configured: ${assessmentText(c.observed || [])}</p></td>
+        <td>${evidence || 'No policy evidence'}</td></tr>`;
+    }).join('');
+}
+
+$('assessmentStatusFilter').addEventListener('change', renderAssessmentEvidence);
 
 // --- Boot ------------------------------------------------------------------
 
@@ -435,6 +878,8 @@ $('btnAgain').addEventListener('click', () => {
     }
   }
   await refreshState();
+  await loadAssessmentCatalog();
+  await refreshAssessment();
   const { body } = await api('/api/export/log?from=0');
   if (body && body.running) {
     $('cardRun').classList.remove('hidden');
