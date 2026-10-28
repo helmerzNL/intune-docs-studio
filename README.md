@@ -1,11 +1,88 @@
+<div align="center">
+
 # Intune Docs Studio
 
-Turn a Microsoft Intune tenant into a structured Markdown repository — **without creating an
-Entra ID app registration.**
+### Your Intune tenant. Finally, an open book.
 
+Turn complex configurations into clear, structured documentation.<br>
+From your tenant to a Git-ready Markdown repository — without a new app registration.
+
+**Windows** &nbsp; / &nbsp; **PowerShell 7+** &nbsp; / &nbsp; **Local-first** &nbsp; / &nbsp; **Beta**
+
+[**Get the beta build →**](https://github.com/helmerzNL/intune-docs-studio/actions/workflows/beta.yml) &nbsp; · &nbsp;
+[Quick start](#quick-start) &nbsp; · &nbsp;
+[Explore the output](#output-structure) &nbsp; · &nbsp;
+[Setup guide](QUICKSTART.md)
+
+</div>
+
+---
+
+## Less documenting. More understanding.
+
+For assessments, handovers, and the moment someone asks, **“How is this actually configured?”**
+
+| No new app. No new secret. | The details, connected. | A history you can read. |
+|---|---|---|
+| Use an existing sign-in method with read-only access. No new Entra ID app registration or client secret to rotate. | Document policies, apps, scripts, and enrollment, with resolved assignment groups and filter rules alongside the settings. | Export Markdown into your Git working folder. Re-run, review the diff, and publish through your own repository. |
+
+Your tenant configuration stays read-only. Your documentation lives in an output folder you
+choose. Git publishing is optional; generated tenant documentation should be treated as sensitive.
+
+> **Beta, not a production release.** Validate beta packages before operational use.
+> Beta builds are available as ZIP artifacts from successful
+> [Beta workflow runs](https://github.com/helmerzNL/intune-docs-studio/actions/workflows/beta.yml).
+> GitHub sign-in and access to this private repository are required.
+
+## Quick start
+
+**You need:** Windows and [PowerShell 7 or later](#requirements). Git is optional and only
+needed for commit/push functionality.
+
+1. Open a successful [Beta workflow run](https://github.com/helmerzNL/intune-docs-studio/actions/workflows/beta.yml)
+   and download its ZIP artifact. Extract the artifact, then extract the included
+   `IntuneDocsStudio.zip` application package.
+2. Double-click **`Start-IntuneDocs.cmd`** in the extracted application folder.
+   The dashboard opens at <http://localhost:7654>.
+3. **Connect** — choose a sign-in method and sign in as an administrator with access
+   to the Intune areas you want to document.
+4. **Configure** — choose your output folder and which areas to document.
+5. **Generate** — watch the live progress, inspect the Markdown, and optionally commit and push.
+
+Already have the source or an extracted application package? Open PowerShell 7 in that
+folder and run:
+
+```powershell
+.\Start-IntuneDocs.cmd
 ```
-Start-IntuneDocs.cmd   →   http://localhost:7654   →   sign in   →   pick areas   →   Markdown tree
-```
+
+| 01 · Connect | 02 · Configure | 03 · Generate |
+|---|---|---|
+| Your tenant, your sign-in. Read only what your account is allowed to see. | Choose the areas and an output folder you control, separate from the application. | Build a readable reference. Re-run when things change, then review the difference. |
+
+> **Before you connect:** Standard delegated Graph sign-in needs administrator consent.
+> The optional portal-session method has different limitations and is not a supported
+> Microsoft integration pattern. Read the [sign-in guidance](#which-sign-in-method-should-the-customer-use)
+> before choosing a method.
+
+The listener is bound to `localhost` only and requires no elevation. To stop the tool,
+use **Stop server** in the dashboard or press Ctrl+C in the console window.
+Ctrl+C may leave cmd.exe asking *“Terminate batch job (Y/N)?”*; the server has already
+stopped, so either answer is fine.
+
+For a guided walkthrough, see [QUICKSTART.md](QUICKSTART.md). For safe updates, runtime
+identity checks, and output backup/restore, see [the operator guide](docs/operations.md).
+
+### Find your way
+
+[Sign-in and permissions](#which-sign-in-method-should-the-customer-use) ·
+[Requirements](#requirements) ·
+[Output structure](#output-structure) ·
+[Tracking changes](#the-point-of-re-running-it) ·
+[Azure DevOps publishing](#publishing-to-azure-devops) ·
+[Command line](#unattended--command-line) ·
+[Security](#security-notes) ·
+[Troubleshooting](#troubleshooting)
 
 ---
 
@@ -139,25 +216,6 @@ Stable packages require both `-Channel stable` and an explicit full source SHA; 
 development identity cannot be labeled stable. The package includes the publishing guide
 and includes `docs/operations.md` only when that guide exists. Contributor/agent instructions,
 tests, build scripts, workflows, and design specifications are never shipped.
-
----
-
-## Quick start
-
-1. Double-click **`Start-IntuneDocs.cmd`**.
-2. The dashboard opens at <http://localhost:7654>.
-3. **Connect** — sign in as an Intune administrator.
-4. **Configure** — choose the output folder and which areas to document.
-5. **Generate documentation** — watch the live progress, then browse the result.
-
-To stop the tool, use **Stop server** in the dashboard, or press Ctrl+C in the console window.
-(Ctrl+C leaves cmd.exe asking *"Terminate batch job (Y/N)?"* — the server has already stopped
-by then, so either answer is fine. The Stop button avoids the question.)
-
-The listener is bound to `localhost` only and requires no elevation.
-
-For safe updates, runtime identity checks, and output backup/restore, see
-[`docs/operations.md`](docs/operations.md).
 
 ---
 
@@ -339,3 +397,17 @@ much more common case where one is unwelcome.
 | Port 7654 is in use | Start with `-Port 7655`. |
 | PowerShell 7 is missing or cannot start | Follow the launcher's installation/update instructions, reopen the terminal, and run again. Windows PowerShell 5.1 cannot run the tool. |
 | `git push` fails | Enter an Azure DevOps clone URL or configure a remote in the output checkout. Check Git credentials and repository/branch permissions. The local commit is retained; re-run to retry the push even if nothing changed. |
+
+---
+
+<div align="center">
+
+**Less guesswork. Better handovers.**
+
+[Setup guide](QUICKSTART.md) · [Publishing guide](docs/publishing.md) ·
+[Operator guide](docs/operations.md) · [Security policy](SECURITY.md)
+
+An independent project. Not affiliated with or endorsed by Microsoft.<br>
+Microsoft Intune is a Microsoft trademark.
+
+</div>
