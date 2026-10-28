@@ -2,7 +2,7 @@
 
 Date: 2026-10-28
 
-Status: Workflow and architecture approved; written specification awaiting review.
+Status: Written specification approved by the owner on 2026-10-28.
 
 ## Purpose and approved scope
 
