@@ -127,6 +127,7 @@ test('evidence shows every status, typed values, assignment limits, sources and 
 
 const syntheticPacks = () => ['windows11', 'macos', 'iosIpados', 'androidEnterprise'].map((platform, i) => ({
   schemaVersion: 1, id: `synthetic-${platform.toLowerCase()}`, version: '1.0.0', sha256: String(i).repeat(64),
+  origin: i === 3 ? 'imported' : 'bundled',
   framework: i === 3 ? 'CIS' : 'Microsoft', classification: i === 0 ? 'baseline' : 'recommendations',
   platform, profile: i === 3 ? 'Imported test profile' : 'Test profile',
   frameworkVersion: 'Synthetic revision', sourceRevision: 'fixed synthetic revision',
@@ -136,6 +137,33 @@ const syntheticPacks = () => ['windows11', 'macos', 'iosIpados', 'androidEnterpr
 const boxes = (d, root) => d.element(root).children.map((label) => label.children[0]);
 const renderCatalog = (d, packs = syntheticPacks()) =>
   d.run(`renderAssessmentPacks(${JSON.stringify({ packs, errors: [] })})`);
+
+test('imported Microsoft authority is author-declared, never an official reviewed baseline', () => {
+  const d = assessmentDashboard();
+  renderCatalog(d, [{ ...syntheticPacks()[0], origin: 'imported' }]);
+  const html = d.element('assessmentPacks').children[0].children[1].innerHTML;
+  assert.match(html, /customer-imported/i);
+  assert.match(html, /author-declared/i);
+  assert.match(html, /Microsoft/);
+  assert.match(html, /baseline/);
+  assert.doesNotMatch(html, /Official Microsoft|reviewed bundled/i);
+  renderCatalog(d, [{ ...syntheticPacks()[0], origin: null }]);
+  assert.doesNotMatch(d.element('assessmentPacks').children[0].children[1].innerHTML, /Official Microsoft/);
+});
+
+test('iOS ownership starts unknown and is described as explicit user comparison context', async () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
+  assert.match(html, /id="assessmentIosOwnership">\s*<option value="">Unknown<\/option>/);
+  assert.doesNotMatch(html, /personal scope is determined from policy evidence/);
+  const d = assessmentDashboard((url) => url === '/api/state' ? connectedState() : {});
+  await selectAll(d);
+  await d.element('btnAssessmentRun').handlers.click();
+  const request = d.requests.find((r) => r.url === '/api/assessment' && r.method === 'POST');
+  assert.equal(request.payload.context.enrollmentModes.iosIpados, undefined);
+  d.element('assessmentIosOwnership').value = 'personallyOwned';
+  d.run('clearAssessment()');
+  assert.equal(d.element('assessmentIosOwnership').value, '');
+});
 
 test('catalog uses exact metadata, platform and profile selections and disables unavailable combinations', () => {
   const d = assessmentDashboard();
@@ -260,6 +288,7 @@ test('four-platform assessment submits snapshot identities and exact context, po
   d.element('assessmentOsWindows11').value = '10.0.22000';
   d.element('assessmentOsMacos').value = '14.0';
   d.element('assessmentEnrollment').value = 'workProfile';
+  d.element('assessmentIosOwnership').value = 'personallyOwned';
   d.element('outputPath').value = 'C:\\SyntheticExport';
   d.element('gitBranch').value = 'docs';
   d.element('optRaw').checked = true;
@@ -269,7 +298,7 @@ test('four-platform assessment submits snapshot identities and exact context, po
     packIds: syntheticPacks().map((p) => `${p.id}@1.0.0#${p.sha256}`),
     context: { platforms: ['windows11', 'macos', 'iosIpados', 'androidEnterprise'],
       osVersions: { windows11: '10.0.22000', macos: '14.0' },
-      enrollmentModes: { androidEnterprise: 'workProfile' } },
+      enrollmentModes: { androidEnterprise: 'workProfile', iosIpados: 'personallyOwned' } },
     outputPath: 'C:\\SyntheticReports'
   });
   assert.equal(d.element('btnExport').disabled, true);

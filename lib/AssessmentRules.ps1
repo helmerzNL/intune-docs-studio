@@ -180,14 +180,51 @@ function Get-IdsRuleApplicability {
     param([string]$Platform, $Conditions, [hashtable]$Context, $Policy = $null)
     $unknown = [Collections.Generic.List[string]]::new()
     $excluded = [Collections.Generic.List[string]]::new()
+    $versionText = if ($Context.osVersions) { $Context.osVersions[$Platform] } else { $null }
+    $version = ConvertTo-IdsRuleOsVersion $versionText
+    if ($Platform -ceq 'windows11') {
+        if ($null -ne $version -and $version -lt [version]'10.0.22000') { $excluded.Add('Selected OS build excludes Windows 11.') }
+        elseif ($null -ne $version -and ($version.Major -ne 10 -or $version.Minor -ne 0)) { $unknown.Add('Selected OS build is not a known Windows 11 version shape.') }
+    }
     if (-not $Context.platforms -or @($Context.platforms).Count -eq 0) { $unknown.Add('Selected platform context is unknown.') }
     elseif ($Platform -cnotin $Context.platforms) { $excluded.Add('Selected platforms exclude this control.') }
     if ($null -ne $Policy) {
-        if (-not $Policy.platform) { $unknown.Add('Policy platform applicability is unknown.') }
-        elseif ($Policy.platform -cne $Platform) { $excluded.Add('Policy platform excludes this context.') }
+        if (-not $Policy.platform -and -not ($Platform -ceq 'windows11' -and $Policy.windowsFamily -eq $true)) {
+            $unknown.Add('Policy platform applicability is unknown.')
+        }
+        elseif ($Policy.platform -and $Policy.platform -cne $Platform) { $excluded.Add('Policy platform excludes this context.') }
+        if ($Platform -ceq 'windows11' -and $Policy.windowsFamily -eq $true -and -not $Policy.platform -and $null -eq $version) {
+            $unknown.Add('Windows-family policy requires an explicit Windows 11 comparison target OS build.')
+        }
     }
-    $versionText = if ($Context.osVersions) { $Context.osVersions[$Platform] } else { $null }
-    $version = ConvertTo-IdsRuleOsVersion $versionText
+    if ($null -ne $Policy -and $Platform -ceq 'windows11' -and ($Policy.windowsFamily -eq $true -or $Policy.platform -ceq 'windows11')) {
+        if ($Policy.unsupportedApplicability -eq $true) {
+            $unknown.Add('Policy edition or device-mode applicability is unsupported by the comparison context.')
+        }
+        if ($null -ne $Policy.osApplicabilityRule) {
+            $rule = $Policy.osApplicabilityRule
+            $minText = $rule.minOSVersion
+            $maxText = $rule.maxOSVersion
+            $ruleType = $rule.ruleType
+            $min = ConvertTo-IdsRuleOsVersion $minText
+            $max = ConvertTo-IdsRuleOsVersion $maxText
+            $names = if ($rule -is [Collections.IDictionary]) { @($rule.Keys) } else { @($rule.PSObject.Properties.Name) }
+            $valid = $rule.supported -ne $false -and ($rule -is [Collections.IDictionary] -or $rule -is [pscustomobject]) -and
+                $ruleType -cin @('include', 'exclude') -and ($minText -or $maxText) -and
+                (-not $minText -or ($minText -is [string] -and $null -ne $min)) -and
+                (-not $maxText -or ($maxText -is [string] -and $null -ne $max)) -and
+                (-not ($min -and $max) -or $min -le $max) -and
+                @($names | Where-Object { $_ -cnotin @('@odata.type', 'minOSVersion', 'maxOSVersion', 'ruleType', 'supported') }).Count -eq 0
+            if (-not $valid) { $unknown.Add('Policy OS applicability rule is malformed or unsupported.') }
+            elseif ($null -eq $version) { $unknown.Add('Policy OS applicability requires a known target build.') }
+            else {
+                $within = (-not $min -or $version -ge $min) -and (-not $max -or $version -le $max)
+                if (($ruleType -ceq 'include' -and -not $within) -or ($ruleType -ceq 'exclude' -and $within)) {
+                    $excluded.Add('Policy OS applicability rule excludes this comparison target.')
+                }
+            }
+        }
+    }
     foreach ($boundName in @('osMin', 'osMax')) {
         $boundText = $Conditions.$boundName
         if (-not $boundText) { continue }
@@ -267,6 +304,12 @@ function Compare-IdsAssessment {
     $policies = @($Snapshot.policies | Sort-Object key -CaseSensitive)
     $observations = @($Snapshot.observations | Sort-Object policyKey, family, settingId, property, instancePath, valueType,
         @{ Expression = { if ($_.secret -eq $false -and $_.supported -eq $true) { ConvertTo-Json -InputObject $_.value -Compress -Depth 4 } } } -CaseSensitive)
+    $observationsByPolicy = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+    foreach ($observation in $observations) {
+        $key = [string]$observation.policyKey
+        if (-not $observationsByPolicy.ContainsKey($key)) { $observationsByPolicy[$key] = [Collections.Generic.List[object]]::new() }
+        $observationsByPolicy[$key].Add($observation)
+    }
     foreach ($pack in ($Packs | Sort-Object id, version, platform, profile -CaseSensitive)) {
         $packStart = $controls.Count
         foreach ($control in ($pack.controls | Sort-Object id -CaseSensitive)) {
@@ -295,6 +338,9 @@ function Compare-IdsAssessment {
                         if ($error.family -cne $family -or $error.stage -cnotin @('settings', 'template') -or
                             $failedPolicies.Count -ne 1) { $incomplete = $true; continue }
                         $failedPolicy = $failedPolicies[0]
+                        $familyMappings = @($control.mappings | Where-Object family -CEQ $family)
+                        if ($failedPolicy.policyType -and $failedPolicy.policyType -cnotin @('deviceConfiguration', 'deviceCompliancePolicy') -and
+                            @($familyMappings | Where-Object { $failedPolicy.policyType -cin $_.policyTypes }).Count -eq 0) { continue }
                         $failedScope = Get-IdsRuleApplicability $pack.platform @{
                             osMin = $failedPolicy.osMin; osMax = $failedPolicy.osMax; enrollmentModes = @()
                         } $Context $failedPolicy
@@ -321,8 +367,8 @@ function Compare-IdsAssessment {
                 $policyObserved = [Collections.Generic.List[object]]::new()
                 $comparisons = [Collections.Generic.List[object]]::new()
                 $contradictory = $false
-                foreach ($observation in $observations) {
-                    if ($observation.policyKey -cne $policy.key) { continue }
+                $policyObservations = if ($observationsByPolicy.ContainsKey([string]$policy.key)) { $observationsByPolicy[[string]$policy.key] } else { @() }
+                foreach ($observation in $policyObservations) {
                     $matches = @($mappings | Where-Object { Test-IdsRuleObservationMatch $_ $observation })
                     if ($matches.Count -eq 0) { continue }
                     $duplicate = $false

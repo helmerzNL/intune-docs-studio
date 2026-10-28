@@ -66,13 +66,20 @@ Intune exports are not supported. The [import reference](assessment-rule-packs.m
 documents fields, type/operator support, platform/enrollment context, and limits.
 No framework content is downloaded automatically.
 
-Supply known OS versions and Android enrollment mode, select the separate
+Supply known OS versions, Android enrollment mode and optional iOS/iPadOS ownership
+comparison scope, select the separate
 report destination, and click **Assess selected policies**. Windows 11 uses a
 numeric build version such as `10.0.22000`; macOS FileVault needs at least 10.13.
 Selected context is not discovered device inventory. Do not invent unknown
-values to obtain a pass. The current dashboard/API exposes Android enrollment
-context only; the bundled iOS personal-only rule stays **not assessed** when
-personal applicability is unknown.
+values to obtain a pass. iOS ownership defaults to **Unknown**; affirmatively
+select **Personally owned** only for that target comparison. Neither scope nor
+matching configuration establishes discovered ownership or effective assignment.
+For Windows-family profiles, an explicit Windows 11 build establishes comparison
+context, not discovered Windows 11 inventory. Real OS include/exclude rules are
+honored; malformed/unsupported rules, edition and device-mode conditions remain
+not assessed. Known unrelated policy types retain global diagnostics without
+blocking mappings that explicitly exclude their type; unknown types and relevant
+or unlocalizable failures still block.
 
 Only one export or assessment can run. Wait for work to finish before resetting,
 switching identity, forgetting a profile, stopping, or updating the app. A healthy

@@ -227,15 +227,31 @@ function Set-IdsNormalizedApplicability {
             windows11 { $Policy.platform = 'windows11' }
         }
     }
-    # Collection's Windows family hint includes Windows 10 and later. Preserve
-    # the policy OS bounds, but do not claim a discovered Windows 11 scope.
-    if ($Policy.platform -ceq 'windows11' -or $type -cmatch '^windows') {
+    # A Windows-family candidate is not discovered Windows 11 device scope.
+    $Policy.windowsFamily = $Policy.platform -ceq 'windows11' -or $type -cmatch '^windows(10|11)'
+    if ($Policy.windowsFamily) {
         $minimum = $null
         $explicit11 = (Get-IdsAssessmentMember $Policy.template 'platformType') -ceq 'windows11'
         $bounded11 = [version]::TryParse([string]$Policy.osMin, [ref]$minimum) -and $minimum -ge [version]'10.0.22000'
         $Policy.platform = if ($explicit11 -or $bounded11) { 'windows11' } else { $null }
     }
     if ($Policy.platform -cnotin @('windows11', 'macos', 'iosIpados', 'androidEnterprise')) { $Policy.platform = $null }
+    if ($null -ne $Policy.osApplicabilityRule) {
+        $rawRule = $Policy.osApplicabilityRule
+        $names = if ($rawRule -is [Collections.IDictionary]) { @($rawRule.Keys) } else { @($rawRule.PSObject.Properties.Name) }
+        $supported = ($rawRule -is [Collections.IDictionary] -or $rawRule -is [pscustomobject]) -and
+            @($names | Where-Object { $_ -cnotin @('@odata.type', 'minOSVersion', 'maxOSVersion', 'ruleType') }).Count -eq 0
+        $ruleType = Get-IdsAssessmentMember $rawRule '@odata.type'
+        if ($null -ne $ruleType -and $ruleType -cne '#microsoft.graph.deviceManagementApplicabilityRuleOsVersion') { $supported = $false }
+        $safe = [ordered]@{}
+        foreach ($name in 'minOSVersion', 'maxOSVersion', 'ruleType') {
+            $value = Get-IdsAssessmentMember $rawRule $name
+            if ($null -ne $value -and $value -isnot [string]) { $supported = $false; $value = $null }
+            $safe[$name] = $value
+        }
+        $safe.supported = $supported
+        $Policy.osApplicabilityRule = [pscustomobject]$safe
+    }
 }
 
 function ConvertTo-IdsAdmxObservations {
@@ -310,7 +326,8 @@ function ConvertTo-IdsAssessmentSnapshot {
     $catalog = Get-IdsAssessmentPropertyCatalog
     foreach ($inputPolicy in $Collection.policies) {
         $metadata = [ordered]@{}
-        foreach ($name in @('key', 'id', 'name', 'family', 'policyType', 'template', 'platform', 'osMin', 'osMax',
+        foreach ($name in @('key', 'id', 'name', 'family', 'policyType', 'template', 'platform', 'windowsFamily', 'osMin', 'osMax',
+            'osApplicabilityRule', 'unsupportedApplicability',
             'enrollmentMode', 'assignments', 'settingsComplete', 'assignmentsComplete')) {
             $metadata[$name] = Copy-IdsAssessmentEvidence (Get-IdsAssessmentMember $inputPolicy $name)
         }

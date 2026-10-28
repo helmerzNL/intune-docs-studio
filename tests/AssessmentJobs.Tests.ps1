@@ -124,7 +124,7 @@ function Invoke-IdsGraphRaw {
     }
     return @{ value = @(@{ id = 'synthetic-policy'; displayName = 'Synthetic policy'
         '@odata.type' = '#microsoft.graph.windows10EndpointProtectionConfiguration'
-        osMinimumVersion = '10.0.22000'; smartScreenEnableInShell = $true; syntheticUnknown = 'SYNTHETIC-SECRET' }) }
+        smartScreenEnableInShell = $true; syntheticUnknown = 'SYNTHETIC-SECRET' }) }
 }
 '@
         try {

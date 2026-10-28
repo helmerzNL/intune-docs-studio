@@ -38,7 +38,7 @@ function Copy-IdsReportRecord {
         Pack { [ordered]@{
             schemaVersion = 'number'; id = 'text'; version = 'text'; framework = 'text'; frameworkVersion = 'text'
             classification = 'text'; platform = 'text'; profile = 'text'; sourceRevision = 'text'
-            sha256 = 'text'; coverage = 'Coverage'; sources = 'Reference[]'
+            sha256 = 'text'; origin = 'text'; coverage = 'Coverage'; sources = 'Reference[]'
         } }
         Coverage { [ordered]@{ inventory = 'text'; totalSourceControls = 'number' } }
         Reference { [ordered]@{ id = 'text'; url = 'text'; revision = 'text'; retrievedOn = 'text'; reference = 'text' } }
@@ -70,6 +70,7 @@ function Copy-IdsReportRecord {
         Policy { [ordered]@{
             key = 'text'; id = 'text'; name = 'text'; family = 'text'; policyType = 'text'; platform = 'text'
             template = 'Template'; osMin = 'text'; osMax = 'text'; enrollmentMode = 'text'
+            windowsFamily = 'boolean'; osApplicabilityRule = 'OsApplicabilityRule'; unsupportedApplicability = 'boolean'
             assignments = 'Assignment[]'; settingsComplete = 'boolean'; assignmentsComplete = 'boolean'
         } }
         Template { [ordered]@{
@@ -77,6 +78,7 @@ function Copy-IdsReportRecord {
             templateFamily = 'text'; templateType = 'text'; platformType = 'text'
             templateDisplayVersion = 'text'; version = 'number'; isDeprecated = 'boolean'
         } }
+        OsApplicabilityRule { [ordered]@{ minOSVersion = 'text'; maxOSVersion = 'text'; ruleType = 'text'; supported = 'boolean' } }
         Assignment { [ordered]@{ id = 'text'; intent = 'text'; source = 'text'; sourceId = 'text'; target = 'Target' } }
         Target { [ordered]@{
             '@odata.type' = 'text'; groupId = 'text'; groupDisplayName = 'text'; collectionId = 'text'
@@ -194,6 +196,7 @@ function ConvertTo-IdsProjectedAssessmentMarkdown {
     $lines.Add('# Policy configuration alignment assessment')
     $lines.Add('')
     $lines.Add('This is configuration alignment, not effective device compliance or certification. Assignments are evidence only; group membership, filters and effective targeting are not resolved. Potential conflict does not establish targeting overlap or an Intune conflict.')
+    $lines.Add('Pack origin distinguishes application-reviewed bundled resources from customer-imported packs. Imported framework/classification labels are author-declared, not verified Microsoft authority. Windows-family policy metadata is not discovered Windows 11 inventory; a supplied target build establishes comparison context only.')
     $lines.Add('')
     $lines.Add('Missing means absent/not configured only in the mapped families and policy types read completely for this rule, not tenant-wide absence. Partial packs cover only their listed checks, not the entire benchmark. User-selected context is not discovered device inventory. Legacy-only mappings do not cover equivalent modern policy families. Personal-only iOS/iPadOS and Android profiles do not establish organization-owned coverage. A macOS beta/deprecated template reference does not establish current-template or device encryption compliance.')
     $lines.Add('')

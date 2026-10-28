@@ -180,7 +180,7 @@ Describe 'Build-Package.ps1 product package contract' {
         $output = Join-Path $TestDrive 'integration-package'
         Invoke-PackageFixture -OutputPath $output
         $root = Expand-PackageFixture -OutputPath $output
-        foreach ($module in 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'AssessmentRules', 'AssessmentReports') {
+        foreach ($module in 'Graph', 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'AssessmentRules', 'AssessmentReports') {
             . (Join-Path $root "lib\$module.ps1")
         }
         . (Join-Path $PSScriptRoot 'TestHelpers\Assessment.ps1')
@@ -188,28 +188,29 @@ Describe 'Build-Package.ps1 product package contract' {
         $catalog.errors.Count | Should -Be 0
         $catalog.packs.Count | Should -Be 4
         @($catalog.packs.controls).Count | Should -Be 5
-        $windows = New-IdsTestAssessmentPolicy deviceConfiguration windows10EndpointProtectionConfiguration @(
-            @{ smartScreenEnableInShell = $true; smartScreenBlockOverrideForFiles = $true })
-        $windows.osMin = '10.0.22000'; $windows.id = 'windows'; $windows.key = 'deviceConfiguration:windows'
-        $mac = New-IdsTestAssessmentPolicy deviceConfiguration macOSEndpointProtectionConfiguration @(@{ fileVaultEnabled = $false })
-        $mac.id = 'mac'; $mac.key = 'deviceConfiguration:mac'
-        $ios = New-IdsTestAssessmentPolicy deviceConfiguration iosGeneralDeviceConfiguration @(@{})
-        $ios.id = 'ios'; $ios.key = 'deviceConfiguration:ios'
-        $android = New-IdsTestAssessmentPolicy compliance androidWorkProfileCompliancePolicy @(@{ storageRequireEncryption = $true })
-        $android.id = 'android'; $android.key = 'compliance:android'; $android.settingsComplete = $false
-        $collection = New-IdsTestAssessmentCollection @($windows, $mac, $ios, $android)
-        $collection.sources = @(
-            @{ family = 'deviceConfiguration'; platform = 'windows11'; complete = $true; errors = @() }
-            @{ family = 'deviceConfiguration'; platform = 'macos'; complete = $true; errors = @() }
-            @{ family = 'deviceConfiguration'; platform = 'iosIpados'; complete = $true; errors = @() }
-            @{ family = 'compliance'; platform = 'androidEnterprise'; complete = $false; errors = @() }
-        )
-        $collection.issues = @(@{ family = 'compliance'; policyKey = $android.key; stage = 'settings'
-            statusCode = 403; reason = 'Synthetic incomplete settings read.' })
-        $snapshot = ConvertTo-IdsAssessmentSnapshot $collection
+        Mock Invoke-IdsGraphRaw {
+            param($Uri)
+            if ($Uri -match '\$batch$') {
+                return @{ responses = @([pscustomobject]@{ id = 'assignments'; status = 200; body = @{ value = @() } }) }
+            }
+            if ($Uri -match '/deviceCompliancePolicies$') {
+                $exception = [Exception]::new('Synthetic incomplete inventory read')
+                $exception | Add-Member NoteProperty StatusCode 403
+                throw $exception
+            }
+            return @{ value = @(
+                @{ id = 'windows'; '@odata.type' = '#microsoft.graph.windows10EndpointProtectionConfiguration'
+                    smartScreenEnableInShell = $true; smartScreenBlockOverrideForFiles = $true }
+                @{ id = 'mac'; '@odata.type' = '#microsoft.graph.macOSEndpointProtectionConfiguration'; fileVaultEnabled = $false }
+                @{ id = 'mac-other'; '@odata.type' = '#microsoft.graph.macOSEndpointProtectionConfiguration'; fileVaultEnabled = $true }
+                @{ id = 'ios'; '@odata.type' = '#microsoft.graph.iosGeneralDeviceConfiguration' }
+            ) }
+        }
         $context = @{ platforms = @('windows11', 'macos', 'iosIpados', 'androidEnterprise')
             osVersions = @{ windows11 = '10.0.22000'; macos = '14.0' }
             enrollmentModes = @{ iosIpados = 'personallyOwned'; androidEnterprise = 'workProfile' } }
+        $collection = Get-IdsAssessmentCollection $catalog.packs $context
+        $snapshot = ConvertTo-IdsAssessmentSnapshot $collection
         $evaluation = Compare-IdsAssessment $catalog.packs $snapshot $context
         $result = [pscustomobject]@{
             schemaVersion = 1; runId = 'synthetic-four-platform'; generatedAt = '2026-10-28T12:00:00Z'
@@ -229,25 +230,22 @@ Describe 'Build-Package.ps1 product package contract' {
         foreach ($scenario in @(
             @{ Id = 'IDS-WIN-SHELL-SMARTSCREEN'; Platform = 'windows11'; Status = 'aligned'; Observed = 1; Value = $true }
             @{ Id = 'IDS-WIN-SHELL-NO-BYPASS'; Platform = 'windows11'; Status = 'aligned'; Observed = 1; Value = $true }
-            @{ Id = 'IDS-MAC-FILEVAULT'; Platform = 'macos'; Status = 'misaligned'; Observed = 1; Value = $false }
+            @{ Id = 'IDS-MAC-FILEVAULT'; Platform = 'macos'; Status = 'potentialConflict'; Observed = 2 }
             @{ Id = 'IDS-IOS-PASSCODE'; Platform = 'iosIpados'; Status = 'missing'; Observed = 0 }
-            @{ Id = 'IDS-ANDROID-ENCRYPTION'; Platform = 'androidEnterprise'; Status = 'notAssessed'; Observed = 1; Value = $true }
+            @{ Id = 'IDS-ANDROID-ENCRYPTION'; Platform = 'androidEnterprise'; Status = 'notAssessed'; Observed = 0 }
         )) {
             $control = @($json.controls | Where-Object controlId -CEQ $scenario.Id)[0]
             $control.platform | Should -BeExactly $scenario.Platform
             $control.status | Should -BeExactly $scenario.Status
             $control.observed.Count | Should -Be $scenario.Observed
             $control.expected[0].expected | Should -BeTrue
-            if ($scenario.Observed) { $control.observed[0].value | Should -Be $scenario.Value }
+            if ($scenario.Observed -eq 1) { $control.observed[0].value | Should -Be $scenario.Value }
             $section = [regex]::Match($markdown, "(?s)### $([regex]::Escape($scenario.Id))\r?\n(.*?)(?=\r?\n###? |\z)").Value
             $section | Should -Not -BeNullOrEmpty
             $section | Should -Match ([regex]::Escape($control.status))
             $section | Should -Match ([regex]::Escape($control.reason))
             $section | Should -Match ([regex]::Escape($control.expected[0].property))
-            foreach ($observed in $control.observed) {
-                $section | Should -Match ([regex]::Escape($observed.policyKey))
-                $section | Should -Match ($observed.value.ToString().ToLowerInvariant())
-            }
+            Assert-IdsTestMarkdownObservations $section $control
         }
         foreach ($pack in $json.packs) {
             $pack.coverage.inventory | Should -BeExactly 'partial'
@@ -255,11 +253,12 @@ Describe 'Build-Package.ps1 product package contract' {
             $markdown | Should -Match ([regex]::Escape($pack.sourceRevision))
         }
         ($json.summaries | Where-Object platform -CEQ windows11).counts.aligned | Should -Be 2
-        ($json.summaries | Where-Object platform -CEQ macos).counts.misaligned | Should -Be 1
+        ($json.summaries | Where-Object platform -CEQ macos).counts.potentialConflict | Should -Be 1
         ($json.summaries | Where-Object platform -CEQ iosIpados).counts.missing | Should -Be 1
         ($json.summaries | Where-Object platform -CEQ androidEnterprise).counts.notAssessed | Should -Be 1
         $json.collectionIssues[0].statusCode | Should -Be 403
-        $markdown | Should -Match 'Synthetic incomplete settings read'
+        $markdown | Should -Match 'Graph page request failed'
+        @($json.collectionIssues | Where-Object stage -CEQ assignments).Count | Should -Be 0
         $markdown | Should -Match 'not tenant-wide absence'
         $after = @(Get-ChildItem $export -Recurse -Force -File | Sort-Object FullName | Get-FileHash)
         $after.Path | Should -Be $before.Path
@@ -295,7 +294,6 @@ Describe 'Build-Package.ps1 product package contract' {
                 $instance = New-IdsTestSettingInstance -Id 'synthetic.required' -Value @{ value = $value }
                 $policy = New-IdsTestAssessmentPolicy -Settings @(@{ settingInstance = $instance })
                 $policy.platform = $platform; $policy.enrollmentMode = 'workProfile'
-                if ($platform -ceq 'windows11') { $policy.osMin = '10.0.22000' }
                 $collection = New-IdsTestAssessmentCollection @($policy)
                 $collection.sources = @(@{ family = 'settingsCatalog'; platform = $platform; complete = $true; errors = @() })
                 $snapshot = ConvertTo-IdsAssessmentSnapshot $collection

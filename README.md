@@ -99,10 +99,12 @@ Intune, determine effective targeting, certify a benchmark, or measure device co
    is neither bundled nor downloaded. See the [import reference](docs/assessment-rule-packs.md)
    for all fields, supported operators, and named limits.
 4. Enter known OS versions (Windows uses a build version such as `10.0.22000`)
-   and Android enrollment mode; leave unknowns unknown. These are user-selected
-   context, not discovered device inventory. The current dashboard/API cannot
-   select iOS personal enrollment context, so the bundled personal-only iOS check
-   remains **not assessed** when that applicability cannot be established.
+   and Android enrollment mode. Explicitly select iOS/iPadOS **Personally owned**
+   only for that comparison scope; ownership defaults to **Unknown**. Unknown
+   applicability remains **not assessed**. These are user-selected comparison
+   context, not discovered inventory, ownership, or effective assignment.
+   A Windows 11 build can scope compatible unrestricted Windows-family profiles;
+   real policy include/exclude rules still apply. Unsupported conditions block.
 5. Choose an absolute **assessment report destination**, separate from both the
    installation and documentation export folders, then **Assess selected policies**.
    One export or assessment can run at a time; wait before sign-out, reset, or stop.

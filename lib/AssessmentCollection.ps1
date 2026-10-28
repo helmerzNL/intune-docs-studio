@@ -205,7 +205,7 @@ function Get-IdsAssessmentPlatform {
         $hint = [string](Get-IdsAssessmentMember $Template 'platformType')
     }
     switch -Regex ($hint) {
-        '^(windows10|windows11|windows10AndLater)$|^#microsoft\.graph\.windows' { return 'windows11' }
+        '^(windows10|windows11|windows10AndLater)$|^#microsoft\.graph\.windows(10|11)' { return 'windows11' }
         '^(macOS)$|^#microsoft\.graph\.macOS' { return 'macos' }
         '^(iOS|iosIpados)$|^#microsoft\.graph\.ios' { return 'iosIpados' }
         '^(androidEnterprise|androidForWork)$|^#microsoft\.graph\.android(WorkProfile|DeviceOwner)' { return 'androidEnterprise' }
@@ -395,8 +395,11 @@ function Get-IdsAssessmentCollection {
             $policies.Add([pscustomobject]@{
                 key = $key; id = $id; name = $name; family = $family; policyType = $type; template = $template
                 platform = $platform
-                osMin = (Get-IdsAssessmentMember $raw 'osMinimumVersion')
-                osMax = (Get-IdsAssessmentMember $raw 'osMaximumVersion')
+                osMin = $(if ($platform -cne 'windows11') { Get-IdsAssessmentMember $raw 'osMinimumVersion' })
+                osMax = $(if ($platform -cne 'windows11') { Get-IdsAssessmentMember $raw 'osMaximumVersion' })
+                osApplicabilityRule = (Copy-IdsAssessmentEvidence (Get-IdsAssessmentMember $raw 'deviceManagementApplicabilityRuleOsVersion'))
+                unsupportedApplicability = ($null -ne (Get-IdsAssessmentMember $raw 'deviceManagementApplicabilityRuleOsEdition') -or
+                    $null -ne (Get-IdsAssessmentMember $raw 'deviceManagementApplicabilityRuleDeviceMode'))
                 enrollmentMode = (Get-IdsAssessmentMember $raw 'enrollmentMode')
                 rawSettings = $safeSettings; assignments = @($assignments.items)
                 settingsComplete = $settings.complete; assignmentsComplete = $assignments.complete

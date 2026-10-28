@@ -90,9 +90,11 @@ stopped at that point, so either answer is fine.
    20,000 controls, 32,768 characters per string).
 3. Enter known OS versions and Android enrollment mode. Windows expects a build
    version such as `10.0.22000`. Unknown applicability remains **not assessed**.
-   This is selected context, not discovered inventory. The dashboard/API currently
-   has no iOS personal enrollment selector, so the bundled iOS personal check
-   remains **not assessed** if personal applicability cannot be established.
+   Select iOS/iPadOS **Personally owned** only for that explicit comparison scope;
+   its default is **Unknown**, not assumed ownership. This is selected comparison
+   context, not discovered inventory or effective assignment. Windows-family
+   policies can use the supplied Windows 11 target build; policy include/exclude
+   rules remain authoritative and unsupported conditions remain not assessed.
 4. Choose an absolute **assessment report destination** outside both the app and
    documentation output trees, then click **Assess selected policies**. Wait for
    completion before another export/assessment, sign-out, reset, or shutdown.

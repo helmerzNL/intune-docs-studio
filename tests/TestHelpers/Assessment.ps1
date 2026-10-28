@@ -49,3 +49,12 @@ function New-IdsTestAssessmentCollection {
     param([object[]]$Policies = @())
     [pscustomobject]@{ policies = $Policies; sources = @(); issues = @() }
 }
+
+function Assert-IdsTestMarkdownObservations {
+    param([string]$Section, $Control)
+    $row = [regex]::Match($Section, '(?m)^\| observed \| (.*) \|$')
+    $row.Success | Should -BeTrue
+    $records = ConvertFrom-Json -InputObject ([Net.WebUtility]::HtmlDecode($row.Groups[1].Value)) -NoEnumerate
+    ConvertTo-Json -InputObject $records -Depth 20 -Compress |
+        Should -Be (ConvertTo-Json -InputObject $Control.observed -Depth 20 -Compress)
+}

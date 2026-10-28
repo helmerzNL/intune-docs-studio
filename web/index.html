@@ -157,7 +157,14 @@
         <option value="dedicated">Dedicated</option>
         <option value="corporateOwnedWorkProfile">Corporate-owned work profile</option>
       </select>
-      <small>iOS/iPadOS personal scope is determined from policy evidence, not an Android enrollment override.</small>
+    </label>
+    <label>iOS/iPadOS ownership scope (user-selected comparison context)
+      <select id="assessmentIosOwnership">
+        <option value="">Unknown</option>
+        <option value="personallyOwned">Personally owned</option>
+        <option value="corporateOwned">Corporate owned (excluded by personal-only guidance)</option>
+      </select>
+      <small>This is explicit comparison context, not discovered ownership or effective assignment.</small>
     </label>
     <label>Assessment report destination
       <input type="text" id="assessmentOutputPath" spellcheck="false" placeholder="Absolute local folder, separate from application and export">

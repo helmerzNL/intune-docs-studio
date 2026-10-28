@@ -351,10 +351,14 @@ Describe 'Conservative policy aggregation' {
         @{ Minimum = '14.0.1'; Maximum = '14.0.1.0'; Selected = '14.0.1' }
     ) {
         $pack = New-TestPack
+        $pack.platform = 'macos'
         $pack.controls[0].applicability.osMin = $Minimum
         $pack.controls[0].applicability.osMax = $Maximum
-        $context = @{ platforms = @('windows11'); osVersions = @{ windows11 = $Selected }; enrollmentModes = @{} }
-        (Invoke-TestAssessment $pack (New-TestSnapshot) $context).controls[0].status | Should -BeExactly 'aligned'
+        $context = @{ platforms = @('macos'); osVersions = @{ macos = $Selected }; enrollmentModes = @{} }
+        $snapshot = New-TestSnapshot
+        $snapshot.policies[0].platform = 'macos'
+        $snapshot.sources[0].platform = 'macos'
+        (Invoke-TestAssessment $pack $snapshot $context).controls[0].status | Should -BeExactly 'aligned'
     }
 
     It 'requires known applicability for <Dimension>' -ForEach @(
@@ -584,10 +588,10 @@ Describe 'Collector to rules failure isolation' -Tag 'CollectionIntegration' {
             templateReference = @{ platformType = 'windows11' }
         }
         switch ($Scope) {
-            'excluded OS' { $failedPolicy.osMaximumVersion = '10.0.22000' }
-            'unknown OS' { $failedPolicy.osMaximumVersion = '10.0.22000'; $context.osVersions = @{} }
+            'excluded OS' { $failedPolicy.deviceManagementApplicabilityRuleOsVersion = @{ maxOSVersion = '10.0.22000'; ruleType = 'include' } }
+            'unknown OS' { $failedPolicy.deviceManagementApplicabilityRuleOsVersion = @{ maxOSVersion = '10.0.22000'; ruleType = 'include' }; $context.osVersions = @{} }
             'unknown platform' { $failedPolicy.Remove('platforms'); $failedPolicy.Remove('templateReference') }
-            'failed inventory' { $failedPolicy.osMaximumVersion = '10.0.22000' }
+            'failed inventory' { $failedPolicy.deviceManagementApplicabilityRuleOsVersion = @{ maxOSVersion = '10.0.22000'; ruleType = 'include' } }
         }
         if ($Scope -in @('excluded enrollment', 'unknown enrollment')) {
             $pack.platform = 'androidEnterprise'

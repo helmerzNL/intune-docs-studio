@@ -9,7 +9,6 @@ BeforeAll {
     function Invoke-BundledControl($File, $ControlId, $PolicyType, $Family, $Raw, $Platform, $Mode, $ContextOverride) {
         $pack = Read-IdsBaselinePack -Bytes ([IO.File]::ReadAllBytes((Join-Path $repo "baselines\$File")))
         $policy = New-IdsTestAssessmentPolicy -Family $Family -PolicyType $PolicyType -Settings @($Raw)
-        if ($Platform -ceq 'windows11') { $policy.osMin = '10.0.22000' }
         $collection = New-IdsTestAssessmentCollection @($policy)
         $families = @(@($Family) + @($pack.controls.mappings.family) | Sort-Object -Unique)
         $collection.sources = @($families | ForEach-Object {

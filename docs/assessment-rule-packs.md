@@ -28,21 +28,27 @@ a rule.
 1. Connect through the existing read-only sign-in and verify the tenant.
 2. In **Assess policies**, select platforms and exact pack versions/profiles.
    Read the baseline/recommendations distinction, source revisions, SHA-256
-   identity, and inventory coverage before assessing.
+   identity, origin, and inventory coverage before assessing. Customer imports
+   have author-declared framework/classification labels, not application-reviewed
+   Microsoft authority. Only the reviewed bundled catalog receives that distinction.
 3. If using CIS, obtain a licensed, reviewed pack in the schema below. Select
    its local JSON file and click **Import pack**. No PDF parsing, raw Intune
    export conversion, automatic extraction/download, or bundled CIS content is
    provided. Customers own rights to their imported material. Schema validation
    is not verification of the benchmark content or mapping correctness.
-4. Enter known OS versions and Android enrollment mode; leave unknowns unknown.
+4. Enter known OS versions, Android enrollment mode and optional iOS/iPadOS
+   ownership comparison scope; leave unknowns unknown.
    Windows uses a numeric OS build such as `10.0.22000`, not just `11`; the
    macOS FileVault check requires 10.13+. Android's bundled check applies only
    to `workProfile`, not fully managed, dedicated, or corporate-owned modes.
-   The bundled iOS rule requires `personallyOwned` applicability. The current
-   dashboard/API exposes only Android enrollment selection, so personal iOS
-   applicability cannot be supplied there and that check remains **not assessed**
-   when unknown. The engine-context example in the mapping review is not an
-   accepted iOS enrollment field on the start API.
+   The bundled iOS rule requires explicitly selected `personallyOwned` context;
+   its default is **Unknown** (not assessed), and `corporateOwned` is excluded.
+   These selections do not establish discovered ownership or assignment reach.
+   A supplied Windows 11 target build can scope compatible unrestricted
+   Windows-family profiles without claiming Windows 11 inventory. Documented
+   `deviceManagementApplicabilityRuleOsVersion` include/exclude ranges are honored.
+   Malformed/unsupported conditions, edition and device-mode restrictions cannot
+   establish a pass. Missing target context remains not assessed.
 5. Choose an absolute report root disjoint from the installation and
    documentation export roots. Click **Assess selected policies**; an export
    and assessment cannot run together. Wait before identity changes/reset/stop.
@@ -115,7 +121,11 @@ Select 1–64 unique identities and 1–4 unique `context.platforms`; every sele
 platform requires a selected pack. Optional `context.osVersions` maps platform
 names to numeric OS-version strings. Optional `context.enrollmentModes` accepts
 `androidEnterprise` with `workProfile`, `fullyManaged`, `dedicated`, or
-`corporateOwnedWorkProfile`. Omit unknown applicability rather than inventing it.
+`corporateOwnedWorkProfile`, and independently `iosIpados` with `personallyOwned`
+or `corporateOwned`. Omit unknown applicability rather than inventing it.
+Accepted context is snapshotted at admission and retained in results/reports.
+API pack metadata and result packs retain `origin` (`bundled` or `imported`),
+never local catalog paths. Imported authority labels remain author-declared.
 Reports, installation, and documentation export roots must be mutually disjoint.
 
 Starts/progress/results require sign-in (`401`). Only one export or assessment

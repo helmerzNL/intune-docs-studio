@@ -11,7 +11,7 @@ BeforeAll {
             sources = @([pscustomobject]@{ family = 'settingsCatalog'; platform = 'windows11'; complete = $true; errors = @() })
             issues = @()
         }
-        $context = @{ platforms = @('windows11'); osVersions = @{ windows11 = '11.0' }; enrollmentModes = @{} }
+        $context = @{ platforms = @('windows11'); osVersions = @{ windows11 = '10.0.26100' }; enrollmentModes = @{} }
         $evaluation = Compare-IdsAssessment -Packs @($pack) -Snapshot $snapshot -Context $context
         [pscustomobject]@{
             schemaVersion = 1; runId = 'synthetic-run'; generatedAt = '2026-10-28T12:00:00Z'

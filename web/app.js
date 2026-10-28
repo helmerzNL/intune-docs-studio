@@ -563,7 +563,9 @@ function renderAssessmentPacks(catalog) {
     box.checked = selected.has(box.value);
     box.addEventListener('change', updateAssessmentSelection);
     const text = document.createElement('span');
-    const classification = p.framework === 'CIS' ? 'CIS — customer-imported local pack'
+    const classification = p.origin === 'imported'
+      ? `${p.framework} — customer-imported local pack; author-declared ${p.classification}`
+      : p.origin !== 'bundled' ? `${p.framework} — unverified origin; author-declared ${p.classification}`
       : p.framework === 'Microsoft' ? (p.classification === 'baseline'
         ? 'Official Microsoft security baseline — partial mapped checks' : 'Microsoft recommendations')
         : `${p.framework} — local rule pack`;
@@ -630,6 +632,7 @@ function clearAssessment() {
   $('assessmentStatusFilter').value = '';
   Object.keys(assessmentPlatforms).forEach((p) => { $(assessmentOsId(p)).value = ''; });
   $('assessmentEnrollment').value = '';
+  $('assessmentIosOwnership').value = '';
   showAssessmentError(null);
   syncJobAdmission();
 }
@@ -743,6 +746,9 @@ $('btnAssessmentRun').addEventListener('click', async () => {
   });
   if (platforms.includes('androidEnterprise') && $('assessmentEnrollment').value) {
     context.enrollmentModes.androidEnterprise = $('assessmentEnrollment').value;
+  }
+  if (platforms.includes('iosIpados') && $('assessmentIosOwnership').value) {
+    context.enrollmentModes.iosIpados = $('assessmentIosOwnership').value;
   }
   const generation = ++assessmentGeneration;
   clearInterval(assessmentTimer);

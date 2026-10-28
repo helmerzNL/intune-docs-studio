@@ -54,13 +54,15 @@ function Resolve-IdsAssessmentOptions {
     $snapshot = @{ platforms = @($context.platforms); osVersions = @{}; enrollmentModes = @{} }
     foreach ($field in 'osVersions', 'enrollmentModes') {
         if ($null -eq $context[$field]) { continue }
-        Assert-IdsAssessmentFields $context[$field] $(if ($field -eq 'osVersions') { $platforms } else { @('androidEnterprise') })
+        Assert-IdsAssessmentFields $context[$field] $(if ($field -eq 'osVersions') { $platforms } else { @('androidEnterprise', 'iosIpados') })
         foreach ($key in $context[$field].Keys) {
             $value = $context[$field][$key]
             if ($value -isnot [string] -or $value.Length -gt 128) { throw 'Invalid assessment applicability value.' }
             if ($field -eq 'osVersions' -and -not (ConvertTo-IdsRuleOsVersion $value)) { throw 'Invalid assessment OS version.' }
-            if ($field -eq 'enrollmentModes' -and $value -cnotin @('workProfile', 'fullyManaged', 'dedicated', 'corporateOwnedWorkProfile')) {
-                throw 'Invalid Android enrollment mode.'
+            if ($field -eq 'enrollmentModes') {
+                $modes = if ($key -ceq 'iosIpados') { @('personallyOwned', 'corporateOwned') }
+                    else { @('workProfile', 'fullyManaged', 'dedicated', 'corporateOwnedWorkProfile') }
+                if ($value -cnotin $modes) { throw "Invalid $key enrollment/ownership mode." }
             }
             $snapshot[$field][$key] = $value
         }
