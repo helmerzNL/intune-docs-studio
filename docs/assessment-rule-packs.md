@@ -25,7 +25,7 @@ a rule.
 
 ## Customer workflow and interpretation
 
-1. Connect through the existing read-only sign-in and verify the tenant.
+1. Sign in through the existing read-only sign-in and verify the tenant on Home.
 2. In **Assess policies**, select platforms and exact pack versions/profiles.
    Read the baseline/recommendations distinction, source revisions, SHA-256
    identity, origin, and inventory coverage before assessing. Customer imports

@@ -57,7 +57,7 @@ chosen output folder. It is not a hosted service.
 > device compliance/encryption. **Missing** is scoped to the rule's completely
 > read mapped families/policy types, not tenant-wide absence.
 
-Connect and verify tenant identity, then open **Assess policies**. Select
+Sign in and verify tenant identity on Home, then open **Assess policies**. Select
 platforms and exact pack versions/profiles; inspect source revisions, SHA-256,
 baseline versus recommendations classification, and partial inventory. Import
 only reviewed customer-licensed schema-1 JSON via **Import pack**; validation

@@ -44,10 +44,14 @@ needed for commit/push functionality.
    `IntuneDocsStudio.zip` application package.
 2. Double-click **`Start-IntuneDocs.cmd`** in the extracted application folder.
    The dashboard opens at <http://localhost:7654>.
-3. **Connect** — choose a sign-in method and sign in as an administrator with access
-   to the Intune areas you want to document.
-4. **Configure** — choose your output folder and which areas to document.
-5. **Generate** — watch the live progress, inspect the Markdown, and optionally commit and push.
+3. **Sign in** — the landing page opens first. Choose **Sign in via the Intune portal**,
+   or open **Advanced sign-in options** for the other methods. Sign in as an administrator
+   with access to the Intune areas you want to document.
+4. **Choose a path** — Home confirms the account and tenant and offers **Document policies**
+   and **Assess policies**.
+5. **Document policies** — choose your output folder and which areas to document, click
+   **Generate documentation**, watch the live progress, inspect the Markdown, and optionally
+   commit and push under **Git publishing**.
 
 Already have the source or an extracted application package? Open PowerShell 7 in that
 folder and run:
@@ -56,9 +60,9 @@ folder and run:
 .\Start-IntuneDocs.cmd
 ```
 
-| 01 · Connect | 02 · Configure | 03 · Generate |
+| 01 · Sign in | 02 · Document | 03 · Assess |
 |---|---|---|
-| Your tenant, your sign-in. Read only what your account is allowed to see. | Choose the areas and an output folder you control, separate from the application. | Build a readable reference. Re-run when things change, then review the difference. |
+| Your tenant, your sign-in. Read only what your account is allowed to see. | Choose the areas and an output folder you control, separate from the application. Re-run when things change, then review the difference. | Compare configured policies with versioned rule packs. Read-only evidence, not a compliance score. |
 
 > **Before you connect:** Standard delegated Graph sign-in needs administrator consent.
 > The optional portal-session method has different limitations and is not a supported
@@ -75,7 +79,7 @@ identity checks, and output backup/restore, see [the operator guide](docs/operat
 
 ## Assess configured policies
 
-The dashboard's **Assess policies** area compares read-only policy evidence with
+After sign-in, the **Assess policies** path compares read-only policy evidence with
 versioned Microsoft rules and locally imported customer packs. It does not change
 Intune, determine effective targeting, certify a benchmark, or measure device compliance.
 
@@ -91,7 +95,7 @@ Intune, determine effective targeting, certify a benchmark, or measure device co
 > **Missing** means absent/not configured only in the rule's completely read mapped
 > families/policy types, **not absent throughout the tenant**.
 
-1. Connect using the existing sign-in flow and confirm the tenant.
+1. Sign in, confirm the tenant on Home, and open **Assess policies**.
 2. Select target platforms, exact rule-pack versions/profiles, and read their
    classification, partial coverage, source revisions, and SHA-256 identities.
 3. Optionally select a licensed, reviewed **schema-1 JSON** CIS pack and click
@@ -194,7 +198,7 @@ Practical notes, learned the hard way:
 - **The sign-in is remembered** in a profile under `%LOCALAPPDATA%\IntuneDocsStudio`, so this
   is a one-time step. The browser is closed cleanly over CDP so Chromium flushes its cookies
   to disk, and session restore is enabled so the sign-in survives whether or not you tick
-  Azure AD's *Stay signed in?* prompt. Use *forget saved session* to switch accounts.
+  Azure AD's *Stay signed in?* prompt. Use **Forget saved session** on the sign-in page to switch accounts.
 - **The token cannot be renewed** — the refresh token stays inside the portal. Its lifetime is
   set by tenant policy and varies widely (an hour in some tenants, close to a day in others);
   the dashboard shows the actual expiry. When it lapses, sign in again. For anything recurring,

@@ -16,6 +16,7 @@ function dashboard(respond = () => ({})) {
       style: {}, dataset: {},
       addEventListener(event, handler) { this.handlers[event] = handler; },
       appendChild(child) { this.children.push(child); },
+      setAttribute() {}, removeAttribute() {}, focus() {},
       scrollIntoView() {}
     });
     return elements.get(id);
@@ -26,7 +27,7 @@ function dashboard(respond = () => ({})) {
       querySelectorAll: () => [{ checked: true, value: 'compliance' }],
       createElement: () => element(Symbol())
     },
-    window: { location: { search: '' } },
+    window: { location: { search: '' }, addEventListener() {}, scrollTo() {} },
     URLSearchParams,
     fetch: async (url, options) => {
       requests.push({ url, payload: options && JSON.parse(options.body) });

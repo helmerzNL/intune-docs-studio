@@ -37,7 +37,7 @@ behavior, then the existing suites when changes affect shared runtime paths:
 
 ```powershell
 Invoke-Pester .\tests\*.Tests.ps1 -Output Detailed
-node --test .\tests\publishing-ui.test.js
+node --test .\tests\publishing-ui.test.js .\tests\assessment-ui.test.js .\tests\app-shell-ui.test.js
 pwsh -NoProfile -File .\scripts\Test-Repository.ps1
 ```
 
