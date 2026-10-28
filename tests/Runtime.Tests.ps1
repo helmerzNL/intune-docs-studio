@@ -141,6 +141,25 @@ Describe 'PowerShell runtime requirements' {
             }
         }
 
+        It 'keeps the default customer pack location outside the application installation' {
+            Invoke-LocalServer -Name 'pack-storage' -Configure {
+                param($folder)
+                Add-Content "$folder\lib\Assessment.ps1" @'
+$script:OriginalInitializeAssessment = ${function:Initialize-IdsAssessment}
+function Initialize-IdsAssessment {
+    param($State)
+    [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'observed-pack-root.txt'), $State.Config.ImportedPackRoot)
+    & $script:OriginalInitializeAssessment $State
+}
+'@
+            } -Check {
+                param($base)
+                (Invoke-RestMethod "$base/api/health").status | Should -Be 'ok'
+                $observed = [IO.File]::ReadAllText((Join-Path $TestDrive 'pack-storage\lib\observed-pack-root.txt'))
+                $observed | Should -BeExactly (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'IntuneDocsStudio\AssessmentPacks')
+            }
+        }
+
             It 'blocks every identity and stop route during assessments and invalidates results on sign-out' {
                 Invoke-LocalServer -Name 'assessment lifecycle' -Configure {
                     param($folder)

@@ -73,11 +73,63 @@ stopped, so either answer is fine.
 For a guided walkthrough, see [QUICKSTART.md](QUICKSTART.md). For safe updates, runtime
 identity checks, and output backup/restore, see [the operator guide](docs/operations.md).
 
+## Assess configured policies
+
+The dashboard's **Assess policies** area compares read-only policy evidence with
+versioned Microsoft rules and locally imported customer packs. It does not change
+Intune, determine effective targeting, certify a benchmark, or measure device compliance.
+
+> **Only five checks across four partial Microsoft packs ship today.** Windows 11
+> has two Windows 26H2 **baseline** shell SmartScreen checks; macOS has one FileVault
+> **recommendation**. Both map only legacy Endpoint Protection properties over
+> **Graph beta**, not equivalent Settings Catalog or modern endpoint-security settings.
+> The macOS template is deprecated for creating profiles. iOS/iPadOS has one
+> **personal-only** passcode recommendation; Android Enterprise has one
+> **personally-owned work-profile-only** encryption *compliance-policy requirement*
+> recommendation. Requiring encryption is not proof of device encryption/compliance.
+> None is a complete baseline, full benchmark assessment, or compliance score.
+> **Missing** means absent/not configured only in the rule's completely read mapped
+> families/policy types, **not absent throughout the tenant**.
+
+1. Connect using the existing sign-in flow and confirm the tenant.
+2. Select target platforms, exact rule-pack versions/profiles, and read their
+   classification, partial coverage, source revisions, and SHA-256 identities.
+3. Optionally select a licensed, reviewed **schema-1 JSON** CIS pack and click
+   **Import pack**. PDFs and arbitrary Intune exports are not accepted; CIS content
+   is neither bundled nor downloaded. See the [import reference](docs/assessment-rule-packs.md)
+   for all fields, supported operators, and named limits.
+4. Enter known OS versions (Windows uses a build version such as `10.0.22000`)
+   and Android enrollment mode; leave unknowns unknown. These are user-selected
+   context, not discovered device inventory. The current dashboard/API cannot
+   select iOS personal enrollment context, so the bundled personal-only iOS check
+   remains **not assessed** when that applicability cannot be established.
+5. Choose an absolute **assessment report destination**, separate from both the
+   installation and documentation export folders, then **Assess selected policies**.
+   One export or assessment can run at a time; wait before sign-out, reset, or stop.
+6. Read the summary, filter evidence by status, inspect policy/assignment evidence,
+   collection issues and reasons, then open the displayed `assessment.md` and
+   `assessment.json` paths. Each run creates a new report subdirectory.
+
+**Assessment coverage** concerns assessed listed controls, not the entire source
+benchmark. **Configuration alignment** concerns aligned versus assessed controls.
+Unknown/manual/unsupported or incomplete evidence is **not assessed**, not a pass
+or missing result. Unassigned aligned policies do not demonstrate deployment;
+potential conflicts are differing configured values, not proven targeting overlap.
+Groups, exclusions, and filters are evidence, not effective membership resolution.
+
+Imported files persist in `%LOCALAPPDATA%\IntuneDocsStudio\AssessmentPacks` across
+application updates; active tenant results clear on session reset. Reports go
+only to your chosen report root. Treat packs and reports as customer-owned data,
+separate from exports and their Git history. Assessment does not upload data,
+commit, or push reports automatically. See [operator procedures](docs/operations.md)
+for backup, update, and failure handling; never back up tokens or browser profiles.
+
 ### Find your way
 
 [Sign-in and permissions](#which-sign-in-method-should-the-customer-use) ·
 [Requirements](#requirements) ·
 [Output structure](#output-structure) ·
+[Policy assessments](#assess-configured-policies) ·
 [Tracking changes](#the-point-of-re-running-it) ·
 [Azure DevOps publishing](#publishing-to-azure-devops) ·
 [Command line](#unattended--command-line) ·

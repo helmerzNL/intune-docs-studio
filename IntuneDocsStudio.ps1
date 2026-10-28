@@ -77,7 +77,7 @@ $State = [hashtable]::Synchronized(@{
                 summary = $null
             })
         Config  = @{ Port = $Port; OutputPath = $OutputPath; DefaultOutputPath = $OutputPath; Root = $Root; Tenant = $Tenant; DefaultTenant = $Tenant
-            ImportedPackRoot = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'IntuneDocsStudio\baseline-packs') }
+            ImportedPackRoot = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'IntuneDocsStudio\AssessmentPacks') }
     })
 
 Initialize-IdsAssessment $State

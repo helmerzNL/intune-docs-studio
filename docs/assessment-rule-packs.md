@@ -2,9 +2,19 @@
 
 Rule packs describe atomic configuration checks; they never execute code, query
 Graph, fetch source URLs, change policies, or establish certification/device
-compliance. This document defines the pack component and reviewed bundled
-Microsoft catalog. Dashboard upload, collection, evaluation, and reports are
-separate components, not functionality supplied by pack loading alone.
+compliance. This customer import reference defines the pack component and
+reviewed bundled Microsoft catalog used by the dashboard workflow.
+
+> **Current catalog: five checks across four partial Microsoft packs, not a
+> complete baseline or compliance assessment.** Windows 11 has two Windows 26H2
+> baseline shell SmartScreen checks; macOS has one FileVault recommendation.
+> Both map **legacy Endpoint Protection only over Graph beta**, not modern
+> Settings Catalog/endpoint-security policies. The macOS template is deprecated
+> for new profiles. iOS/iPadOS has one **personal-only** passcode recommendation;
+> Android Enterprise has one **personally-owned work-profile-only** encryption
+> compliance-policy requirement recommendation, not proof of device encryption.
+> **Missing** means absent/not configured only in the completely read **mapped
+> families/policy types**, not tenant-wide absence.
 
 Use only reviewed, licensed content. Microsoft security baselines and Microsoft
 recommendations are distinct classifications. Do not redistribute CIS benchmark
@@ -13,10 +23,73 @@ packs remain customer-owned local data. Sources establish provenance; validation
 does **not** establish the correctness, completeness, authority, or licensing of
 a rule.
 
+## Customer workflow and interpretation
+
+1. Connect through the existing read-only sign-in and verify the tenant.
+2. In **Assess policies**, select platforms and exact pack versions/profiles.
+   Read the baseline/recommendations distinction, source revisions, SHA-256
+   identity, and inventory coverage before assessing.
+3. If using CIS, obtain a licensed, reviewed pack in the schema below. Select
+   its local JSON file and click **Import pack**. No PDF parsing, raw Intune
+   export conversion, automatic extraction/download, or bundled CIS content is
+   provided. Customers own rights to their imported material. Schema validation
+   is not verification of the benchmark content or mapping correctness.
+4. Enter known OS versions and Android enrollment mode; leave unknowns unknown.
+   Windows uses a numeric OS build such as `10.0.22000`, not just `11`; the
+   macOS FileVault check requires 10.13+. Android's bundled check applies only
+   to `workProfile`, not fully managed, dedicated, or corporate-owned modes.
+   The bundled iOS rule requires `personallyOwned` applicability. The current
+   dashboard/API exposes only Android enrollment selection, so personal iOS
+   applicability cannot be supplied there and that check remains **not assessed**
+   when unknown. The engine-context example in the mapping review is not an
+   accepted iOS enrollment field on the start API.
+5. Choose an absolute report root disjoint from the installation and
+   documentation export roots. Click **Assess selected policies**; an export
+   and assessment cannot run together. Wait before identity changes/reset/stop.
+6. Inspect summary counts, filter controls by status, review expected/configured
+   typed values, per-policy evidence, assignment completeness and collection
+   issues. Open the displayed Markdown/JSON report pair. Both describe the same
+   evidence, sources, pack versions/hashes, and scope limitations.
+
+Imported files are stored under
+`%LOCALAPPDATA%\IntuneDocsStudio\AssessmentPacks`, outside the installation and
+source tree, and survive application updates. Session reset clears active tenant
+results, not imported files or saved reports. Reports go **only** to the chosen
+report root, in a new run directory; neither reports nor imports are product
+resources. No automatic uploads, commits, or Git pushes occur. Back them up only
+as customer-owned data, subject to licensing/access controls, never with tokens,
+credentials, or portal browser profiles. See [operator procedures](operations.md)
+for updates, legacy development-folder handling, and restore.
+
+**Configuration alignment is not device compliance**, certification, effective
+protection, or targeting resolution. Compliance-family mappings assess the
+configured requirement, not device-reported compliance. Baseline classification
+does not make a partial Windows pack a complete Microsoft baseline. Non-Windows
+packs are Microsoft recommendations, not native Microsoft security baselines.
+Source URLs/revisions and original-byte SHA-256 establish reproducibility, not
+proof that a rule is correct or rights are held.
+
+Missing requires complete, applicable mapped evidence. Unknown applicability,
+unsupported shapes, failed source/settings reads, pagination gaps, and manual
+or compound logic that cannot be automated are **not assessed**, never aligned
+or missing. Aligned but unassigned policies do not demonstrate deployment;
+potential conflicts are differing configured values, not proven assignment
+overlap. Included/excluded groups and filters do not resolve effective membership.
+Assignment-only failures remain unknown assignment evidence without discarding
+successfully read configuration values. Individual mismatches remain relevant
+even when incomplete aggregate evidence is not assessed.
+
+Assessment coverage counts assessed controls among the listed controls except
+known exclusions; unknown applicability stays in its denominator. Configuration
+alignment counts aligned among assessed controls (including misaligned, missing,
+and potential conflict). Zero denominators are unavailable, not 100%. Partial
+packs cannot establish a full source inventory or whole-benchmark coverage.
+Manual controls need human review outside this automation.
+
 ## Local assessment API
 
-The local server exposes the following backend routes (dashboard controls are
-a separate integration). All responses are JSON with `Cache-Control: no-store`.
+The local server exposes the following routes used by the dashboard. All
+responses are JSON with `Cache-Control: no-store`.
 
 | Route | Success response |
 |---|---|
@@ -32,7 +105,7 @@ listener. Imports accept only `{ "content": "original UTF-8 JSON text" }`,
 never a server-side file path. The import envelope is bounded to 64 MiB,
 including chunked/unknown-length streams; decoded pack content remains bounded
 to 10 MiB **before** pack parsing. Imported bytes are stored locally under
-`%LOCALAPPDATA%\IntuneDocsStudio\baseline-packs`, outside the installation.
+`%LOCALAPPDATA%\IntuneDocsStudio\AssessmentPacks`, outside the installation.
 An ID/version collision with different bytes, including a bundled identity,
 is rejected without replacing the valid catalog entry.
 
