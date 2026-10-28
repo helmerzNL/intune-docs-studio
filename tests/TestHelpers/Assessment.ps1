@@ -20,5 +20,32 @@ function New-IdsTestPackBytes {
             })
         })
     }
+
     return ,([Text.Encoding]::UTF8.GetBytes(($pack | ConvertTo-Json -Depth 20)))
+}
+
+function New-IdsTestAssessmentPolicy {
+    param([string]$Family = 'settingsCatalog',
+        [string]$PolicyType = 'deviceManagementConfigurationPolicy',
+        [object[]]$Settings = @(), $Template = $null)
+    [pscustomobject]@{
+        key = "${Family}:synthetic"; id = 'synthetic'; name = 'Synthetic Windows 11 fully managed'
+        family = $Family; policyType = $PolicyType; platform = $null; template = $Template
+        osMin = $null; osMax = $null; enrollmentMode = $null
+        assignments = @(); settingsComplete = $true; assignmentsComplete = $true
+        rawSettings = $Settings
+    }
+}
+
+function New-IdsTestSettingInstance {
+    param([string]$Kind = 'simple', [string]$Id = 'synthetic.setting', $Value = 0)
+    $typeKind = $Kind.Substring(0, 1).ToUpperInvariant() + $Kind.Substring(1)
+    $instance = @{ '@odata.type' = "#microsoft.graph.deviceManagementConfiguration${typeKind}SettingInstance"; settingDefinitionId = $Id }
+    $instance["${Kind}SettingValue"] = $Value
+    return $instance
+}
+
+function New-IdsTestAssessmentCollection {
+    param([object[]]$Policies = @())
+    [pscustomobject]@{ policies = $Policies; sources = @(); issues = @() }
 }

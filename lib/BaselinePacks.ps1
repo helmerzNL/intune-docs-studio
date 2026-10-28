@@ -7,6 +7,37 @@ function Get-IdsAssessmentPropertyCatalog {
             systemIntegrityProtectionEnabled = 'boolean'
             passwordMinimumLength = 'number'
         }
+        # Graph resource definitions, reviewed 2026-10-28 (encoding only).
+        # https://learn.microsoft.com/en-us/graph/api/resources/intune-deviceconfig-windows10compliancepolicy?view=graph-rest-1.0
+        'compliance:windows10CompliancePolicy' = @{
+            storageRequireEncryption = 'boolean'
+            passwordMinimumLength = 'number'
+            passwordRequired = 'boolean'
+        }
+        # https://learn.microsoft.com/en-us/graph/api/resources/intune-deviceconfig-ioscompliancepolicy?view=graph-rest-1.0
+        'compliance:iosCompliancePolicy' = @{
+            passcodeRequired = 'boolean'
+            passcodeMinimumLength = 'number'
+            securityBlockJailbrokenDevices = 'boolean'
+        }
+        # https://learn.microsoft.com/en-us/graph/api/resources/intune-deviceconfig-androidworkprofilecompliancepolicy?view=graph-rest-1.0
+        'compliance:androidWorkProfileCompliancePolicy' = @{
+            passwordRequired = 'boolean'
+            passwordMinimumLength = 'number'
+            storageRequireEncryption = 'boolean'
+        }
+        # https://learn.microsoft.com/en-us/graph/api/resources/intune-deviceconfig-androiddeviceownercompliancepolicy?view=graph-rest-beta
+        'compliance:androidDeviceOwnerCompliancePolicy' = @{
+            passwordRequired = 'boolean'
+            passwordMinimumLength = 'number'
+        }
+        # https://learn.microsoft.com/en-us/graph/api/resources/intune-deviceconfig-macosgeneraldeviceconfiguration?view=graph-rest-1.0
+        'deviceConfiguration:macOSGeneralDeviceConfiguration' = @{
+            passwordRequired = 'boolean'
+            passwordMinimumLength = 'number'
+            passwordRequiredType = 'string'
+            emailInDomainSuffixes = 'stringSet'
+        }
     }
 }
 
