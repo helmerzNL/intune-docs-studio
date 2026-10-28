@@ -30,7 +30,8 @@ window open while you work — closing it stops the tool.
 
 ## 3. Sign in
 
-Click **Sign in via the Intune portal** (the top, recommended option).
+On the landing page, click **Sign in via the Intune portal** (the recommended option). The
+other sign-in methods are under **Advanced sign-in options**.
 
 A separate browser window opens on the Intune admin center. Sign in as you normally would.
 That window closes by itself once the tool has what it needs — usually within seconds.
@@ -42,13 +43,16 @@ That window closes by itself once the tool has what it needs — usually within 
 **Choose the right account.** If you are asked which account to use, pick the administrator
 for the tenant you want to document — not your everyday account, if those differ.
 
+After sign-in, Home shows the signed-in account and tenant and two paths:
+**Document policies** and **Assess policies**.
+
 ## 4. Choose what to document
 
-Pick an **output folder**. Use a separate folder per tenant; the tool will stop you if you
-point two different tenants at the same folder.
+Open **Document policies** and pick an **output folder**. Use a separate folder per tenant;
+the tool will stop you if you point two different tenants at the same folder.
 
-All areas are selected by default. Tick **Commit to git** if the folder is a Git working copy
-and you want each run recorded as a commit.
+All areas are selected by default. Under **Git publishing (optional)**, tick **Commit to git**
+if the folder is a Git working copy and you want each run recorded as a commit.
 
 To publish to **Azure DevOps**, paste an existing repository's clone URL under **Git publishing**
 and optionally choose a target branch. Use an empty output folder for the first clone, or a
@@ -80,8 +84,8 @@ stopped at that point, so either answer is fine.
 > configured in the completely read **mapped families/policy types only**, not
 > tenant-wide absence.
 
-1. Sign in, confirm the tenant, and find **Assess policies** beside the export
-   workflow. Select platforms and exact pack versions/profiles. Read their
+1. Sign in, confirm the tenant on Home, and open **Assess policies**.
+   Select platforms and exact pack versions/profiles. Read their
    source revision, hash, classification, and coverage before running.
 2. For CIS, choose a customer-licensed, reviewed JSON rule pack and click
    **Import pack**. No CIS content is bundled or downloaded. PDFs and raw Intune
