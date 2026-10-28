@@ -37,11 +37,17 @@ const views = { loading: 'viewLoading', landing: 'viewLanding', home: 'viewHome'
 const viewHeadings = { landing: 'landingTitle', home: 'homeTitle', document: 'documentTitle', assess: 'assessTitle' };
 const navLinks = { home: 'navHome', document: 'navDocument', assess: 'navAssess' };
 const routes = { '#/document': 'document', '#/assess': 'assess' };
+let lastRoute = 'home';
+
+// In-page anchors such as the skip link (#main) keep the current route.
+const isRouteHash = (hash) => !hash || hash.startsWith('#/');
 
 function routeView() {
   if (!state) return 'loading';
   if (!state.auth?.connected) return 'landing';
-  return routes[window.location.hash || ''] || 'home';
+  const hash = window.location.hash || '';
+  if (isRouteHash(hash)) lastRoute = routes[hash] || 'home';
+  return lastRoute;
 }
 
 function renderRoute() {
@@ -58,8 +64,9 @@ function renderRoute() {
 }
 
 window.addEventListener('hashchange', () => {
+  const routed = isRouteHash(window.location.hash || '');
   const heading = viewHeadings[renderRoute()];
-  if (!heading) return;
+  if (!heading || !routed) return;
   window.scrollTo(0, 0);
   $(heading).focus({ preventScroll: true });
 });

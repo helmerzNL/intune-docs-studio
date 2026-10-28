@@ -127,6 +127,18 @@ test('signed-in routes show exactly one workspace view and mark the active link'
   }
 });
 
+test('the skip link keeps the current workspace instead of routing Home', async () => {
+  const d = shell({ hash: '#/assess', respond: stateOnly(signedIn()) });
+  await d.settle();
+  d.clearFocus();
+  d.navigate('#main');
+  assert.deepEqual(d.visibleViews(), ['viewAssess']);
+  assert.equal(d.element('navAssess').getAttribute('aria-current'), 'page');
+  assert.notEqual(d.focused(), 'homeTitle');
+  d.navigate('#/document');
+  assert.deepEqual(d.visibleViews(), ['viewDocument']);
+});
+
 test('Home greets the account and shows the tenant as text', async () => {
   const d = shell({ respond: stateOnly(signedIn({ auth: { ...signedIn().auth, account: '<b>admin</b>' } })) });
   await d.settle();
