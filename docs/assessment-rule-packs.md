@@ -2,9 +2,9 @@
 
 Rule packs describe atomic configuration checks; they never execute code, query
 Graph, fetch source URLs, change policies, or establish certification/device
-compliance. This document defines the pack component. Dashboard upload,
-collection, evaluation, reports, and production Microsoft packs are separate
-implementation tasks, not functionality supplied by this component alone.
+compliance. This document defines the pack component and reviewed bundled
+Microsoft catalog. Dashboard upload, collection, evaluation, and reports are
+separate components, not functionality supplied by pack loading alone.
 
 Use only reviewed, licensed content. Microsoft security baselines and Microsoft
 recommendations are distinct classifications. Do not redistribute CIS benchmark
@@ -156,8 +156,11 @@ normalizer. The initial reviewed entries are:
 Encoding source:
 [Microsoft Graph v1.0 macOSCompliancePolicy resource](https://learn.microsoft.com/en-us/graph/api/resources/intune-deviceconfig-macoscompliancepolicy?view=graph-rest-1.0).
 These definitions establish property names/types only, **not Microsoft
-recommended values**. Other property selectors remain rejected until their
-Graph definitions are reviewed and the catalog is explicitly extended.
+recommended values**. The catalog also contains the reviewed encoding entries
+used by collection/normalization tests and the production mappings documented
+below. A catalog entry alone does not establish a recommendation. Other property
+selectors remain rejected until their Graph definitions are reviewed and the
+catalog is explicitly extended.
 
 #### Operator/type matrix
 
@@ -290,3 +293,107 @@ recommended configuration from it.
   ]
 }
 ```
+
+## Reviewed bundled Microsoft catalog (2026-10-28)
+
+All four packs are version **1.0.0**, with **partial** inventories and unknown
+total source-control counts (`totalSourceControls: null`). There are five listed
+atomic checks, not five complete benchmark controls. The `IDS-*` control IDs are
+application-owned identifiers, **not official Microsoft framework numbering**.
+Titles and reference descriptions are concise original summaries of public
+facts. No CIS content is included.
+
+| File / pack ID | Classification / fixed guidance version | Profile / listed checks |
+|---|---|---|
+| `baselines\microsoft-windows-11.json` / `microsoft-windows-11` | **baseline** / Windows 26H2 | Shell SmartScreen through legacy Endpoint Protection; 2 atomic checks |
+| `baselines\microsoft-macos.json` / `microsoft-macos` | **recommendations** / Zero Trust endpoints, updated 2026-03-26 | FileVault enablement through legacy Endpoint Protection; 1 check |
+| `baselines\microsoft-ios-ipados.json` / `microsoft-ios-ipados` | **recommendations** / iOS/iPadOS personal level 1, updated 2026-10-22 | Personal device passcode requirement through legacy device restrictions; 1 check |
+| `baselines\microsoft-android-enterprise.json` / `microsoft-android-enterprise` | **recommendations** / Android personally-owned work profile level 2, updated 2026-07-01 | Device encryption compliance requirement; 1 check |
+
+### Source evidence
+
+These pages were independently read on **2026-10-28**. Revisions are the served
+Learn `updated_at` date plus the content Git revision, not an invented framework
+release. Full hashes and retrieval dates are also recorded in each pack.
+Recommendation/value sources and Graph **encoding-only** sources are separate.
+
+| Evidence key | Official source / revision | Reviewed section and fact |
+|---|---|---|
+| W | [Windows baseline reference](https://learn.microsoft.com/en-us/intune/device-security/security-baselines/ref-windows-mdm-settings?pivots=mdm-26h2), updated 2026-10-05, Git `63ff44f43d17d04e8cbcf5c1ab60f7614f49762e` | **Security Baseline for Windows, version 26H2**, Administrative Templates > Windows Components > File Explorer: SmartScreen enabled; device option warns and prevents bypass. The [baseline overview](https://learn.microsoft.com/en-us/intune/device-security/security-baselines/overview), same revision, lists Windows 26H2 without a preview label. |
+| WG | [windows10EndpointProtectionConfiguration, Graph beta](https://learn.microsoft.com/en-us/graph/api/resources/intune-deviceconfig-windows10endpointprotectionconfiguration?view=graph-rest-beta), updated 2026-01-08, Git `0b52ae19972cd7e12cd0217dfb7ea043fad86019` | Properties and JSON representation: `smartScreenEnableInShell` and `smartScreenBlockOverrideForFiles` are Boolean. The former configures Windows SmartScreen; the latter controls bypass of warnings for files, not Edge URL warnings. |
+| WC | [SmartScreen Policy CSP](https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-smartscreen), updated 2026-10-23, Git `6e5887a2f20ef9f4a897a01f069534e71a53d71e` | `EnableSmartScreenInShell`: 1 enables; `PreventOverrideForFilesInShell`: 1 prevents override. Both are device-scoped, available on Windows 10 1703+ including Windows 11; group-policy mappings identify the SmartScreen setting and its option. These CSP integers establish semantics, **not Graph encodings**; the mapped Graph properties are booleans. |
+| M | [Zero Trust endpoints](https://learn.microsoft.com/en-us/security/zero-trust/deploy/endpoints), updated 2026-03-26, Git `54dc947cde988cf65f5189e174c3a227ac950d47` | Deployment objective 3, Encrypt devices: use FileVault for macOS full-disk encryption. This is directional recommendation guidance, not a macOS security baseline or a recovery-key prescription. |
+| MD | [FileVault deployment](https://learn.microsoft.com/en-us/intune/device-configuration/endpoint-security/encrypt-filevault-macos), updated 2026-09-28, Git `73d3f16e19f4e30a39496fe4bb4ff0be85c4f296` | Prerequisites: macOS 10.13+ and user-approved MDM. Policy types: the legacy Endpoint Protection template includes FileVault but is deprecated for creating profiles; use Endpoint security/Settings Catalog for new deployment. |
+| MG | [macOSEndpointProtectionConfiguration, Graph beta](https://learn.microsoft.com/en-us/graph/api/resources/intune-deviceconfig-macosendpointprotectionconfiguration?view=graph-rest-beta), updated 2026-01-08, Git `0b52ae19972cd7e12cd0217dfb7ea043fad86019` | `fileVaultEnabled` is Boolean: whether FileVault should be enabled. It **configures** FileVault; it is not `macOSCompliancePolicy.storageRequireEncryption`, which only requires encryption for compliance. |
+| I | [iOS/iPadOS personal security configurations](https://learn.microsoft.com/en-us/intune/device-security/security-configurations/ios-ipados-personal), updated 2026-10-22, Git `81d3141082938db877de43c78cb57af1ea40f62b` | Personal basic security (level 1), **Device restrictions**, Password: require a password = Yes. Level 1 is the recommended minimum for personal devices. The table is not a compliance-policy table despite the article introduction mentioning compliance. |
+| IG | [iosGeneralDeviceConfiguration, Graph v1.0](https://learn.microsoft.com/en-us/graph/api/resources/intune-deviceconfig-iosgeneraldeviceconfiguration?view=graph-rest-1.0), updated 2025-12-03, Git `e8eace7fa9bfa9e7afacfe9f5dec1ba42ffd493f` | `passcodeRequired` is Boolean: require a passcode. This deviceConfiguration resource maps the restriction, unlike a compliance-only requirement. |
+| A | [Android personally-owned work profile configurations](https://learn.microsoft.com/en-us/intune/device-security/security-configurations/android-personally-owned), updated 2026-07-01, Git `a60f43f6f562ded6195ddd8d888335f2d8e11e73` | Personally-owned work profile enhanced security (level 2), **Device compliance**, System Security: require encryption of data storage = Require. Level 2 is the minimum recommended level; there is no level 1 offering here. |
+| AG | [androidWorkProfileCompliancePolicy, Graph v1.0](https://learn.microsoft.com/en-us/graph/api/resources/intune-deviceconfig-androidworkprofilecompliancepolicy?view=graph-rest-1.0), updated 2025-12-03, Git `e8eace7fa9bfa9e7afacfe9f5dec1ba42ffd493f` | `storageRequireEncryption` is Boolean: require encryption on Android devices. This is a compliance requirement, not a policy that initiates encryption. |
+
+### Per-control mapping review
+
+Evidence keys resolve to the exact URLs/revisions/sections above. Every row uses
+`operator: eq`, `expected: true`, `valueType: boolean`, `caseSensitive: true`,
+with null `settingId` and `instancePath`. Every policy type is in the
+`microsoft.graph` namespace. Positive/negative examples below are **synthetic
+raw Graph-property payloads**, not tenant evidence, and pass through production
+`Read-IdsBaselinePack`, `ConvertTo-IdsAssessmentSnapshot`, and
+`Compare-IdsAssessment` in `tests\AssessmentBaselines.Tests.ps1`.
+
+| Pack/version | Control ID | Source URL/revision/section | Recommended value | Graph family / policy type + property | Encoding/type | Applicability | Synthetic positive case | Synthetic negative case |
+|---|---|---|---|---|---|---|---|---|
+| microsoft-windows-11 / 1.0.0 | IDS-WIN-SHELL-SMARTSCREEN | W + WG + WC | Enabled | deviceConfiguration / windows10EndpointProtectionConfiguration / smartScreenEnableInShell | JSON Boolean `true` | Windows 11, OS 10.0.22000+; managed device scope | `smartScreenEnableInShell: true` → aligned | `smartScreenEnableInShell: false` → misaligned |
+| microsoft-windows-11 / 1.0.0 | IDS-WIN-SHELL-NO-BYPASS | W + WG + WC | Warn and prevent bypass: prevent override component | deviceConfiguration / windows10EndpointProtectionConfiguration / smartScreenBlockOverrideForFiles | JSON Boolean `true` | Windows 11, OS 10.0.22000+; managed device scope | `smartScreenBlockOverrideForFiles: true` → aligned | `smartScreenBlockOverrideForFiles: false` → misaligned |
+| microsoft-macos / 1.0.0 | IDS-MAC-FILEVAULT | M + MD + MG | Configure FileVault enabled | deviceConfiguration / macOSEndpointProtectionConfiguration / fileVaultEnabled | JSON Boolean `true` | macOS 10.13+, Intune-managed/user-approved MDM prerequisite | `fileVaultEnabled: true` → aligned | `fileVaultEnabled: false` → misaligned |
+| microsoft-ios-ipados / 1.0.0 | IDS-IOS-PASSCODE | I + IG | Require password = Yes | deviceConfiguration / iosGeneralDeviceConfiguration / passcodeRequired | JSON Boolean `true` | Personal iOS/iPadOS only; context mode `personallyOwned` | `passcodeRequired: true` → aligned | `passcodeRequired: false` → misaligned |
+| microsoft-android-enterprise / 1.0.0 | IDS-ANDROID-ENCRYPTION | A + AG | Require encryption for compliance | compliance / androidWorkProfileCompliancePolicy / storageRequireEncryption | JSON Boolean `true` | Personally-owned Android Enterprise work profile only; context/policy mode `workProfile` | `storageRequireEncryption: true` → aligned | `storageRequireEncryption: false` → misaligned |
+
+### Coverage boundaries and interpretation
+
+- **Partial means partial.** Other controls in these sources are not assessed;
+  no complete inventory denominator has been reviewed. Percentages describe only
+  listed checks, never platform security, device compliance, or certification.
+- Windows uses real **26H2 baseline values**, not relabeled Zero Trust compliance
+  guidance. Choosing those values as the comparison reference does not assert
+  the target device runs 26H2: the two shell settings exist on earlier Windows
+  11 releases too. OS context uses Windows build versions (for example
+  `10.0.22000`), not the marketing label `11`.
+- Windows enablement and bypass prevention are **separate atomic checks**.
+  An aligned bypass flag alone does not imply SmartScreen is enabled. Both
+  must be reviewed, including assignment evidence; no compound/effective-device
+  protection claim is made.
+- Windows and macOS mappings intentionally cover **legacy deviceConfiguration
+  properties over Graph beta**, supported by the existing beta transport. Beta
+  resource definitions can change more frequently. macOS Endpoint Protection is
+  deprecated for new profile creation; this pack assesses existing profiles,
+  not a recommended deployment route.
+- Modern Settings Catalog, ADMX, intent, endpoint-security and security-baseline
+  template setting IDs are **not mapped** here: no static Graph identifier was
+  established. A setting present only in those families cannot satisfy these
+  property checks. **Missing means absent from the mapped policy family**, not
+  absent from every policy in the tenant. These packs do not establish conflict
+  detection across equivalent modern settings. Review those policies separately
+  until verified alternative mappings are added in a new pack version.
+- FileVault assessment checks **configuration enablement only**, not successful
+  encryption, key escrow, key type/rotation, user approval, or deferral behavior.
+  A compliance encryption requirement cannot satisfy this configuration check.
+  No recovery-key material is collected by these property mappings.
+- iOS uses the source's **device restriction** setting, not a compliance-policy
+  substitute. Personal guidance is not applied to corporate/supervised/ADE
+  contexts. Callers must explicitly provide
+  `context.enrollmentModes.iosIpados = 'personallyOwned'`; this is selected
+  assessment context, **not discovered ownership**. Unknown mode is not assessed.
+- Android coverage is personally-owned `workProfile` only, not fully managed,
+  dedicated, or corporate-owned work profile. Its encryption rule assesses a
+  **compliance requirement**, not encryption deployment or actual device state.
+  Unknown enrollment mode is not assessed; excluded modes are not applicable.
+- macOS **Change At Next Auth** was not mapped: its recommended false value
+  cannot justify inventing a Settings Catalog ID or using compliance password
+  properties. iOS/Android password-length/type rules and other source settings
+  remain outside this intentionally small reviewed inventory.
+
+Each mapped property also has synthetic absent (`missing`) and string `"true"`
+(`notAssessed`, never boolean-coerced) cases. Additional tests prevent macOS/iOS
+compliance substitution and exercise excluded/unknown enrollment and macOS OS
+applicability. Tests check mapping behavior; the source review above, not URL or
+schema assertions alone, establishes the provenance of the chosen values.

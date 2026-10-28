@@ -38,6 +38,21 @@ function Get-IdsAssessmentPropertyCatalog {
             passwordRequiredType = 'string'
             emailInDomainSuffixes = 'stringSet'
         }
+        # Graph beta legacy Endpoint Protection profiles; encoding only.
+        # https://learn.microsoft.com/en-us/graph/api/resources/intune-deviceconfig-windows10endpointprotectionconfiguration?view=graph-rest-beta
+        'deviceConfiguration:windows10EndpointProtectionConfiguration' = @{
+            smartScreenEnableInShell = 'boolean'
+            smartScreenBlockOverrideForFiles = 'boolean'
+        }
+        # https://learn.microsoft.com/en-us/graph/api/resources/intune-deviceconfig-macosendpointprotectionconfiguration?view=graph-rest-beta
+        'deviceConfiguration:macOSEndpointProtectionConfiguration' = @{
+            fileVaultEnabled = 'boolean'
+        }
+        # Graph v1.0 device restrictions, not a compliance requirement.
+        # https://learn.microsoft.com/en-us/graph/api/resources/intune-deviceconfig-iosgeneraldeviceconfiguration?view=graph-rest-1.0
+        'deviceConfiguration:iosGeneralDeviceConfiguration' = @{
+            passcodeRequired = 'boolean'
+        }
     }
 }
 

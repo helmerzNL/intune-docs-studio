@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "id": "microsoft-macos",
+  "version": "1.0.0",
+  "framework": "Microsoft",
+  "frameworkVersion": "Zero Trust endpoints guidance 2026-03-26",
+  "classification": "recommendations",
+  "platform": "macos",
+  "profile": "FileVault enablement - legacy Endpoint Protection mapping only",
+  "sourceRevision": "Zero Trust endpoints updated 2026-03-26",
+  "sources": [
+    {
+      "id": "zero-trust-endpoints",
+      "url": "https://learn.microsoft.com/en-us/security/zero-trust/deploy/endpoints",
+      "revision": "updated 2026-03-26; git 54dc947cde988cf65f5189e174c3a227ac950d47",
+      "retrievedOn": "2026-10-28"
+    },
+    {
+      "id": "filevault-deployment",
+      "url": "https://learn.microsoft.com/en-us/intune/device-configuration/endpoint-security/encrypt-filevault-macos",
+      "revision": "updated 2026-09-28; git 73d3f16e19f4e30a39496fe4bb4ff0be85c4f296",
+      "retrievedOn": "2026-10-28"
+    },
+    {
+      "id": "macos-graph",
+      "url": "https://learn.microsoft.com/en-us/graph/api/resources/intune-deviceconfig-macosendpointprotectionconfiguration?view=graph-rest-beta",
+      "revision": "Graph beta; updated 2026-01-08; git 0b52ae19972cd7e12cd0217dfb7ea043fad86019",
+      "retrievedOn": "2026-10-28"
+    }
+  ],
+  "coverage": { "inventory": "partial", "totalSourceControls": null },
+  "controls": [
+    {
+      "id": "IDS-MAC-FILEVAULT",
+      "title": "Configure FileVault encryption",
+      "sourceIds": ["zero-trust-endpoints", "filevault-deployment", "macos-graph"],
+      "reference": "Zero Trust endpoints / Deploy policies that enforce DLP / Encrypt devices: use FileVault for macOS; legacy configuration enablement only, not encryption compliance or recovery-key configuration",
+      "applicability": { "osMin": "10.13", "osMax": null, "enrollmentModes": [] },
+      "manualReason": null,
+      "mappings": [
+        {
+          "family": "deviceConfiguration",
+          "policyTypes": ["macOSEndpointProtectionConfiguration"],
+          "settingId": null,
+          "property": "fileVaultEnabled",
+          "instancePath": null,
+          "valueType": "boolean",
+          "operator": "eq",
+          "expected": true,
+          "caseSensitive": true
+        }
+      ]
+    }
+  ]
+}
