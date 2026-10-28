@@ -127,7 +127,8 @@ function ConvertTo-IdsCatalogObservations {
         return
     }
     $collection = $valueName -match 'Collection'
-    if ($collection -and $container -isnot [Collections.IList]) {
+    if (($collection -and $container -isnot [Collections.IList]) -or
+        (-not $collection -and $container -isnot [Collections.IDictionary] -and $container -isnot [pscustomobject])) {
         Add-IdsNormalizedObservation $State $id $null $path $null -Supported $false
         return
     }
@@ -137,6 +138,13 @@ function ConvertTo-IdsCatalogObservations {
             Add-IdsNormalizedObservation $State $id $null $path $null -Secret $true
             return
         }
+        # Groups inherit template references too; unresolved parents cannot
+        # provide trusted evidence through their descendants.
+        if (($entry -isnot [Collections.IDictionary] -and $entry -isnot [pscustomobject]) -or
+            (Get-IdsAssessmentMember (Get-IdsAssessmentMember $entry 'settingValueTemplateReference') 'useTemplateDefault') -eq $true) {
+            Add-IdsNormalizedObservation $State $id $null $path $null -Supported $false
+            return
+        }
     }
     $isGroup = $valueName -like 'group*'
     $isChoice = $valueName -like 'choice*'
@@ -144,10 +152,8 @@ function ConvertTo-IdsCatalogObservations {
         $values = [Collections.Generic.List[object]]::new()
         $valid = $true
         foreach ($entry in $entries) {
-            if ($entry -isnot [Collections.IDictionary] -and $entry -isnot [pscustomobject]) { $valid = $false; continue }
             $hasValue = if ($entry -is [Collections.IDictionary]) { $entry.Contains('value') } else { $null -ne $entry.PSObject.Properties['value'] }
-            $templateDefault = (Get-IdsAssessmentMember (Get-IdsAssessmentMember $entry 'settingValueTemplateReference') 'useTemplateDefault') -eq $true
-            if (-not $hasValue -or $templateDefault) { $valid = $false; continue }
+            if (-not $hasValue) { $valid = $false; continue }
             $declaredType = ([string](Get-IdsAssessmentMember $entry '@odata.type')) -replace '^#?microsoft\.graph\.', ''
             $expectedType = switch -CaseSensitive ($declaredType) {
                 deviceManagementConfigurationStringSettingValue { 'string' }
@@ -158,6 +164,10 @@ function ConvertTo-IdsCatalogObservations {
             }
             if ($declaredType -and -not $expectedType) { $valid = $false; continue }
             $value = Get-IdsAssessmentMember $entry 'value'
+            if ($null -ne $value -and (Get-IdsAssessmentValueType $value) -cnotin @('boolean', 'number', 'string')) {
+                $valid = $false
+                continue
+            }
             if ($null -ne $value -and $expectedType -and (Get-IdsAssessmentValueType $value) -cne $expectedType) { $valid = $false }
             if ($collection -and $null -eq $value) { $valid = $false }
             if ($isChoice -and $null -ne $value -and $value -isnot [string]) { $valid = $false }
@@ -175,6 +185,7 @@ function ConvertTo-IdsCatalogObservations {
             }
         }
         Add-IdsNormalizedObservation $State $id $null $path $value $valueType -Supported $valid
+        if (-not $valid) { return }
     }
     if ($isGroup -or $isChoice) {
         $groupIndex = 0

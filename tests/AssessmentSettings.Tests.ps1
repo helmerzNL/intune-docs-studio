@@ -320,6 +320,90 @@ Describe 'Typed assessment normalization' {
         $snapshot.observations[0].supported | Should -BeTrue
     }
 
+    It 'does not trust descendants of unresolved template-backed <Kind> values' -ForEach @(
+        @{ Kind = 'Group' }; @{ Kind = 'GroupCollection' }
+        @{ Kind = 'Choice' }; @{ Kind = 'ChoiceCollection' }
+    ) {
+        $entry = @{
+            settingValueTemplateReference = @{ settingValueTemplateId = 'synthetic-template'; useTemplateDefault = $true }
+            children = @((New-IdsTestSettingInstance -Id 'child' -Value @{ value = 0 }))
+        }
+        if ($Kind -like 'Choice*') { $entry.value = 'parent_0' }
+        $member = if ($Kind -like '*Collection') { "$($Kind.Replace('Collection', ''))SettingCollectionValue" } else { "${Kind}SettingValue" }
+        $instance = @{ '@odata.type' = "#microsoft.graph.deviceManagementConfiguration${Kind}SettingInstance"; settingDefinitionId = 'parent' }
+        if ($Kind -like '*Collection') {
+            $instance['@odata.type'] = "#microsoft.graph.deviceManagementConfiguration$($Kind.Replace('Collection', ''))SettingCollectionInstance"
+            $instance[$member] = @($entry)
+        } else { $instance[$member] = $entry }
+        $policy = New-IdsTestAssessmentPolicy -Settings @(@{ settingInstance = $instance })
+        $policy.platform = 'macos'
+        $collection = New-IdsTestAssessmentCollection @($policy)
+        $collection.sources = @([pscustomobject]@{ family = 'settingsCatalog'; platform = 'macos'; complete = $true; errors = @() })
+        $snapshot = ConvertTo-IdsAssessmentSnapshot $collection
+        @($snapshot.observations | Where-Object { $_.supported -and $_.configured }).Count | Should -Be 0
+        @($snapshot.observations | Where-Object { -not $_.supported }).Count | Should -BeGreaterThan 0
+        $snapshot.policies[0].settingsComplete | Should -BeFalse
+        $snapshot.sources[0].complete | Should -BeFalse
+        $snapshot.issues.Count | Should -BeGreaterThan 0
+    }
+
+    It 'preserves explicit template overrides and their zero-valued children for <Kind>' -ForEach @(
+        @{ Kind = 'group' }; @{ Kind = 'choice' }
+    ) {
+        $entry = @{
+            settingValueTemplateReference = @{ settingValueTemplateId = 'synthetic-template'; useTemplateDefault = $false }
+            children = @((New-IdsTestSettingInstance -Id 'child' -Value @{ value = 0 }))
+        }
+        if ($Kind -eq 'choice') { $entry.value = 'parent_0' }
+        $snapshot = Get-TestCatalogSnapshot (New-IdsTestSettingInstance $Kind parent $entry)
+        $child = @($snapshot.observations | Where-Object settingId -EQ child)
+        $child.Count | Should -Be 1
+        $child[0].supported | Should -BeTrue
+        $child[0].configured | Should -BeTrue
+        $child[0].value | Should -Be 0
+        $snapshot.policies[0].settingsComplete | Should -BeTrue
+        $snapshot.issues.Count | Should -Be 0
+    }
+
+    It 'does not traverse children of a malformed choice parent' {
+        $snapshot = Get-TestCatalogSnapshot (New-IdsTestSettingInstance choice parent @{
+            value = 0; children = @((New-IdsTestSettingInstance -Id 'child' -Value @{ value = 0 }))
+        })
+        $snapshot.observations.Count | Should -Be 1
+        $snapshot.observations[0].supported | Should -BeFalse
+        $snapshot.policies[0].settingsComplete | Should -BeFalse
+    }
+
+    It 'rejects malformed <Label> cardinality with explicit incomplete evidence' -ForEach @(
+        @{ Label = 'empty simple container'; Kind = 'simple'; Container = @() }
+        @{ Label = 'singleton simple container'; Kind = 'simple'; Container = @(@{ value = 0 }) }
+        @{ Label = 'multiple simple containers'; Kind = 'simple'; Container = @(@{ value = 0 }, @{ value = 1 }) }
+        @{ Label = 'empty choice container'; Kind = 'choice'; Container = @() }
+        @{ Label = 'singleton choice container'; Kind = 'choice'; Container = @(@{ value = 'id_0' }) }
+        @{ Label = 'multiple choice containers'; Kind = 'choice'; Container = @(@{ value = 'id_0' }, @{ value = 'id_1' }) }
+        @{ Label = 'empty group container'; Kind = 'group'; Container = @() }
+        @{ Label = 'singleton group container'; Kind = 'group'; Container = @(@{ children = @() }) }
+        @{ Label = 'multiple group containers'; Kind = 'group'; Container = @(@{ children = @() }, @{ children = @() }) }
+        @{ Label = 'non-object group container'; Kind = 'group'; Container = 'invalid' }
+        @{ Label = 'empty simple value'; Kind = 'simple'; Container = @{ value = @() } }
+        @{ Label = 'singleton simple value'; Kind = 'simple'; Container = @{ value = @('a') } }
+        @{ Label = 'multiple simple values'; Kind = 'simple'; Container = @{ value = @('a', 'b') } }
+        @{ Label = 'object simple value'; Kind = 'simple'; Container = @{ value = @{ unexpected = 0 } } }
+    ) {
+        $instance = New-IdsTestSettingInstance $Kind malformed $Container
+        $policy = New-IdsTestAssessmentPolicy -Settings @(@{ settingInstance = $instance })
+        $policy.platform = 'macos'
+        $collection = New-IdsTestAssessmentCollection @($policy)
+        $collection.sources = @([pscustomobject]@{ family = 'settingsCatalog'; platform = 'macos'; complete = $true; errors = @() })
+        $snapshot = ConvertTo-IdsAssessmentSnapshot $collection
+        $snapshot.observations.Count | Should -Be 1
+        $snapshot.observations[0].supported | Should -BeFalse
+        $snapshot.observations[0].value | Should -BeNullOrEmpty
+        $snapshot.policies[0].settingsComplete | Should -BeFalse
+        $snapshot.sources[0].complete | Should -BeFalse
+        $snapshot.issues.Count | Should -BeGreaterThan 0
+    }
+
     It 'rejects allowlisted property type coercion' {
         $snapshot = Get-TestSnapshot (New-IdsTestAssessmentPolicy compliance macOSCompliancePolicy @(@{ storageRequireEncryption = 'false'; passwordMinimumLength = '0' }))
         $snapshot.observations.Count | Should -Be 2
