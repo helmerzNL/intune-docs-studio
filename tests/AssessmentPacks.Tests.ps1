@@ -176,23 +176,67 @@ Describe 'Assessment pack parsing and identity' {
         (Read-IdsBaselinePack -Bytes (ConvertTo-TestBytes $p)).controls[0].mappings.Count | Should -Be 2
     }
 
-    It 'does not round a small nonzero number to decimal zero' {
+    It 'preserves finite numeric expectations without decimal rounding: <number>' -ForEach @(
+        @{ number = '1.4e-28'; expected = [double]1.4e-28 }
+        @{ number = '-1.4e-28'; expected = [double]-1.4e-28 }
+        @{ number = '1e-100'; expected = [double]1e-100 }
+        @{ number = '-1e-100'; expected = [double]-1e-100 }
+        @{ number = '1e-28'; expected = [decimal]0.0000000000000000000000000001 }
+        @{ number = '0.10000'; expected = [decimal]0.1 }
+        @{ number = '79228162514264337593543950335'; expected = [decimal]::MaxValue }
+    ) {
         $p = New-TestPack
         $m = $p.controls[0].mappings[0]
         $m.valueType = 'number'; $m.expected = 'numeric-placeholder'
-        $json = [Text.Encoding]::UTF8.GetString((ConvertTo-TestBytes $p)).Replace('"numeric-placeholder"', '1e-100')
+        $json = [Text.Encoding]::UTF8.GetString((ConvertTo-TestBytes $p)).Replace('"numeric-placeholder"', $number)
         $pack = Read-IdsBaselinePack -Bytes ([Text.Encoding]::UTF8.GetBytes($json))
-        $pack.controls[0].mappings[0].expected | Should -BeGreaterThan 0
+        $actual = $pack.controls[0].mappings[0].expected
+        if ($expected -is [double]) {
+            ([double]$actual -eq $expected) | Should -BeTrue
+        } else {
+            ($actual -is [decimal]) | Should -BeTrue
+            $actual | Should -Be $expected
+        }
     }
 
     It 'rejects nonrepresentable numeric input: <number>' -ForEach @(
-        @{ number = '1e999' }, @{ number = '1e-999' }
+        @{ number = '1e999' }, @{ number = '1e-999' }, @{ number = '-1e-999' }
     ) {
         $p = New-TestPack
         $m = $p.controls[0].mappings[0]
         $m.valueType = 'number'; $m.expected = 'numeric-placeholder'
         $json = [Text.Encoding]::UTF8.GetString((ConvertTo-TestBytes $p)).Replace('"numeric-placeholder"', $number)
         { Read-IdsBaselinePack -Bytes ([Text.Encoding]::UTF8.GetBytes($json)) } | Should -Throw '*number*'
+    }
+
+    It 'compares alternative expectations by typed value: <name>' -ForEach @(
+        @{ name = 'signed scalar zero'; type = 'number'; operator = 'eq'; first = '0'; second = '-0.0'; same = $true }
+        @{ name = 'numeric exponent'; type = 'number'; operator = 'eq'; first = '100'; second = '1.00e2'; same = $true }
+        @{ name = 'unordered numeric membership'; type = 'number'; operator = 'in'; first = '[0,1.4e-28,100,0]'; second = '[1e2,1.4e-28,-0.0]'; same = $true }
+        @{ name = 'unordered numeric set'; type = 'numberSet'; operator = 'setEquals'; first = '[0,2,2]'; second = '[2.0,-0.0]'; same = $true }
+        @{ name = 'different numeric sets'; type = 'numberSet'; operator = 'containsAll'; first = '[0,2]'; second = '[0,3]'; same = $false }
+        @{ name = 'distinct precise integers'; type = 'number'; operator = 'eq'; first = '9007199254740992'; second = '9007199254740993'; same = $false }
+        @{ name = 'ordinal scalar strings'; type = 'string'; operator = 'eq'; first = '"A"'; second = '"a"'; same = $false }
+        @{ name = 'numeric-looking strings'; type = 'stringSet'; operator = 'setEquals'; first = '["0","2"]'; second = '["-0.0","2"]'; same = $false }
+        @{ name = 'case-insensitive string sets'; type = 'stringSet'; operator = 'setEquals'; first = '["A","b"]'; second = '["B","a","a"]'; same = $true; caseSensitive = $false }
+    ) {
+        $p = New-TestPack
+        $other = (New-TestPack).controls[0].mappings[0]
+        $p.controls[0].mappings += $other
+        foreach ($m in $p.controls[0].mappings) {
+            $m.valueType = $type; $m.operator = $operator
+            if ($null -ne $caseSensitive) { $m.caseSensitive = $caseSensitive }
+        }
+        $p.controls[0].mappings[0].expected = 'first-placeholder'
+        $other.expected = 'second-placeholder'
+        $json = [Text.Encoding]::UTF8.GetString((ConvertTo-TestBytes $p)).
+            Replace('"first-placeholder"', $first).Replace('"second-placeholder"', $second)
+        $bytes = [Text.Encoding]::UTF8.GetBytes($json)
+        if ($same) {
+            (Read-IdsBaselinePack -Bytes $bytes).controls[0].mappings.Count | Should -Be 2
+        } else {
+            { Read-IdsBaselinePack -Bytes $bytes } | Should -Throw '*atomic check*'
+        }
     }
 
     It 'accepts typed <type> <operator> expected values' -ForEach @(

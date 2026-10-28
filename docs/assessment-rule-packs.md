@@ -32,9 +32,11 @@ Byte length is checked before decoding/parsing. JSON is parsed with
 `System.Text.Json.JsonDocument`, with its nesting limit set explicitly, before
 schema validation and conversion to ordinary PowerShell objects. Strings remain
 strings, including date-like expected values. Booleans and numbers are never
-coerced from strings. Numeric values use native `Int64`, `Decimal`, or finite
-`Double` representations; overflow and nonzero underflow to zero are rejected.
-This is not an arbitrary-precision numeric format.
+coerced from strings. Numeric values use native `Int64`, exact `Decimal`, or
+finite `Double` representations. Decimal conversion is checked for rounding;
+values it cannot preserve exactly use double precision instead. Overflow and
+nonzero underflow to zero are rejected. This is not an arbitrary-precision
+numeric format.
 
 Unless stated otherwise, a string must contain non-whitespace text. IDs and
 array references are compared ordinally (case-sensitive). Arrays remain arrays
@@ -100,7 +102,9 @@ benchmark coverage cannot be inferred from a partial pack.
 
 Alternative mappings must agree on `valueType`, `operator`, `caseSensitive`,
 and expected value (respecting string case sensitivity and unordered set/
-membership semantics). They may select different policy families, types, setting
+membership semantics). Numeric equivalence ignores spelling differences,
+including exponent notation and signed zero (`0` equals `-0.0`); numeric-looking
+strings remain strings. They may select different policy families, types, setting
 identifiers, or instance paths. Do not approximate compound controls with
 different atomic checks; use an empty mapping array and explain the limitation
 in `manualReason`.

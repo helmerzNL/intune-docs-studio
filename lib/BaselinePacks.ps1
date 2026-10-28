@@ -10,6 +10,23 @@ function Get-IdsAssessmentPropertyCatalog {
     }
 }
 
+function ConvertTo-IdsPackNumberKey {
+    param([string]$Text)
+    $parts = $Text -split '[eE]', 2
+    $mantissa = $parts[0]
+    $point = $mantissa.IndexOf('.')
+    $scale = if ($point -ge 0) { $mantissa.Length - $point - 1 } else { 0 }
+    $digits = $mantissa.TrimStart('-').Replace('.', '').TrimStart('0')
+    if ($digits.Length -eq 0) { return '0' }
+    $significand = $digits.TrimEnd('0')
+    $exponent = if ($parts.Length -eq 2) {
+        [long]::Parse($parts[1], [Globalization.CultureInfo]::InvariantCulture)
+    } else { 0L }
+    $exponent += $digits.Length - $significand.Length - $scale
+    $sign = if ($mantissa.StartsWith('-')) { '-' } else { '' }
+    return "$sign$($significand)e$($exponent.ToString([Globalization.CultureInfo]::InvariantCulture))"
+}
+
 function ConvertFrom-IdsPackJsonElement {
     param([System.Text.Json.JsonElement]$Element, [string]$Path = '$')
     switch ($Element.ValueKind.ToString()) {
@@ -42,7 +59,13 @@ function ConvertFrom-IdsPackJsonElement {
             $integer = 0L
             if ($Element.TryGetInt64([ref]$integer)) { return $integer }
             $decimal = [decimal]0
-            if ($Element.TryGetDecimal([ref]$decimal) -and $decimal -ne 0) { return $decimal }
+            if ($Element.TryGetDecimal([ref]$decimal) -and $decimal -ne 0) {
+                # TryGetDecimal can succeed after rounding, including to a different nonzero value.
+                $decimalText = $decimal.ToString('G29', [Globalization.CultureInfo]::InvariantCulture)
+                if ((ConvertTo-IdsPackNumberKey $Element.GetRawText()) -ceq (ConvertTo-IdsPackNumberKey $decimalText)) {
+                    return $decimal
+                }
+            }
             $number = $Element.GetDouble()
             if ([double]::IsInfinity($number) -or [double]::IsNaN($number)) {
                 throw "Pack JSON number must be finite at $Path."
@@ -188,6 +211,9 @@ function Test-IdsPackSameAtomicCheck {
                 } elseif ($value -is [long]) {
                     $value.ToString([Globalization.CultureInfo]::InvariantCulture)
                 } else { [string]$value }
+                if ($mapping.valueType -cin @('number', 'numberSet')) {
+                    $key = ConvertTo-IdsPackNumberKey $key
+                }
                 [void]$set.Add($key)
             }
             ,$set
