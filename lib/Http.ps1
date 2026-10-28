@@ -104,8 +104,8 @@ function Send-IdsText {
 }
 
 function Send-IdsJson {
-    param($Response, $Object, [int]$Status = 200)
-    $json = ConvertTo-Json -InputObject $Object -Depth 12
+    param($Response, $Object, [int]$Status = 200, [ValidateRange(1, 100)][int]$Depth = 12)
+    $json = ConvertTo-Json -InputObject $Object -Depth $Depth
     if ($null -eq $json) { $json = 'null' }
     Send-IdsText -Response $Response -Text $json -ContentType 'application/json; charset=utf-8' -Status $Status
 }

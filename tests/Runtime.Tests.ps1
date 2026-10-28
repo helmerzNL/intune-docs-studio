@@ -86,18 +86,19 @@ Describe 'PowerShell runtime requirements' {
     Context 'local server identity' {
         BeforeAll {
             function Invoke-LocalServer {
-                param([string]$Name, $Metadata, [scriptblock]$Check)
+                param([string]$Name, $Metadata, [scriptblock]$Check, [scriptblock]$Configure)
                 $folder = Join-Path $TestDrive $Name
                 [void](New-Item -ItemType Directory -Path $folder)
-                foreach ($item in 'IntuneDocsStudio.ps1', 'VERSION', 'lib', 'web') {
+                foreach ($item in 'IntuneDocsStudio.ps1', 'VERSION', 'lib', 'web', 'baselines') {
                     Copy-Item -LiteralPath (Join-Path $repo $item) -Destination $folder -Recurse
                 }
+                if ($Configure) { & $Configure $folder }
                 if ($Metadata) { Set-Content -LiteralPath (Join-Path $folder 'build-info.json') -Value $Metadata }
                 $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
                 $listener.Start(); $port = $listener.LocalEndpoint.Port; $listener.Stop()
                 $process = Start-Process -FilePath $powerShell7 -PassThru -WindowStyle Hidden -ArgumentList @(
-                    '-NoProfile', '-File', (Join-Path $folder 'IntuneDocsStudio.ps1'), '-NoBrowser', '-Port', $port,
-                    '-OutputPath', (Join-Path $folder 'out'))
+                    '-NoProfile', '-File', ('"' + (Join-Path $folder 'IntuneDocsStudio.ps1') + '"'), '-NoBrowser', '-Port', $port,
+                    '-OutputPath', ('"' + (Join-Path $TestDrive "$Name-export") + '"'))
                 try {
                     $base = "http://localhost:$port"
                     $ready = $false
@@ -140,6 +141,117 @@ Describe 'PowerShell runtime requirements' {
             }
         }
 
+            It 'blocks every identity and stop route during assessments and invalidates results on sign-out' {
+                Invoke-LocalServer -Name 'assessment lifecycle' -Configure {
+                    param($folder)
+                    Add-Content "$folder\lib\Auth.ps1" @'
+function Get-IdsTokenFromAzureCli { return @{ transport = 'token'; access_token = 'SYNTHETIC-SECRET'; tenant_id = 'synthetic-tenant' } }
+function Start-IdsDeviceCode { return @{ device_code = 'synthetic-code'; user_code = 'TEST'; verification_uri = 'https://example.invalid'; message = 'Synthetic'; interval = 1 } }
+function Test-IdsDeviceCode { return @{ status = 'ok'; auth = (Get-IdsTokenFromAzureCli) } }
+'@
+                    Add-Content "$folder\lib\Graph.ps1" @'
+function Invoke-IdsGraphRaw {
+    param($Uri)
+    if ($Uri -match '/organization') {
+            Start-Sleep -Seconds 3
+            return @{ value = @(@{ id = 'synthetic-tenant'; displayName = 'Synthetic' }) }
+    }
+    return @{ value = @() }
+}
+'@
+                } -Check {
+                    param($base)
+                    $headers = @{ Origin = $base }
+                    [void](Invoke-RestMethod "$base/api/signin/azurecli" -Method Post)
+                    [void](Invoke-RestMethod "$base/api/signin/devicecode" -Method Post -Body '{}' -ContentType application/json)
+                    $packs = Invoke-RestMethod "$base/api/assessment/packs"
+                    $body = @{ packIds = @($packs.packs[0].selectionId)
+                        context = @{ platforms = @($packs.packs[0].platform) }
+                        outputPath = (Join-Path $TestDrive 'assessment reports') } | ConvertTo-Json -Depth 10
+                    $start = Invoke-WebRequest "$base/api/assessment" -Method Post -Headers $headers -Body $body -ContentType application/json -SkipHttpErrorCheck
+                    $start.StatusCode | Should -Be 202 -Because $start.Content
+                    foreach ($path in 'signin/interactive', 'signin/devicecode', 'signin/azurecli', 'signin/mggraph',
+                        'signin/browser', 'signin/browser/forget', 'signout', 'quit', 'export', 'assessment') {
+                        $response = Invoke-WebRequest "$base/api/$path" -Method Post -Headers $headers -Body '{}' -ContentType application/json -SkipHttpErrorCheck
+                        $response.StatusCode | Should -Be 409 -Because $path
+                    }
+                    (Invoke-WebRequest "$base/api/signin/devicecode/poll" -SkipHttpErrorCheck).StatusCode | Should -Be 409
+                    $callback = Invoke-WebRequest "$base/?code=synthetic&state=stale" -MaximumRedirection 0 -SkipHttpErrorCheck -ErrorAction SilentlyContinue
+                    $callback.Headers.Location | Should -Be '/?signin=busy'
+                    $deadline = (Get-Date).AddSeconds(30)
+                    do {
+                        Start-Sleep -Milliseconds 100
+                        $progress = Invoke-RestMethod "$base/api/assessment"
+                    } while ($progress.running -and (Get-Date) -lt $deadline)
+                    $progress.done | Should -BeTrue
+                    $progress.partial | Should -BeTrue
+                    $progress.error | Should -BeNullOrEmpty
+                    $result = Invoke-RestMethod "$base/api/assessment/results"
+                    $result.tenant.id | Should -Be 'synthetic-tenant'
+                    ($result | ConvertTo-Json -Depth 64) | Should -Not -Match 'SYNTHETIC-SECRET|access_token|rawSettings'
+                    [void](Invoke-RestMethod "$base/api/signout" -Method Post)
+                    (Invoke-WebRequest "$base/api/assessment/results" -SkipHttpErrorCheck).StatusCode | Should -Be 401
+                    (Invoke-RestMethod "$base/api/signin/devicecode/poll").status | Should -Be 'none'
+                    [void](Invoke-RestMethod "$base/api/signin/azurecli" -Method Post)
+                    (Invoke-WebRequest "$base/api/assessment/results" -SkipHttpErrorCheck).StatusCode | Should -Be 404
+                }
+            }
+
+        It 'completes every sign-in transport and invalidates pending OAuth on reset and profile forget' {
+            Invoke-LocalServer -Name 'signin-transports' -Configure {
+                param($folder)
+                Add-Content "$folder\lib\Auth.ps1" @'
+function New-SyntheticAuth {
+    param($Method)
+    return @{ transport = 'token'; access_token = 'SYNTHETIC-SECRET'; tenant_id = 'synthetic-tenant'; method = $Method }
+}
+function Get-IdsTokenFromAzureCli { New-SyntheticAuth azurecli }
+function Connect-IdsMgGraph { New-SyntheticAuth mggraph }
+function Complete-IdsAuthCode { New-SyntheticAuth interactive }
+function Start-IdsDeviceCode { return @{ device_code = 'synthetic'; user_code = 'TEST'; verification_uri = 'https://example.invalid'; message = 'Synthetic'; interval = 1 } }
+function Test-IdsDeviceCode { return @{ status = 'ok'; auth = (New-SyntheticAuth devicecode) } }
+'@
+                Add-Content "$folder\lib\BrowserSession.ps1" @'
+function Get-IdsTokenFromBrowser {
+    Start-Sleep -Milliseconds 300
+    return @{ transport = 'token'; access_token = 'SYNTHETIC-SECRET'; tenant_id = 'synthetic-tenant'; method = 'browser' }
+}
+function Clear-IdsBrowserProfile { }
+'@
+            } -Check {
+                param($base)
+                foreach ($method in 'azurecli', 'mggraph') {
+                    [void](Invoke-RestMethod "$base/api/signin/$method" -Method Post -Body '{}' -ContentType application/json)
+                    (Invoke-RestMethod "$base/api/state").auth.method | Should -Be $method
+                }
+                $signin = Invoke-RestMethod "$base/api/signin/interactive" -Method Post -Body '{}' -ContentType application/json
+                $nonce = [regex]::Match($signin.url, '[?&]state=([^&]+)').Groups[1].Value
+                $callback = Invoke-WebRequest "$base/?code=synthetic&state=$nonce" -MaximumRedirection 0 -SkipHttpErrorCheck -ErrorAction SilentlyContinue
+                $callback.Headers.Location | Should -Be '/?signin=ok'
+                (Invoke-RestMethod "$base/api/state").auth.method | Should -Be 'interactive'
+                [void](Invoke-RestMethod "$base/api/signin/devicecode" -Method Post -Body '{}' -ContentType application/json)
+                (Invoke-RestMethod "$base/api/signin/devicecode/poll").status | Should -Be 'ok'
+                (Invoke-RestMethod "$base/api/state").auth.method | Should -Be 'devicecode'
+                [void](Invoke-RestMethod "$base/api/signin/browser" -Method Post -Body '{}' -ContentType application/json)
+                $deadline = (Get-Date).AddSeconds(10)
+                do {
+                    Start-Sleep -Milliseconds 50
+                    $browser = Invoke-RestMethod "$base/api/signin/browser/status"
+                } while ($browser.running -and (Get-Date) -lt $deadline)
+                $browser.error | Should -BeNullOrEmpty
+                $browser.done | Should -BeTrue
+                (Invoke-RestMethod "$base/api/state").auth.method | Should -Be 'browser'
+                [void](Invoke-RestMethod "$base/api/signin/browser/forget" -Method Post)
+                (Invoke-RestMethod "$base/api/state").auth.connected | Should -BeFalse
+                $signin = Invoke-RestMethod "$base/api/signin/interactive" -Method Post -Body '{}' -ContentType application/json
+                $nonce = [regex]::Match($signin.url, '[?&]state=([^&]+)').Groups[1].Value
+                [void](Invoke-RestMethod "$base/api/signout" -Method Post)
+                $callback = Invoke-WebRequest "$base/?code=synthetic&state=$nonce" -MaximumRedirection 0 -SkipHttpErrorCheck -ErrorAction SilentlyContinue
+                $callback.Headers.Location | Should -Be '/?signin=state-mismatch'
+                (Invoke-RestMethod "$base/api/state").auth.connected | Should -BeFalse
+            }
+        }
+
         It 'refuses to start with inconsistent package metadata' {
             $folder = Join-Path $TestDrive 'bad'
             [void](New-Item -ItemType Directory -Path $folder)
@@ -152,5 +264,95 @@ Describe 'PowerShell runtime requirements' {
             $result.ExitCode | Should -Not -Be 0
             $result.Output | Should -Match 'build-info'
         }
+
+        It 'releases the listener when the server pipeline is stopped like Ctrl+C' {
+            $folder = Join-Path $TestDrive 'pipeline-stop'
+            [void](New-Item -ItemType Directory $folder)
+            foreach ($item in 'IntuneDocsStudio.ps1', 'VERSION', 'lib', 'web', 'baselines') {
+                Copy-Item "$repo\$item" $folder -Recurse
+            }
+            Add-Content "$folder\lib\Auth.ps1" @'
+function Get-IdsTokenFromAzureCli { return @{ transport = 'token'; tenant_id = 'synthetic-tenant' } }
+'@
+            Add-Content "$folder\lib\Graph.ps1" @'
+function Invoke-IdsGraphRaw { Start-Sleep -Seconds 30; throw 'synthetic stop' }
+'@
+            $socket = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+            $socket.Start(); $port = $socket.LocalEndpoint.Port; $socket.Stop()
+            $ps = [powershell]::Create()
+            try {
+                [void]$ps.AddCommand("$folder\IntuneDocsStudio.ps1").AddParameter('NoBrowser').AddParameter('Port', $port).
+                    AddParameter('OutputPath', "$TestDrive\pipeline-export")
+                $handle = $ps.BeginInvoke()
+                $ready = $false
+                for ($i = 0; $i -lt 40 -and -not $ready; $i++) {
+                    try { [void](Invoke-RestMethod "http://localhost:$port/api/health" -TimeoutSec 1); $ready = $true }
+                    catch { Start-Sleep -Milliseconds 100 }
+                }
+                $ready | Should -BeTrue
+                $base = "http://localhost:$port"
+                [void](Invoke-RestMethod "$base/api/signin/azurecli" -Method Post)
+                $pack = (Invoke-RestMethod "$base/api/assessment/packs").packs[0]
+                $body = @{ packIds = @($pack.selectionId); context = @{ platforms = @($pack.platform) }
+                    outputPath = "$TestDrive\pipeline-reports" } | ConvertTo-Json
+                [void](Invoke-RestMethod "$base/api/assessment" -Method Post -Headers @{ Origin = $base } -Body $body -ContentType application/json)
+                (Invoke-RestMethod "$base/api/assessment").running | Should -BeTrue
+                $ps.Stop()
+                $handle.IsCompleted | Should -BeTrue
+                Test-Path "$TestDrive\pipeline-reports" | Should -BeFalse
+                $listener = [Net.HttpListener]::new()
+                try {
+                    $listener.Prefixes.Add("http://localhost:$port/")
+                    { $listener.Start() } | Should -Not -Throw
+                } finally { $listener.Close() }
+            } finally { $ps.Dispose() }
+        }
+    }
+}
+
+Describe 'Shared runtime job and reset guards' {
+    BeforeAll {
+        . "$repo\lib\Assessment.ps1"
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile("$repo\IntuneDocsStudio.ps1", [ref]$tokens, [ref]$errors)
+        foreach ($name in 'Start-IdsExportJob', 'Start-IdsBrowserSignIn', 'Reset-IdsSessionState', 'Clear-IdsFinishedJob') {
+            $definition = $ast.Find({ param($node)
+                $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+            }, $true)
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+    }
+    BeforeEach {
+        $State = [hashtable]::Synchronized(@{
+            Auth = @{ tenant_id = 'synthetic-old' }; Pending = @{ deviceCode = 'synthetic-pending' }
+            Browser = @{ running = $false; status = ''; error = $null }
+            Export = @{ running = $false; log = [Collections.ArrayList]::new(); summary = @{ root = 'synthetic-old' }; done = $true }
+            Config = @{ OutputPath = 'old'; DefaultOutputPath = 'default'; Tenant = 'old'; DefaultTenant = 'organizations' }
+        })
+        Initialize-IdsAssessment $State
+    }
+    It 'rejects direct export and portal starts during <Kind> without altering the session' -TestCases @(
+        @{ Kind = 'Assessment' }, @{ Kind = 'Export' }
+    ) {
+        param($Kind)
+        $State[$Kind].running = $true
+        Start-IdsExportJob @{} | Should -BeFalse
+        Start-IdsBrowserSignIn 'synthetic-new' | Should -BeFalse
+        { Reset-IdsSessionState } | Should -Throw '*running*'
+        $State.Auth.tenant_id | Should -Be 'synthetic-old'
+        $State.Pending.deviceCode | Should -Be 'synthetic-pending'
+    }
+    It 'clears cross-tenant state, pending sign-ins and assessment evidence on reset' {
+        $State.Assessment.result = @{ tenant = 'synthetic-old' }
+        $State.Assessment.reportPaths = @{ root = 'old' }
+        $State.Assessment.resultEpoch = $State.Assessment.epoch
+        Reset-IdsSessionState
+        $State.Assessment.epoch | Should -Be 1
+        $State.Assessment.result | Should -BeNullOrEmpty
+        $State.Assessment.reportPaths | Should -BeNullOrEmpty
+        $State.Pending | Should -BeNullOrEmpty
+        $State.Auth | Should -BeNullOrEmpty
+        $State.Export.summary | Should -BeNullOrEmpty
+        $State.Config.OutputPath | Should -Be 'default'
     }
 }

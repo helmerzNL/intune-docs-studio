@@ -13,6 +13,58 @@ packs remain customer-owned local data. Sources establish provenance; validation
 does **not** establish the correctness, completeness, authority, or licensing of
 a rule.
 
+## Local assessment API
+
+The local server exposes the following backend routes (dashboard controls are
+a separate integration). All responses are JSON with `Cache-Control: no-store`.
+
+| Route | Success response |
+|---|---|
+| `GET /api/assessment/packs` | `200 { packs: [...metadata], errors: [...] }` |
+| `POST /api/assessment/packs` | `201 { pack: metadata }` |
+| `POST /api/assessment` | `202 { started: true, runId }` |
+| `GET /api/assessment` | `200 { running, done, percent, phase, error, partial, reportPaths, summaries }` |
+| `GET /api/assessment/results` | `200` with the schema-1 Result |
+
+POST requests require `Content-Type: application/json` (optionally
+`charset=utf-8`), and `Origin` and `Host` matching the configured localhost
+listener. Imports accept only `{ "content": "original UTF-8 JSON text" }`,
+never a server-side file path. The import envelope is bounded to 64 MiB,
+including chunked/unknown-length streams; decoded pack content remains bounded
+to 10 MiB **before** pack parsing. Imported bytes are stored locally under
+`%LOCALAPPDATA%\IntuneDocsStudio\baseline-packs`, outside the installation.
+An ID/version collision with different bytes, including a bundled identity,
+is rejected without replacing the valid catalog entry.
+
+Start requests are bounded to 64 KiB and contain `packIds`, `context`, and an
+absolute `outputPath`. Use the catalog's `selectionId` (`id@version#sha256`).
+Select 1–64 unique identities and 1–4 unique `context.platforms`; every selected
+platform requires a selected pack. Optional `context.osVersions` maps platform
+names to numeric OS-version strings. Optional `context.enrollmentModes` accepts
+`androidEnterprise` with `workProfile`, `fullyManaged`, `dedicated`, or
+`corporateOwnedWorkProfile`. Omit unknown applicability rather than inventing it.
+Reports, installation, and documentation export roots must be mutually disjoint.
+
+Starts/progress/results require sign-in (`401`). Only one export or assessment
+may run; identity replacement, sign-out, profile forget, and normal shutdown
+are blocked during work (`409`). Active portal sign-in also blocks work and
+other identity operations. Completed results belong to the authenticated
+session epoch, and are cleared on identity replacement/reset (`404` when no
+current result exists). Reset also invalidates pending OAuth/device-code
+sign-ins. OAuth callbacks keep the existing redirect/PKCE flow; a callback
+arriving during work redirects to `/?signin=busy` without replacing identity.
+
+Malformed input/invalid selections return `400`; foreign-origin requests `403`;
+oversized bodies/packs `413`; incompatible media types `415`; storage/worker
+startup failures `500`. Worker failures are visible in progress without exposing
+provider exception payloads. A failed report write has no successful result or
+report pair. Source-read failures remain control-level not-assessed evidence;
+authentication failures fail the run. `partial: true` also covers partial pack
+inventories, unknown applicability, and incomplete collection/assignments.
+Source revisions and coverage limitations remain in catalog/result metadata.
+Reports are customer-owned local files; they are never automatically committed
+or pushed.
+
 ## Encoding and named resource limits
 
 Input is one UTF-8 JSON object, without a BOM, comments, or trailing commas.
