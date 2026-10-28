@@ -21,6 +21,7 @@ function assessmentDashboard(respond = () => ({})) {
           contains(name) { return classes.has(name); } },
         addEventListener(event, handler) { this.handlers[event] = handler; },
         appendChild(child) { this.children.push(child); },
+        setAttribute() {}, removeAttribute() {}, focus() {},
         scrollIntoView() {}
       };
       let html = '';
@@ -43,7 +44,7 @@ function assessmentDashboard(respond = () => ({})) {
       },
       createElement: () => element(Symbol())
     },
-    window: { location: { search: '' }, history: { replaceState() {} } },
+    window: { location: { search: '' }, history: { replaceState() {} }, addEventListener() {}, scrollTo() {} },
     URLSearchParams, TextEncoder,
     fetch: async (url, options) => {
       const request = { url, payload: options && JSON.parse(options.body), method: options?.method || 'GET' };

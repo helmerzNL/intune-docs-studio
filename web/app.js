@@ -24,6 +24,58 @@ let workspaceGeneration = 0;
 let stateRequest = 0;
 let exportBusy = false;
 let exportStarting = false;
+let booting = false;
+
+const setHidden = (id, hidden) => {
+  if (hidden) $(id).classList.add('hidden');
+  else $(id).classList.remove('hidden');
+};
+
+// --- Navigation ------------------------------------------------------------
+
+const views = { loading: 'viewLoading', landing: 'viewLanding', home: 'viewHome', document: 'viewDocument', assess: 'viewAssess' };
+const viewHeadings = { landing: 'landingTitle', home: 'homeTitle', document: 'documentTitle', assess: 'assessTitle' };
+const navLinks = { home: 'navHome', document: 'navDocument', assess: 'navAssess' };
+const routes = { '#/document': 'document', '#/assess': 'assess' };
+
+function routeView() {
+  if (!state) return 'loading';
+  if (!state.auth?.connected) return 'landing';
+  return routes[window.location.hash || ''] || 'home';
+}
+
+function renderRoute() {
+  const view = routeView();
+  Object.entries(views).forEach(([key, id]) => setHidden(id, key !== view));
+  const signedIn = !!navLinks[view];
+  setHidden('appNav', !signedIn);
+  setHidden('sessionControls', !signedIn);
+  Object.entries(navLinks).forEach(([key, id]) => {
+    if (key === view) $(id).setAttribute('aria-current', 'page');
+    else $(id).removeAttribute('aria-current');
+  });
+  return view;
+}
+
+window.addEventListener('hashchange', () => {
+  const heading = viewHeadings[renderRoute()];
+  if (!heading) return;
+  window.scrollTo(0, 0);
+  $(heading).focus({ preventScroll: true });
+});
+
+const documentSteps = { configure: 'stepConfigure', generate: 'stepGenerate', review: 'stepReview' };
+
+function setDocumentStep(step) {
+  const order = Object.keys(documentSteps);
+  const current = order.indexOf(step);
+  order.forEach((name, i) => {
+    const el = $(documentSteps[name]);
+    el.className = i < current ? 'done' : i === current ? 'active' : '';
+    if (i === current) el.setAttribute('aria-current', 'step');
+    else el.removeAttribute('aria-current');
+  });
+}
 
 // --- Sign in ---------------------------------------------------------------
 
@@ -87,6 +139,9 @@ function renderAuth() {
   renderSections();
   if (!$('outputPath').value && state.outputPath) $('outputPath').value = state.outputPath;
   if (state.tenant && $('tenant').value === 'organizations') $('tenant').value = state.tenant;
+  const tenant = $('tenant').value.trim();
+  if (tenant && tenant !== 'organizations') $('advancedSignin').open = true;
+  if ($('gitRemoteUrl').value.trim()) $('gitDetails').open = true;
 
   const auth = state.auth || {};
   const badge = $('connBadge');
@@ -94,6 +149,8 @@ function renderAuth() {
   if (auth.connected) {
     badge.textContent = auth.account || 'Connected';
     badge.className = 'badge badge-on';
+    $('homeGreeting').textContent = 'Welcome' + (auth.account ? ', ' + auth.account : '');
+    $('homeTenant').textContent = auth.tenantId ? 'Tenant ' + auth.tenantId : '';
     $('signinPane').classList.add('hidden');
     $('connectedPane').classList.remove('hidden');
     $('cardConfigure').classList.remove('disabled');
@@ -121,6 +178,7 @@ function renderAuth() {
     $('cardConfigure').classList.add('disabled');
   }
   if (state.pendingError) showSigninError(state.pendingError);
+  renderRoute();
 }
 
 $('btnBrowser').addEventListener('click', async () => {
@@ -251,6 +309,7 @@ function clearWorkspace() {
   $('optGit').checked = false;
   showSigninError(null);
   sectionBoxes().forEach((b) => { b.checked = true; });
+  setDocumentStep('configure');
 }
 
 $('btnSignout').addEventListener('click', async () => {
@@ -352,6 +411,7 @@ $('btnExport').addEventListener('click', async () => {
   $('cardRun').classList.remove('hidden');
   $('cardResult').classList.add('hidden');
   $('cardConfigure').classList.add('disabled');
+  setDocumentStep('generate');
   $('cardRun').scrollIntoView({ behavior: 'smooth' });
   startLogPolling();
 });
@@ -389,6 +449,7 @@ async function pollLog() {
     exportBusy = false;
     syncJobAdmission();
     $('cardConfigure').classList.remove('disabled');
+    setDocumentStep('review');
     if (body.error) {
       $('phase').textContent = 'Failed';
       $('summary').innerHTML = `<div class="error">${escapeHtml(body.error)}</div>`;
@@ -429,7 +490,7 @@ function renderSummary(s) {
     if (s.git.pushed) html += '<p class="muted">Successfully pushed to remote.</p>';
   }
   if (s.warnings && s.warnings.length) {
-    html += '<h3>Warnings</h3><ul class="muted">' + s.warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join('') + '</ul>';
+    html += '<h4 class="section-label">Warnings</h4><ul class="muted">' + s.warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join('') + '</ul>';
   }
   $('summary').innerHTML = html;
 }
@@ -472,13 +533,14 @@ $('btnQuit').addEventListener('click', async () => {
   clearInterval(deviceTimer);
   clearAssessment();
   document.body.innerHTML =
-    '<div style="font-family:Segoe UI,system-ui,sans-serif;padding:4rem;text-align:center;color:#9aa4b8">' +
-    '<h2 style="color:#e7eaf0">Intune Docs Studio has stopped.</h2>' +
-    '<p>You can close this tab. Run <code>Start-IntuneDocs.cmd</code> to start it again.</p></div>';
+    '<main class="stopped"><span class="mark" aria-hidden="true"></span>' +
+    '<h2>Intune Docs Studio has stopped.</h2>' +
+    '<p>You can close this tab. Run <code>Start-IntuneDocs.cmd</code> to start it again.</p></main>';
 });
 $('btnAgain').addEventListener('click', () => {
   $('cardResult').classList.add('hidden');
   $('cardRun').classList.add('hidden');
+  setDocumentStep('configure');
   $('cardConfigure').scrollIntoView({ behavior: 'smooth' });
 });
 
@@ -607,6 +669,8 @@ function syncJobAdmission() {
   $('btnExport').disabled = busy || !!(state?.auth && !state.auth.connected);
   $('btnAssessmentRun').disabled = busy || assessmentImporting || !state?.auth?.connected;
   $('btnAssessmentImport').disabled = busy || assessmentImporting;
+  ['navDocumentBusy', 'homeDocumentBusy'].forEach((id) => setHidden(id, !exportBusy));
+  ['navAssessBusy', 'homeAssessBusy'].forEach((id) => setHidden(id, !assessmentBusy));
 }
 
 function clearAssessmentEvidence() {
@@ -646,6 +710,7 @@ function assessmentSessionFailure(r) {
   if (state) renderAuth();
   syncJobAdmission();
   showAssessmentError('401: Session expired. Sign in again before assessing policies.');
+  showSigninError('Your session ended. Sign in again to continue.');
   return true;
 }
 
@@ -880,20 +945,47 @@ $('assessmentStatusFilter').addEventListener('change', renderAssessmentEvidence)
 
 // --- Boot ------------------------------------------------------------------
 
-(async function init() {
+async function loadInitialState() {
+  $('loadingText').textContent = 'Connecting to the local server…';
+  setHidden('loadingSpinner', false);
+  setHidden('btnRetryState', true);
+  try { await refreshState(); } catch (e) { /* reported below */ }
+  if (state) return true;
+  renderRoute();
+  $('loadingText').textContent = 'The local server is not responding. Restart Intune Docs Studio.';
+  setHidden('loadingSpinner', true);
+  setHidden('btnRetryState', false);
+  return false;
+}
+
+async function start() {
+  if (booting) return;
+  booting = true;
+  try {
+    if (!(await loadInitialState())) return;
+    await loadAssessmentCatalog();
+    await refreshAssessment();
+    const { body } = await api('/api/export/log?from=0');
+    if (body && body.running) {
+      $('cardRun').classList.remove('hidden');
+      setDocumentStep('generate');
+      startLogPolling();
+    }
+  } finally {
+    booting = false;
+  }
+}
+
+$('btnRetryState').addEventListener('click', start);
+
+(function init() {
   const params = new URLSearchParams(window.location.search);
   if (params.has('signin')) {
-    window.history.replaceState({}, '', '/');
+    window.history.replaceState({}, '', '/' + (window.location.hash || ''));
     if (params.get('signin') === 'state-mismatch') {
       showSigninError('Sign-in could not be verified (state mismatch). Please try again.');
     }
   }
-  await refreshState();
-  await loadAssessmentCatalog();
-  await refreshAssessment();
-  const { body } = await api('/api/export/log?from=0');
-  if (body && body.running) {
-    $('cardRun').classList.remove('hidden');
-    startLogPolling();
-  }
+  setDocumentStep('configure');
+  start();
 })();

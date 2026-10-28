@@ -3,280 +3,413 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>Intune Docs Studio</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234a9eff'/%3E%3Cpath d='M9 9h9a5 5 0 0 1 0 10h-5v4H9z' fill='%23fff'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 
+<a class="skip-link" href="#main">Skip to content</a>
+
 <header class="topbar">
   <div class="brand">
-    <span class="mark"></span>
-    <div>
+    <span class="mark" aria-hidden="true">
+      <svg class="icon" viewBox="0 0 24 24" focusable="false"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>
+    </span>
+    <div class="brand-text">
       <h1 id="appName">Intune Docs Studio</h1>
-      <p>Document Intune to Markdown &mdash; no app registration required</p>
+      <p class="tagline">Document and assess Microsoft Intune</p>
     </div>
   </div>
+
+  <nav id="appNav" class="appnav hidden" aria-label="Workspaces">
+    <a id="navHome" href="#/">Home</a>
+    <a id="navDocument" href="#/document">Document policies<span id="navDocumentBusy" class="activity hidden"><span class="activity-dot" aria-hidden="true"></span><span class="sr-only">(export running)</span></span></a>
+    <a id="navAssess" href="#/assess">Assess policies<span id="navAssessBusy" class="activity hidden"><span class="activity-dot" aria-hidden="true"></span><span class="sr-only">(assessment running)</span></span></a>
+  </nav>
+
   <div class="topright">
-    <div id="buildInfo" class="badge badge-off"></div>
-    <div id="connBadge" class="badge badge-off">Not connected</div>
+    <span id="buildInfo" class="badge badge-build"></span>
+    <div id="sessionControls" class="session hidden">
+      <span id="connBadge" class="badge badge-off">Not connected</span>
+      <button class="btn ghost small" id="btnSignout">Sign out</button>
+    </div>
     <button class="btn ghost small" id="btnQuit" title="Stop the local server and close the tool">Stop server</button>
   </div>
 </header>
 
-<main>
+<main id="main" tabindex="-1">
 
-  <!-- Step 1 -->
-  <section class="card" id="cardConnect">
-    <div class="card-head">
-      <span class="step">1</span>
-      <h2>Connect</h2>
+  <!-- Loading -->
+  <section id="viewLoading" class="view view-loading" aria-live="polite">
+    <div class="loading">
+      <span id="loadingSpinner" class="spinner" aria-hidden="true"></span>
+      <p id="loadingText">Connecting to the local server&hellip;</p>
+      <button class="btn hidden" id="btnRetryState">Retry</button>
+    </div>
+  </section>
+
+  <!-- Landing (signed out) -->
+  <section id="viewLanding" class="view landing hidden" aria-labelledby="landingTitle">
+    <div class="hero">
+      <p class="eyebrow">Microsoft Intune &middot; documentation and assessment</p>
+      <h2 id="landingTitle" tabindex="-1">Document and assess your Microsoft Intune configuration</h2>
+      <p class="lead">A local tool for Intune administrators. No app registration required.</p>
+      <ul class="features">
+        <li>
+          <span class="feature-icon" aria-hidden="true">
+            <svg class="icon" viewBox="0 0 24 24" focusable="false"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/></svg>
+          </span>
+          <div>
+            <h3>Document policies</h3>
+            <p>Export configuration to Markdown, with optional publishing to an Azure DevOps Git repository.</p>
+          </div>
+        </li>
+        <li>
+          <span class="feature-icon" aria-hidden="true">
+            <svg class="icon" viewBox="0 0 24 24" focusable="false"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>
+          </span>
+          <div>
+            <h3>Assess against baselines</h3>
+            <p>Compare configured policies with bundled Microsoft checks and your own imported CIS rule packs.
+              This is configuration alignment, not device compliance.</p>
+          </div>
+        </li>
+        <li>
+          <span class="feature-icon" aria-hidden="true">
+            <svg class="icon" viewBox="0 0 24 24" focusable="false"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+          </span>
+          <div>
+            <h3>Read-only and local</h3>
+            <p>Runs on this computer. Nothing is created in your tenant.</p>
+          </div>
+        </li>
+      </ul>
     </div>
 
-    <div id="connectedPane" class="hidden">
-      <dl class="kv">
-        <div><dt>Signed in as</dt><dd id="cAccount">&mdash;</dd></div>
-        <div><dt>Tenant</dt><dd id="cTenant">&mdash;</dd></div>
-        <div><dt>Client</dt><dd id="cClient">&mdash;</dd></div>
-        <div><dt>Method</dt><dd id="cMethod">&mdash;</dd></div>
-      </dl>
-      <h3>Granted permissions</h3>
-      <div id="scopeList" class="scopes"></div>
-  <div class="row">
-        <button class="btn ghost" id="btnSignout">Sign out</button>
-      </div>
-    </div>
-
-    <div id="signinPane">
+    <div class="signin-card" id="signinPane">
+      <h3 class="signin-title">Sign in</h3>
       <p class="muted">
-        Sign in as an Intune Administrator, Global Reader or Global Administrator. The export
-        is <strong>read-only</strong> &mdash; nothing is created in your tenant and no secret
-        is stored.
+        Use an Intune Administrator, Global Reader or Global Administrator account. Access is
+        <strong>read-only</strong> &mdash; nothing is created in your tenant and no secret is stored.
       </p>
 
-      <div class="grid2">
-        <label>Tenant
-          <input type="text" id="tenant" value="organizations" spellcheck="false">
-          <small>Leave as <code>organizations</code>, or enter a tenant id / domain.</small>
-        </label>
-        <label>Client application
-          <select id="client"></select>
-          <small id="clientNote"></small>
-        </label>
-      </div>
+      <div id="signinError" class="error hidden" role="alert"></div>
 
       <div class="recommend">
         <div class="rec-head">
           <strong>Use my Intune portal session</strong>
-          <span class="pill">no consent needed</span>
+          <span class="pill">Recommended &middot; no consent needed</span>
         </div>
-        <p class="muted">
+        <p class="muted small">
           Opens the Intune admin center in a browser window. Sign in exactly as you normally
           do &mdash; because the portal already has permission in every tenant, there is no
           consent prompt. Works when you hold only the <strong>Intune Administrator</strong>
           role. Your sign-in is remembered, so you only do this once.
-          <br>The captured session is temporary and cannot be renewed automatically.
+          The captured session is temporary and cannot be renewed automatically.
         </p>
-        <button class="btn primary" id="btnBrowser">Sign in via the Intune portal</button>
-        <button class="linkbtn" id="btnForget" title="Clear the saved browser profile">forget saved session</button>
-        <label class="check" style="margin-top:12px">
+        <button class="btn primary block" id="btnBrowser">Sign in via the Intune portal</button>
+        <div id="browserStatus" class="notice hidden"><p id="bsText"></p></div>
+        <label class="check">
           <input type="checkbox" id="optForcePicker">
           <span>Force account picker
             <small>Opens an InPrivate window and signs the session out first, so Windows SSO cannot
             reuse your everyday account. Security keys, passkeys and Windows Hello still work.</small>
           </span>
         </label>
-        <div id="browserStatus" class="notice hidden"><p id="bsText"></p></div>
+        <button class="linkbtn" id="btnForget" title="Clear the saved browser profile">Forget saved session</button>
       </div>
 
-      <h3>Other methods</h3>
-      <p class="muted small">
-        These request permissions for this tool directly, so the first use needs one-time
-        approval by a Global Administrator, Privileged Role Administrator, Cloud Application
-        Administrator or Application Administrator. An Intune Administrator cannot approve it.
-      </p>
+      <details id="advancedSignin" class="disclosure">
+        <summary>Advanced sign-in options</summary>
+        <div class="disclosure-body">
+          <div class="grid2">
+            <label>Tenant
+              <input type="text" id="tenant" value="organizations" spellcheck="false">
+              <small>Leave as <code>organizations</code>, or enter a tenant id / domain. Also used by the portal sign-in.</small>
+            </label>
+            <label>Client application
+              <select id="client"></select>
+              <small id="clientNote"></small>
+            </label>
+          </div>
+          <p class="muted small">
+            The methods below request permissions for this tool directly, so the first use needs one-time
+            approval by a Global Administrator, Privileged Role Administrator, Cloud Application
+            Administrator or Application Administrator. An Intune Administrator cannot approve it.
+          </p>
+          <div class="row">
+            <button class="btn" id="btnInteractive">Sign in with browser</button>
+            <button class="btn" id="btnDeviceCode">Use device code</button>
+            <button class="btn" id="btnAzureCli">Use Azure CLI session</button>
+            <button class="btn" id="btnMgGraph">Use Graph PowerShell session</button>
+          </div>
+          <div id="deviceCodePane" class="notice hidden">
+            <p>Open <a id="dcUri" target="_blank" rel="noopener"></a> and enter this code:</p>
+            <p class="code-big" id="dcCode"></p>
+            <p class="muted" id="dcStatus">Waiting for you to complete sign-in&hellip;</p>
+          </div>
+        </div>
+      </details>
+    </div>
+  </section>
 
+  <!-- Home (signed in) -->
+  <section id="viewHome" class="view hidden" aria-labelledby="homeTitle">
+    <header class="page-head">
+      <p class="eyebrow">Signed in</p>
+      <h2 id="homeTitle" tabindex="-1"><span id="homeGreeting">Welcome</span></h2>
+      <p id="homeTenant" class="muted"></p>
+    </header>
+
+    <div class="paths">
+      <a class="path-card" id="homeDocument" href="#/document">
+        <span class="path-icon" aria-hidden="true">
+          <svg class="icon" viewBox="0 0 24 24" focusable="false"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/></svg>
+        </span>
+        <span class="path-body">
+          <span class="path-title">Document policies
+            <span id="homeDocumentBusy" class="activity-badge hidden"><span class="activity-dot" aria-hidden="true"></span>Export running</span>
+          </span>
+          <span class="path-text">Export your Intune configuration to Markdown, with optional publishing
+            to an Azure DevOps Git repository.</span>
+          <span class="path-cta">Start documenting
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </span>
+        </span>
+      </a>
+      <a class="path-card" id="homeAssess" href="#/assess">
+        <span class="path-icon violet" aria-hidden="true">
+          <svg class="icon" viewBox="0 0 24 24" focusable="false"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>
+        </span>
+        <span class="path-body">
+          <span class="path-title">Assess policies
+            <span id="homeAssessBusy" class="activity-badge hidden"><span class="activity-dot" aria-hidden="true"></span>Assessment running</span>
+          </span>
+          <span class="path-text">Compare configured policies with security baselines and your imported
+            rule packs. Configuration alignment, not device compliance.</span>
+          <span class="path-cta">Open assessment
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </span>
+        </span>
+      </a>
+    </div>
+
+    <section id="connectedPane" class="card hidden" aria-labelledby="connectionTitle">
+      <h3 id="connectionTitle" class="card-title">Connection</h3>
+      <dl class="kv">
+        <div><dt>Signed in as</dt><dd id="cAccount">&mdash;</dd></div>
+        <div><dt>Tenant</dt><dd id="cTenant">&mdash;</dd></div>
+        <div><dt>Client</dt><dd id="cClient">&mdash;</dd></div>
+        <div><dt>Method</dt><dd id="cMethod">&mdash;</dd></div>
+      </dl>
+      <h4 class="section-label">Granted permissions</h4>
+      <div id="scopeList" class="scopes"></div>
+    </section>
+  </section>
+
+  <!-- Document policies -->
+  <section id="viewDocument" class="view hidden" aria-labelledby="documentTitle">
+    <header class="page-head">
+      <a class="back" href="#/">&larr; Home</a>
+      <h2 id="documentTitle" tabindex="-1">Document policies</h2>
+      <p class="muted">Export your Intune configuration to Markdown in a folder you choose.</p>
+    </header>
+
+    <ol class="stepper" aria-label="Export steps">
+      <li id="stepConfigure" class="active"><span class="step-num" aria-hidden="true">1</span>Configure</li>
+      <li id="stepGenerate"><span class="step-num" aria-hidden="true">2</span>Generate</li>
+      <li id="stepReview"><span class="step-num" aria-hidden="true">3</span>Review</li>
+    </ol>
+
+    <section class="card disabled" id="cardConfigure" aria-labelledby="configureTitle">
+      <h3 id="configureTitle" class="card-title">Configure the export</h3>
+
+      <h4 class="section-label">Destination</h4>
+      <label>Output folder
+        <input type="text" id="outputPath" spellcheck="false">
+        <small>A Git working folder is ideal &mdash; re-running the export produces a clean diff.</small>
+      </label>
+      <div id="folderWarn" class="error hidden"></div>
+
+      <h4 class="section-label">What to document
+        <span class="label-actions"><button class="linkbtn" id="btnAll">all</button> <button class="linkbtn" id="btnNone">none</button></span>
+      </h4>
+      <div id="sections" class="sections"></div>
+
+      <h4 class="section-label">Options</h4>
+      <div class="options">
+        <label class="check"><input type="checkbox" id="optRaw" checked> <span>Include raw JSON <small>source of truth for diffing</small></span></label>
+        <label class="check"><input type="checkbox" id="optScripts" checked> <span>Include script bodies <small>PowerShell, shell and custom payloads</small></span></label>
+        <label class="check"><input type="checkbox" id="optFrontMatter" checked> <span>YAML front matter <small>metadata for wikis and static site generators</small></span></label>
+        <label class="check"><input type="checkbox" id="optAdo" checked> <span>Azure DevOps <code>.order</code> files <small>page ordering for publish-as-wiki</small></span></label>
+      </div>
+
+      <details id="gitDetails" class="disclosure">
+        <summary>Git publishing (optional)</summary>
+        <div class="disclosure-body">
+          <label>Azure DevOps repository clone URL
+            <input type="text" id="gitRemoteUrl" spellcheck="false" placeholder="https://dev.azure.com/organization/project/_git/repository">
+            <small>Use an existing repository, not a Wiki page URL. An empty output folder will be cloned; an existing checkout must match. Leave blank to use its configured remote.</small>
+          </label>
+          <label>Target branch
+            <input type="text" id="gitBranch" spellcheck="false" placeholder="Repository default (main for an empty repository)">
+            <small>Leave blank to use the remote default on first clone, or the current branch of an existing checkout.</small>
+          </label>
+          <p class="muted small">HTTPS sign-in uses Git Credential Manager (included with Git for Windows); SSH uses your configured key. Do not paste passwords or tokens into the URL. The Intune sign-in is separate.</p>
+          <div class="options">
+            <label class="check"><input type="checkbox" id="optGit"> <span>Commit to git <small>initialises a repo if needed</small></span></label>
+            <label class="check"><input type="checkbox" id="optPush"> <span>Push to remote <small>also commits changes and sets up branch tracking</small></span></label>
+          </div>
+        </div>
+      </details>
+
+      <div class="actions">
+        <button class="btn primary" id="btnExport">Generate documentation</button>
+      </div>
+    </section>
+
+    <section class="card hidden" id="cardRun" aria-labelledby="runTitle">
+      <h3 id="runTitle" class="card-title">Progress</h3>
+      <div class="progress"><div id="bar" class="bar"></div></div>
+      <p class="phase"><span id="phase">Starting</span> <span id="pct" class="muted"></span></p>
+      <pre id="log" class="log"></pre>
+    </section>
+
+    <section class="card hidden" id="cardResult" aria-labelledby="resultTitle">
+      <h3 id="resultTitle" class="card-title">Result</h3>
+      <div id="summary"></div>
       <div class="row">
-        <button class="btn" id="btnInteractive">Sign in with browser</button>
-        <button class="btn" id="btnDeviceCode">Use device code</button>
-        <button class="btn" id="btnAzureCli">Use Azure CLI session</button>
-        <button class="btn" id="btnMgGraph">Use Graph PowerShell session</button>
+        <button class="btn" id="btnOpen">Open folder</button>
+        <button class="btn ghost" id="btnAgain">Run again</button>
       </div>
-
-      <div id="deviceCodePane" class="notice hidden">
-        <p>Open <a id="dcUri" target="_blank" rel="noopener"></a> and enter this code:</p>
-        <p class="code-big" id="dcCode"></p>
-        <p class="muted" id="dcStatus">Waiting for you to complete sign-in&hellip;</p>
+      <div class="split">
+        <div class="filelist" id="fileList"></div>
+        <pre class="preview" id="preview">Select a file to preview.</pre>
       </div>
-
-      <div id="signinError" class="error hidden"></div>
-    </div>
+    </section>
   </section>
 
-  <section class="card" id="cardAssessment">
-    <div class="card-head">
-      <span class="step">A</span>
-      <h2>Assess policies</h2>
-    </div>
-    <p class="muted">Standalone, read-only configuration alignment using the connected tenant.
-      Reports stay local and are never committed or pushed automatically. Documentation export settings below are separate.</p>
-    <div id="assessmentCatalogNote" class="notice"></div>
-    <p id="assessmentCatalogErrors" class="muted assessment-text" role="status"></p>
-    <fieldset>
-      <legend>Target platforms</legend>
-      <div id="assessmentPlatforms" class="options"></div>
-    </fieldset>
-    <label>Benchmark profile filter
-      <select id="assessmentProfile"><option value="">All available profiles</option></select>
-      <small>Select exact pack versions/profiles below; unavailable combinations cannot run.</small>
-    </label>
-    <fieldset>
-      <legend>Rule packs, versions and profiles</legend>
-      <div id="assessmentPacks" class="assessment-packs"></div>
-    </fieldset>
-    <label>Import a local rule pack (JSON)
-      <input type="file" id="assessmentImportFile" accept=".json,application/json">
-      <small>Customer-owned/licensed CIS content is not bundled or downloaded. Maximum 10 MiB UTF-8 JSON,
-        32 nesting levels, 20,000 controls, 32,768 characters per string. The server validates the original text.</small>
-    </label>
-    <button class="btn" id="btnAssessmentImport">Import pack</button>
-    <h3>User-selected applicability context</h3>
-    <p class="muted">Not discovered device inventory. Leave unknown values blank; controls requiring unknown context
-      remain not assessed. The catalog does not include per-control applicability bounds.</p>
-    <div class="grid2">
-      <label>Windows 11 OS version <input type="text" id="assessmentOsWindows11" placeholder="Unknown (for example 10.0.22000)"></label>
-      <label>macOS version <input type="text" id="assessmentOsMacos" placeholder="Unknown (for example 14.0)"></label>
-      <label>iOS/iPadOS version <input type="text" id="assessmentOsIosIpados" placeholder="Unknown"></label>
-      <label>Android Enterprise OS version <input type="text" id="assessmentOsAndroidEnterprise" placeholder="Unknown"></label>
-    </div>
-    <label>Android Enterprise enrollment mode (user-selected)
-      <select id="assessmentEnrollment">
-        <option value="">Unknown</option>
-        <option value="workProfile">Personally-owned work profile</option>
-        <option value="fullyManaged">Fully managed</option>
-        <option value="dedicated">Dedicated</option>
-        <option value="corporateOwnedWorkProfile">Corporate-owned work profile</option>
-      </select>
-    </label>
-    <label>iOS/iPadOS ownership scope (user-selected comparison context)
-      <select id="assessmentIosOwnership">
-        <option value="">Unknown</option>
-        <option value="personallyOwned">Personally owned</option>
-        <option value="corporateOwned">Corporate owned (excluded by personal-only guidance)</option>
-      </select>
-      <small>This is explicit comparison context, not discovered ownership or effective assignment.</small>
-    </label>
-    <label>Assessment report destination
-      <input type="text" id="assessmentOutputPath" spellcheck="false" placeholder="Absolute local folder, separate from application and export">
-      <small>A new run subdirectory contains assessment.md and assessment.json. Installation/export overlap is rejected by the server.</small>
-    </label>
-    <div class="row">
-      <button class="btn primary" id="btnAssessmentRun" disabled>Assess selected policies</button>
-      <button class="btn ghost" id="btnAssessmentRefresh">Refresh assessment</button>
-    </div>
-    <p id="assessmentError" class="error hidden" role="alert"></p>
-    <div class="progress"><div id="assessmentBar" class="bar"></div></div>
-    <p id="assessmentProgress" class="phase" role="status" aria-live="polite"></p>
-    <p id="assessmentReportPaths" class="assessment-text"></p>
-    <p id="assessmentLimitations" class="muted"></p>
-    <div id="assessmentSummary"></div>
-    <details>
-      <summary>Assessment context, pack identities and collection completeness</summary>
-      <p id="assessmentContextResult" class="assessment-text"></p>
-      <p id="assessmentPackResult" class="assessment-text"></p>
-      <p id="assessmentIssues" class="assessment-text"></p>
-      <div id="assessmentPolicies"></div>
-    </details>
-    <label>Filter evidence by status
-      <select id="assessmentStatusFilter">
-        <option value="">All statuses</option>
-        <option value="aligned">Aligned</option>
-        <option value="misaligned">Misaligned</option>
-        <option value="missing">Missing</option>
-        <option value="potentialConflict">Potential conflict</option>
-        <option value="notApplicable">Not applicable</option>
-        <option value="notAssessed">Not assessed</option>
-      </select>
-    </label>
-    <div class="assessment-table-wrap">
-      <table class="assessment-table">
-        <caption>Configured policy evidence — not effective device targeting</caption>
-        <thead><tr><th scope="col">Control / references</th><th scope="col">Status / reason</th>
-          <th scope="col">Expected / configured values</th><th scope="col">Source policies / assignments</th></tr></thead>
-        <tbody id="assessmentResults"></tbody>
-      </table>
-    </div>
-  </section>
+  <!-- Assess policies -->
+  <section id="viewAssess" class="view hidden" aria-labelledby="assessTitle">
+    <header class="page-head">
+      <a class="back" href="#/">&larr; Home</a>
+      <h2 id="assessTitle" tabindex="-1">Assess policies</h2>
+      <p class="muted">Standalone, read-only configuration alignment using the connected tenant.
+        Reports stay local and are never committed or pushed automatically. Documentation export settings are separate.</p>
+    </header>
 
-  <!-- Step 2 -->
-  <section class="card disabled" id="cardConfigure">
-    <div class="card-head">
-      <span class="step">2</span>
-      <h2>Configure the export</h2>
-    </div>
+    <div id="cardAssessment" class="stack">
+      <section class="card" aria-labelledby="baselinesTitle">
+        <h3 id="baselinesTitle" class="card-title">Baselines</h3>
+        <div id="assessmentCatalogNote" class="notice"></div>
+        <p id="assessmentCatalogErrors" class="muted assessment-text" role="status"></p>
+        <fieldset>
+          <legend>Target platforms</legend>
+          <div id="assessmentPlatforms" class="options"></div>
+        </fieldset>
+        <label>Benchmark profile filter
+          <select id="assessmentProfile"><option value="">All available profiles</option></select>
+          <small>Select exact pack versions/profiles below; unavailable combinations cannot run.</small>
+        </label>
+        <fieldset>
+          <legend>Rule packs, versions and profiles</legend>
+          <div id="assessmentPacks" class="assessment-packs"></div>
+        </fieldset>
+        <details class="disclosure">
+          <summary>Import a rule pack</summary>
+          <div class="disclosure-body">
+            <label>Import a local rule pack (JSON)
+              <input type="file" id="assessmentImportFile" accept=".json,application/json">
+              <small>Customer-owned/licensed CIS content is not bundled or downloaded. Maximum 10 MiB UTF-8 JSON,
+                32 nesting levels, 20,000 controls, 32,768 characters per string. The server validates the original text.</small>
+            </label>
+            <button class="btn" id="btnAssessmentImport">Import pack</button>
+          </div>
+        </details>
+      </section>
 
-    <label>Output folder
-      <input type="text" id="outputPath" spellcheck="false">
-      <small>A Git working folder is ideal &mdash; re-running the export produces a clean diff.</small>
-    </label>
-    <div id="folderWarn" class="error hidden"></div>
+      <section class="card" aria-labelledby="contextTitle">
+        <h3 id="contextTitle" class="card-title">User-selected applicability context <span class="muted">(optional)</span></h3>
+        <p class="muted">Not discovered device inventory. Leave unknown values blank; controls requiring unknown context
+          remain not assessed. The catalog does not include per-control applicability bounds.</p>
+        <div class="grid2">
+          <label>Windows 11 OS version <input type="text" id="assessmentOsWindows11" placeholder="Unknown (for example 10.0.22000)"></label>
+          <label>macOS version <input type="text" id="assessmentOsMacos" placeholder="Unknown (for example 14.0)"></label>
+          <label>iOS/iPadOS version <input type="text" id="assessmentOsIosIpados" placeholder="Unknown"></label>
+          <label>Android Enterprise OS version <input type="text" id="assessmentOsAndroidEnterprise" placeholder="Unknown"></label>
+        </div>
+        <div class="grid2">
+          <label>Android Enterprise enrollment mode (user-selected)
+            <select id="assessmentEnrollment">
+              <option value="">Unknown</option>
+              <option value="workProfile">Personally-owned work profile</option>
+              <option value="fullyManaged">Fully managed</option>
+              <option value="dedicated">Dedicated</option>
+              <option value="corporateOwnedWorkProfile">Corporate-owned work profile</option>
+            </select>
+          </label>
+          <label>iOS/iPadOS ownership scope (user-selected comparison context)
+            <select id="assessmentIosOwnership">
+              <option value="">Unknown</option>
+              <option value="personallyOwned">Personally owned</option>
+              <option value="corporateOwned">Corporate owned (excluded by personal-only guidance)</option>
+            </select>
+            <small>This is explicit comparison context, not discovered ownership or effective assignment.</small>
+          </label>
+        </div>
+      </section>
 
-    <h3>What to document <button class="linkbtn" id="btnAll">all</button> <button class="linkbtn" id="btnNone">none</button></h3>
-    <div id="sections" class="sections"></div>
+      <section class="card" aria-labelledby="runAssessmentTitle">
+        <h3 id="runAssessmentTitle" class="card-title">Run</h3>
+        <label>Assessment report destination
+          <input type="text" id="assessmentOutputPath" spellcheck="false" placeholder="Absolute local folder, separate from application and export">
+          <small>A new run subdirectory contains assessment.md and assessment.json. Installation/export overlap is rejected by the server.</small>
+        </label>
+        <div class="row">
+          <button class="btn primary" id="btnAssessmentRun" disabled>Assess selected policies</button>
+          <button class="btn ghost" id="btnAssessmentRefresh">Refresh assessment</button>
+        </div>
+        <p id="assessmentError" class="error hidden" role="alert"></p>
+        <div class="progress"><div id="assessmentBar" class="bar"></div></div>
+        <p id="assessmentProgress" class="phase" role="status" aria-live="polite"></p>
+      </section>
 
-    <h3>Options</h3>
-    <div class="options">
-      <label class="check"><input type="checkbox" id="optRaw" checked> <span>Include raw JSON <small>source of truth for diffing</small></span></label>
-      <label class="check"><input type="checkbox" id="optScripts" checked> <span>Include script bodies <small>PowerShell, shell and custom payloads</small></span></label>
-      <label class="check"><input type="checkbox" id="optFrontMatter" checked> <span>YAML front matter <small>metadata for wikis and static site generators</small></span></label>
-      <label class="check"><input type="checkbox" id="optAdo" checked> <span>Azure DevOps <code>.order</code> files <small>page ordering for publish-as-wiki</small></span></label>
-    </div>
-
-    <h3>Git publishing (optional)</h3>
-    <label>Azure DevOps repository clone URL
-      <input type="text" id="gitRemoteUrl" spellcheck="false" placeholder="https://dev.azure.com/organization/project/_git/repository">
-      <small>Use an existing repository, not a Wiki page URL. An empty output folder will be cloned; an existing checkout must match. Leave blank to use its configured remote.</small>
-    </label>
-    <label>Target branch
-      <input type="text" id="gitBranch" spellcheck="false" placeholder="Repository default (main for an empty repository)">
-      <small>Leave blank to use the remote default on first clone, or the current branch of an existing checkout.</small>
-    </label>
-    <p class="muted">HTTPS sign-in uses Git Credential Manager (included with Git for Windows); SSH uses your configured key. Do not paste passwords or tokens into the URL. The Intune sign-in is separate.</p>
-    <div class="options">
-      <label class="check"><input type="checkbox" id="optGit"> <span>Commit to git <small>initialises a repo if needed</small></span></label>
-      <label class="check"><input type="checkbox" id="optPush"> <span>Push to remote <small>also commits changes and sets up branch tracking</small></span></label>
-    </div>
-
-    <div class="row">
-      <button class="btn primary" id="btnExport">Generate documentation</button>
-    </div>
-  </section>
-
-  <!-- Step 3 -->
-  <section class="card hidden" id="cardRun">
-    <div class="card-head">
-      <span class="step">3</span>
-      <h2>Progress</h2>
-    </div>
-    <div class="progress"><div id="bar" class="bar"></div></div>
-    <p class="phase"><span id="phase">Starting</span> <span id="pct" class="muted"></span></p>
-    <pre id="log" class="log"></pre>
-  </section>
-
-  <!-- Step 4 -->
-  <section class="card hidden" id="cardResult">
-    <div class="card-head">
-      <span class="step">4</span>
-      <h2>Result</h2>
-    </div>
-    <div id="summary"></div>
-    <div class="row">
-      <button class="btn" id="btnOpen">Open folder</button>
-      <button class="btn ghost" id="btnAgain">Run again</button>
-    </div>
-    <div class="split">
-      <div class="filelist" id="fileList"></div>
-      <pre class="preview" id="preview">Select a file to preview.</pre>
+      <section class="card" aria-labelledby="resultsTitle">
+        <h3 id="resultsTitle" class="card-title">Results</h3>
+        <p id="assessmentReportPaths" class="assessment-text"></p>
+        <p id="assessmentLimitations" class="muted"></p>
+        <div id="assessmentSummary"></div>
+        <details class="disclosure">
+          <summary>Assessment context, pack identities and collection completeness</summary>
+          <div class="disclosure-body">
+            <p id="assessmentContextResult" class="assessment-text"></p>
+            <p id="assessmentPackResult" class="assessment-text"></p>
+            <p id="assessmentIssues" class="assessment-text"></p>
+            <div id="assessmentPolicies"></div>
+          </div>
+        </details>
+        <label class="filter">Filter evidence by status
+          <select id="assessmentStatusFilter">
+            <option value="">All statuses</option>
+            <option value="aligned">Aligned</option>
+            <option value="misaligned">Misaligned</option>
+            <option value="missing">Missing</option>
+            <option value="potentialConflict">Potential conflict</option>
+            <option value="notApplicable">Not applicable</option>
+            <option value="notAssessed">Not assessed</option>
+          </select>
+        </label>
+        <div class="assessment-table-wrap">
+          <table class="assessment-table">
+            <caption>Configured policy evidence — not effective device targeting</caption>
+            <thead><tr><th scope="col">Control / references</th><th scope="col">Status / reason</th>
+              <th scope="col">Expected / configured values</th><th scope="col">Source policies / assignments</th></tr></thead>
+            <tbody id="assessmentResults"></tbody>
+          </table>
+        </div>
+      </section>
     </div>
   </section>
 
