@@ -422,6 +422,47 @@ Describe 'Assessment policy collection' {
         $r.issues[0].reason | Should -Match 'Duplicate'
     }
 
+    It 'marks all family sources incomplete for a cross-platform duplicate retaining <retainedPlatform>' -ForEach @(
+        @{ first = 'windows10'; second = 'macOS'; retainedPlatform = 'windows11' }
+        @{ first = 'macOS'; second = 'windows10'; retainedPlatform = 'macos' }
+    ) {
+        $script:duplicatePlatforms = @($first, $second)
+        Mock Invoke-IdsGraph {
+            @{ value = @(@{ id = 'duplicate'; platforms = $script:duplicatePlatforms[0] })
+                '@odata.nextLink' = 'https://graph.microsoft.com/beta/deviceManagement/configurationPolicies?page=2' }
+        } -ParameterFilter { $Path -eq '/deviceManagement/configurationPolicies' }
+        Mock Invoke-IdsGraph {
+            @{ value = @(@{ id = 'duplicate'; platforms = $script:duplicatePlatforms[1] }) }
+        } -ParameterFilter { $Path -eq 'https://graph.microsoft.com/beta/deviceManagement/configurationPolicies?page=2' }
+        Mock Invoke-IdsGraphBatch {
+            @{
+                settings = @{ status = 200; body = @{ value = @(@{ id = 's1'; settingInstance = @{ settingDefinitionId = 'stable' } }) } }
+                assignments = @{ status = 200; body = @{ value = @(@{ id = 'a1'; target = @{ '@odata.type' = '#microsoft.graph.allDevicesAssignmentTarget' } }) } }
+            }
+        }
+        $r = Get-IdsAssessmentCollection -Packs @(
+            (New-CollectionPack), (New-CollectionPack 'settingsCatalog' 'macos')
+        ) -Context @{ platforms = @('windows11', 'macos') }
+        $r.policies.Count | Should -Be 1
+        $r.policies[0].platform | Should -Be $retainedPlatform
+        $r.policies[0].settingsComplete | Should -Be $true
+        $r.policies[0].assignmentsComplete | Should -Be $true
+        $r.policies[0].rawSettings[0].id | Should -Be 's1'
+        $r.policies[0].assignments[0].id | Should -Be 'a1'
+        $r.issues.Count | Should -Be 1
+        $r.issues[0].stage | Should -Be 'inventory'
+        $r.issues[0].policyKey | Should -Be 'settingsCatalog:duplicate'
+        $r.issues[0].reason | Should -Match 'Duplicate'
+        $r.sources.Count | Should -Be 2
+        foreach ($platform in @('windows11', 'macos')) {
+            $source = $r.sources | Where-Object platform -EQ $platform
+            $source.complete | Should -Be $false
+            $source.errors.Count | Should -Be 1
+            $source.errors[0] | Should -Be $r.issues[0]
+        }
+        Should -Invoke Invoke-IdsGraphBatch -Times 1 -Exactly
+    }
+
     It 'marks missing Graph policy types as incomplete rather than exposing untyped property evidence' {
         Mock Invoke-IdsGraph { @{ value = @(@{ id = 'synthetic'; storageRequireEncryption = $true }) } }
         Mock Invoke-IdsGraphBatch { @{ assignments = @{ status = 200; body = @{ value = @() } } } }

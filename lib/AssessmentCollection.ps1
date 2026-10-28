@@ -391,7 +391,7 @@ function Get-IdsAssessmentCollection {
         foreach ($platform in $platforms) {
             $sourceErrors = @($issues | Select-Object -Skip $issueStart | Where-Object {
                 $_.stage -ne 'assignments' -and
-                (-not $_.policyKey -or -not $policyPlatforms[$_.policyKey] -or $policyPlatforms[$_.policyKey] -eq $platform)
+                ($_.stage -eq 'inventory' -or -not $_.policyKey -or -not $policyPlatforms[$_.policyKey] -or $policyPlatforms[$_.policyKey] -eq $platform)
             })
             $sources.Add([pscustomobject]@{ family = $family; platform = $platform; complete = ($sourceErrors.Count -eq 0); errors = $sourceErrors })
         }
