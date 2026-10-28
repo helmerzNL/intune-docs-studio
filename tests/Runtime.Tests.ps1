@@ -355,4 +355,16 @@ Describe 'Shared runtime job and reset guards' {
         $State.Export.summary | Should -BeNullOrEmpty
         $State.Config.OutputPath | Should -Be 'default'
     }
+    It 'preserves an unfinished portal handle and identity while the worker is unwinding' {
+        $job = @{ handle = @{ IsCompleted = $false } }
+        $State.Browser.job = $job
+        Start-IdsExportJob @{} | Should -BeFalse
+        Start-IdsBrowserSignIn 'synthetic-new' | Should -BeFalse
+        { Reset-IdsSessionState } | Should -Throw '*running*'
+        [object]::ReferenceEquals($State.Browser.job, $job) | Should -BeTrue
+        $State.Auth.tenant_id | Should -Be 'synthetic-old'
+        $State.Pending.deviceCode | Should -Be 'synthetic-pending'
+        Clear-IdsFinishedJob
+        [object]::ReferenceEquals($State.Browser.job, $job) | Should -BeTrue
+    }
 }

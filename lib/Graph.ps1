@@ -22,6 +22,14 @@ function Initialize-IdsGraph {
 function Get-IdsGraphStats { return $script:IdsGraphStats }
 function Reset-IdsGraphStats { $script:IdsGraphStats = @{ requests = 0; retries = 0; throttled = 0; failures = 0 } }
 
+function Test-IdsGraphAuthenticationFailure {
+    param([Exception]$Exception)
+    # Refresh failures can precede the HTTP wrapper and have no StatusCode.
+    # Use structured metadata only; never inspect provider messages or bodies.
+    return [bool]($Exception.StatusCode -eq 401 -or
+        ($Exception.PSObject.Properties['OAuthError'] -and $Exception.OAuthError))
+}
+
 function Get-IdsGraphAuth {
     if (-not $script:IdsGraphState) { throw 'Graph client not initialised. Call Initialize-IdsGraph first.' }
     $auth = $script:IdsGraphState.Auth
@@ -189,7 +197,10 @@ function Invoke-IdsGraphBatch {
                 } catch {
                     $st = 500
                     if ($_.Exception.PSObject.Properties['StatusCode']) { $st = [int]$_.Exception.StatusCode }
-                    $results[[string]$r.id] = @{ status = $st; body = $null }
+                    $results[[string]$r.id] = @{
+                        status = $st; body = $null
+                        authenticationFailure = (Test-IdsGraphAuthenticationFailure $_.Exception)
+                    }
                 }
             }
         }

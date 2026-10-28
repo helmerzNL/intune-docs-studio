@@ -53,13 +53,20 @@ session epoch, and are cleared on identity replacement/reset (`404` when no
 current result exists). Reset also invalidates pending OAuth/device-code
 sign-ins. OAuth callbacks keep the existing redirect/PKCE flow; a callback
 arriving during work redirects to `/?signin=busy` without replacing identity.
+An unfinished portal worker remains busy until its pipeline completes, even
+after browser progress stops reporting `running`. Progress `summaries` is an
+empty array (`[]`) until a result is available.
 
 Malformed input/invalid selections return `400`; foreign-origin requests `403`;
 oversized bodies/packs `413`; incompatible media types `415`; storage/worker
 startup failures `500`. Worker failures are visible in progress without exposing
 provider exception payloads. A failed report write has no successful result or
 report pair. Source-read failures remain control-level not-assessed evidence;
-authentication failures fail the run. `partial: true` also covers partial pack
+authentication failures fail the run without publishing reports, including
+structured OAuth refresh failures after the tenant lookup succeeds. Collection
+propagates only an `authenticationFailure` boolean, not provider error payloads
+or tokens; ordinary source `403` and unsupported evidence remain partial.
+`partial: true` also covers partial pack
 inventories, unknown applicability, and incomplete collection/assignments.
 Source revisions and coverage limitations remain in catalog/result metadata.
 Reports are customer-owned local files; they are never automatically committed

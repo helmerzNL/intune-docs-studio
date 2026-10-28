@@ -91,11 +91,15 @@ function Read-IdsAssessmentPages {
         }
     } catch {
         $status = Get-IdsAssessmentMember $_.Exception 'StatusCode'
+        $authenticationFailure = Test-IdsGraphAuthenticationFailure $_.Exception
         # Transport exception messages can contain response bodies or credentials.
-        $reason = if ($null -ne $status) { 'Graph page request failed.' } elseif ($_.Exception.Message -match '^(Unsafe Graph|Graph page link|Graph pagination|Expected (a Graph|Graph collection)|Malformed Graph)') {
+        $reason = if ($authenticationFailure -or $null -ne $status) { 'Graph page request failed.' } elseif ($_.Exception.Message -match '^(Unsafe Graph|Graph page link|Graph pagination|Expected (a Graph|Graph collection)|Malformed Graph)') {
             $_.Exception.Message
         } else { 'Graph page request failed.' }
-        $errors.Add([pscustomobject]@{ statusCode = $status; reason = $reason })
+        $errors.Add([pscustomobject]@{
+            statusCode = $status; reason = $reason
+            authenticationFailure = $authenticationFailure
+        })
     }
     return [pscustomobject]@{
         items = $items.ToArray(); complete = ($errors.Count -eq 0); errors = $errors.ToArray()
@@ -153,7 +157,14 @@ function Get-IdsAssessmentPages {
 function Get-IdsAssessmentBatchPages {
     param([object[]]$Requests)
     $results = @{}
-    try { $batch = Invoke-IdsGraphBatch -Requests $Requests -Version 'beta' } catch { $batch = @{} }
+    $batchError = $null
+    try { $batch = Invoke-IdsGraphBatch -Requests $Requests -Version 'beta' } catch {
+        $batch = @{}
+        $batchError = @{
+            statusCode = (Get-IdsAssessmentMember $_.Exception 'StatusCode')
+            authenticationFailure = (Test-IdsGraphAuthenticationFailure $_.Exception)
+        }
+    }
     foreach ($request in $Requests) {
         $entry = Get-IdsAssessmentMember $batch $request.id
         $status = Get-IdsAssessmentMember $entry 'status'
@@ -161,7 +172,9 @@ function Get-IdsAssessmentBatchPages {
             $results[$request.id] = [pscustomobject]@{
                 items = @(); complete = $false
                 errors = @([pscustomobject]@{
-                    statusCode = $(if ($status -is [int]) { $status } else { $null })
+                    statusCode = $(if ($status -is [int]) { $status } else { $batchError.statusCode })
+                    authenticationFailure = [bool]($batchError.authenticationFailure -or $status -eq 401 -or
+                        (Get-IdsAssessmentMember $entry 'authenticationFailure'))
                     reason = $(if ($null -eq $entry) { 'Missing Graph batch entry.' } else { 'Graph batch entry did not have a successful integer status.' })
                 })
             }
@@ -178,6 +191,7 @@ function Add-IdsAssessmentReadIssues {
         $Issues.Add([pscustomobject]@{
             family = $Family; policyKey = $PolicyKey; stage = $Stage
             statusCode = $error.statusCode; reason = $error.reason
+            authenticationFailure = [bool]$error.authenticationFailure
         })
     }
 }

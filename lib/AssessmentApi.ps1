@@ -127,7 +127,7 @@ function Invoke-IdsAssessmentRoute {
                 $response.body = @{
                     running = $a.running; done = $a.done; percent = $a.percent; phase = $a.phase
                     error = $a.error; partial = $a.partial; reportPaths = $a.reportPaths
-                    summaries = @($a.result.summaries)
+                    summaries = @($a.result.summaries | Where-Object { $null -ne $_ })
                 }
             }
             'GET /api/assessment/results' {

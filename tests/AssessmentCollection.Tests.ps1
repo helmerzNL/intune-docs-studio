@@ -14,6 +14,39 @@ BeforeAll {
 }
 
 Describe 'Strict assessment paging' {
+    It 'propagates only sanitized structured authentication classification through inventory issues' {
+        Mock Invoke-IdsGraph {
+            $exception = [Exception]::new('Graph pagination SYNTHETIC-SECRET invalid_grant provider payload')
+            $exception | Add-Member NoteProperty OAuthError 'invalid_grant'
+            throw $exception
+        }
+        $collection = Get-IdsAssessmentCollection -Packs @(New-CollectionPack) -Context @{ platforms = @('windows11') }
+        $collection.issues.Count | Should -Be 1
+        $collection.issues[0].authenticationFailure | Should -BeTrue
+        $collection.issues[0].statusCode | Should -BeNullOrEmpty
+        ($collection | ConvertTo-Json -Depth 20) | Should -Not -Match 'SYNTHETIC-SECRET|invalid_grant|OAuthError'
+    }
+
+    It 'does not infer authentication failure from provider message text' {
+        Mock Invoke-IdsGraph { throw 'invalid_grant SYNTHETIC-SECRET' }
+        $page = Get-IdsAssessmentPages -Path '/synthetic'
+        $page.complete | Should -BeFalse
+        $page.errors[0].authenticationFailure | Should -BeFalse
+        ($page | ConvertTo-Json -Depth 10) | Should -Not -Match 'invalid_grant|SYNTHETIC-SECRET'
+    }
+
+    It 'preserves structured authentication failure when the batch transport throws' {
+        Mock Invoke-IdsGraphBatch {
+            $exception = [Exception]::new('SYNTHETIC-SECRET provider payload')
+            $exception | Add-Member NoteProperty OAuthError 'invalid_grant'
+            throw $exception
+        }
+        $reads = Get-IdsAssessmentBatchPages @(@{ id = 'assignments'; url = '/synthetic/assignments' })
+        $reads.assignments.complete | Should -BeFalse
+        $reads.assignments.errors[0].authenticationFailure | Should -BeTrue
+        ($reads | ConvertTo-Json -Depth 10) | Should -Not -Match 'SYNTHETIC-SECRET|invalid_grant|OAuthError'
+    }
+
     It 'does not treat a failed second page as a complete first page' {
         Mock Invoke-IdsGraph {
             param($Path)

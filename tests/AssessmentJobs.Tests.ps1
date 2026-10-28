@@ -6,11 +6,12 @@ BeforeAll {
     }
     . (Join-Path $PSScriptRoot 'TestHelpers\Assessment.ps1')
     function New-JobFixture {
+        param([switch]$RealGraph)
         $folder = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         [void](New-Item -ItemType Directory "$folder\app\baselines" -Force)
         Copy-Item "$repo\lib" "$folder\app" -Recurse
         [IO.File]::WriteAllBytes("$folder\app\baselines\synthetic.json", (New-IdsTestPackBytes))
-        Add-Content "$folder\app\lib\Graph.ps1" @'
+        if (-not $RealGraph) { Add-Content "$folder\app\lib\Graph.ps1" @'
 function Invoke-IdsGraphRaw {
     param($Uri)
     if ($Uri -match '/organization') {
@@ -19,6 +20,7 @@ function Invoke-IdsGraphRaw {
     return @{ value = @() }
 }
 '@
+        }
         $state = [hashtable]::Synchronized(@{
             Auth = @{ transport = 'token'; access_token = 'SYNTHETIC-SECRET'; tenant_id = 'synthetic-tenant' }
             Export = @{ running = $false }
@@ -63,6 +65,12 @@ Describe 'Assessment job admission and session ownership' {
             Job = @{ handle = @{ IsCompleted = $false } }
         })
         Start-IdsAssessmentJob -State $state -Options @{} -Root $repo | Should -BeFalse
+    }
+
+    It 'rejects assessment admission while a portal worker is unwinding' {
+        $fixture = New-JobFixture
+        $fixture.state.Browser.job = @{ handle = @{ IsCompleted = $false } }
+        Start-IdsAssessmentJob $fixture.state @{} $fixture.root | Should -BeFalse
     }
 
     It 'snapshots packs and context, publishes a partial safe result and disposes completed jobs' {
@@ -192,15 +200,18 @@ function Invoke-IdsGraphRaw {
         } finally { Stop-IdsAssessmentJob $fixture.state }
     }
 
-    It 'retains source failures as partial not-assessed evidence' {
+    It 'retains source failures as partial not-assessed evidence for status <Code>' -ForEach @(0, 403) {
+        $code = $_
         $fixture = New-JobFixture
-        Add-Content "$($fixture.root)\lib\Graph.ps1" @'
+        Add-Content "$($fixture.root)\lib\Graph.ps1" (@'
 function Invoke-IdsGraphRaw {
     param($Uri)
     if ($Uri -match '/organization') { return @{ value = @(@{ id = 'synthetic-tenant' }) } }
-    throw 'SYNTHETIC-SECRET source unavailable'
+    $exception = [Exception]::new('SYNTHETIC-SECRET source unavailable')
+    if (__CODE__) { $exception | Add-Member NoteProperty StatusCode __CODE__ }
+    throw $exception
 }
-'@
+'@).Replace('__CODE__', [string]$code)
         try {
             Start-IdsAssessmentJob $fixture.state $fixture.options $fixture.root | Should -BeTrue
             Wait-Assessment $fixture.state
@@ -228,6 +239,47 @@ function Invoke-IdsGraphRaw {
             Wait-Assessment $fixture.state
             $fixture.state.Assessment.error | Should -Match 'failed during Collecting'
             $fixture.state.Assessment.result | Should -BeNullOrEmpty
+        } finally { Stop-IdsAssessmentJob $fixture.state }
+    }
+
+    It 'fails without reports when refresh fails after organization success during <Stage>' -ForEach @(
+        @{ Stage = 'inventory' }, @{ Stage = 'batch' }
+    ) {
+        $fixture = New-JobFixture -RealGraph
+        $fixture.state.Auth.expires_at = [datetime]::UtcNow.AddHours(1)
+        $fixture.state.Auth.refresh_token = 'SYNTHETIC-REFRESH-SECRET'
+        Add-Content "$($fixture.root)\lib\Auth.ps1" @'
+function Invoke-IdsTokenEndpoint {
+    $exception = [Exception]::new('SYNTHETIC-SECRET provider payload')
+    $exception | Add-Member NoteProperty OAuthError 'invalid_grant'
+    throw $exception
+}
+'@
+        Add-Content "$($fixture.root)\lib\Graph.ps1" (@'
+function Invoke-WebRequest {
+    param($Uri)
+    if ($Uri -match '/organization') {
+        if ('__STAGE__' -eq 'inventory') { $script:IdsGraphState.Auth.expires_at = [datetime]::UtcNow.AddMinutes(-1) }
+        return @{ Content = '{"value":[{"id":"synthetic-tenant"}]}' }
+    }
+    if ($Uri -match '/deviceManagement/configurationPolicies$') {
+        $script:IdsGraphState.Auth.expires_at = [datetime]::UtcNow.AddMinutes(-1)
+        return @{ Content = '{"value":[{"id":"synthetic-policy","platforms":"windows10"}]}' }
+    }
+    throw 'Unexpected synthetic request'
+}
+'@).Replace('__STAGE__', $Stage)
+        try {
+            Start-IdsAssessmentJob $fixture.state $fixture.options $fixture.root | Should -BeTrue
+            Wait-Assessment $fixture.state
+            $a = $fixture.state.Assessment
+            $a.done | Should -BeTrue
+            $a.error | Should -Match 'failed during Collecting'
+            $a.error | Should -Not -Match 'SYNTHETIC|invalid_grant|OAuthError'
+            $a.result | Should -BeNullOrEmpty
+            $a.reportPaths | Should -BeNullOrEmpty
+            $a.partial | Should -BeFalse
+            Test-Path $fixture.options.outputPath | Should -BeFalse
         } finally { Stop-IdsAssessmentJob $fixture.state }
     }
 

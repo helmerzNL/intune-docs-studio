@@ -1,7 +1,8 @@
 function Test-IdsWorkActive {
     param([hashtable]$State)
-    return [bool]($State.Export.running -or $State.Assessment.running -or
+    return [bool]($State.Export.running -or $State.Assessment.running -or $State.Browser.running -or
         ($State.Job -and -not $State.Job.handle.IsCompleted) -or
+        ($State.Browser.job -and -not $State.Browser.job.handle.IsCompleted) -or
         ($State.Assessment.job -and -not $State.Assessment.job.handle.IsCompleted))
 }
 
@@ -139,7 +140,9 @@ function Start-IdsAssessmentJob {
             if ($Auth.tenant_id -and $Auth.tenant_id -ne $tenants[0].id) { throw 'Authenticated tenant does not match the session.' }
             $a.phase = 'Collecting'; $a.percent = 10
             $collection = Get-IdsAssessmentCollection -Packs $Options.packs -Context $Options.context
-            if (@($collection.issues | Where-Object statusCode -eq 401).Count) { throw 'Assessment authentication failed.' }
+            if (@($collection.issues | Where-Object { $_.statusCode -eq 401 -or $_.authenticationFailure }).Count) {
+                throw 'Assessment authentication failed.'
+            }
             $a.phase = 'Normalizing'; $a.percent = 50
             $snapshot = ConvertTo-IdsAssessmentSnapshot -Collection $collection
             $a.phase = 'Evaluating'; $a.percent = 65

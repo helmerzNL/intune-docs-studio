@@ -75,6 +75,22 @@ Describe 'Assessment local route contract' {
         (Invoke-IdsAssessmentRoute GET /api/assessment/results (New-ApiRequest) $state $repo).status | Should -Be 404
         (Invoke-IdsAssessmentRoute GET /api/assessment (New-ApiRequest) $state $repo).status | Should -Be 404
     }
+    It 'serializes empty progress summaries as an empty array before a result exists' {
+        $state.Auth = @{ transport = 'token' }
+        foreach ($running in @($false, $true)) {
+            $state.Assessment.running = $running
+            $response = Invoke-IdsAssessmentRoute GET /api/assessment (New-ApiRequest) $state $repo
+            $response.status | Should -Be 200
+            $json = $response.body | ConvertTo-Json -Depth 64 | ConvertFrom-Json
+            ($json.summaries -is [array]) | Should -BeTrue
+            $json.summaries.Count | Should -Be 0
+        }
+    }
+    It 'rejects a start before parsing while an unfinished portal handle is retained' {
+        $state.Auth = @{ transport = 'token' }
+        $state.Browser.job = @{ handle = @{ IsCompleted = $false } }
+        (Invoke-IdsAssessmentRoute POST /api/assessment (New-ApiRequest 'broken') $state $repo).status | Should -Be 409
+    }
     It 'returns conflict before parsing duplicate starts and export-active starts' {
         $state.Auth = @{ transport = 'token' }
         foreach ($kind in 'Export', 'Assessment', 'Browser') {
