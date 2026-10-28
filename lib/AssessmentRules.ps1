@@ -10,6 +10,12 @@
     Unknown applicability stays in the coverage denominator. Empty denominators
     return null. Inventory describes the pack's listed selection, not benchmark
     certification or discovered device scope.
+
+    Android scope requires known enrollment context and policy metadata even
+    for unrestricted controls. Incomplete sources block evaluation unless every
+    failure is tied to an explicitly excluded policy; inventory/unknown failures
+    still block it. Duplicate value equality uses the validated mapping's case
+    semantics while preserving evidence from distinct policies.
 #>
 
 function Test-IdsRuleValueType {
@@ -194,13 +200,18 @@ function Get-IdsRuleApplicability {
         }
     }
     $mode = if ($Context.enrollmentModes) { $Context.enrollmentModes[$Platform] } else { $null }
+    # An empty control mode list is unrestricted, not evidence that the
+    # selected Android context or a policy's enrollment scope is known.
+    if ($Platform -ceq 'androidEnterprise' -and -not $mode) {
+        $unknown.Add('Selected enrollment mode applicability is unknown.')
+    }
     if (@($Conditions.enrollmentModes).Count -gt 0) {
         if (-not $mode) { $unknown.Add('Enrollment mode applicability is unknown.') }
         elseif ($mode -cnotin $Conditions.enrollmentModes) { $excluded.Add('Selected enrollment mode is excluded.') }
     }
-    if ($null -ne $Policy -and $Platform -ceq 'androidEnterprise' -and $mode) {
+    if ($null -ne $Policy -and $Platform -ceq 'androidEnterprise') {
         if (-not $Policy.enrollmentMode) { $unknown.Add('Policy enrollment mode applicability is unknown.') }
-        elseif ($Policy.enrollmentMode -cne $mode) { $excluded.Add('Policy enrollment mode excludes this context.') }
+        elseif ($mode -and $Policy.enrollmentMode -cne $mode) { $excluded.Add('Policy enrollment mode excludes this context.') }
     }
     if ($excluded.Count -gt 0) { return [pscustomobject]@{ status = 'notApplicable'; reason = $excluded -join ' ' } }
     if ($unknown.Count -gt 0) { return [pscustomobject]@{ status = 'notAssessed'; reason = $unknown -join ' ' } }
@@ -271,7 +282,26 @@ function Compare-IdsAssessment {
                 $sources = @($Snapshot.sources | Where-Object {
                     $_.family -ceq $family -and (-not $_.platform -or $_.platform -ceq $pack.platform)
                 })
-                if ($sources.Count -eq 0 -or @($sources | Where-Object complete -NE $true).Count -gt 0) {
+                $incomplete = $sources.Count -eq 0
+                foreach ($source in @($sources | Where-Object complete -NE $true)) {
+                    if ($null -eq $source.errors -or @($source.errors).Count -eq 0) { $incomplete = $true }
+                    foreach ($error in $source.errors) {
+                        # A source retains all collection failures. Only known,
+                        # policy-scoped settings/metadata failures can be
+                        # dismissed after explicit applicability exclusion.
+                        $failedPolicies = @($policies | Where-Object {
+                            $_.key -ceq $error.policyKey -and $_.family -ceq $family
+                        })
+                        if ($error.family -cne $family -or $error.stage -cnotin @('settings', 'template') -or
+                            $failedPolicies.Count -ne 1) { $incomplete = $true; continue }
+                        $failedPolicy = $failedPolicies[0]
+                        $failedScope = Get-IdsRuleApplicability $pack.platform @{
+                            osMin = $failedPolicy.osMin; osMax = $failedPolicy.osMax; enrollmentModes = @()
+                        } $Context $failedPolicy
+                        if ($failedScope.status -cne 'notApplicable') { $incomplete = $true }
+                    }
+                }
+                if ($incomplete) {
                     $limitations.Add("Relevant source '$family' is incomplete or unreported.")
                 }
             }
@@ -298,7 +328,7 @@ function Compare-IdsAssessment {
                     $duplicate = $false
                     foreach ($existing in $policyObserved) {
                         if (Test-IdsRuleObservationIdentity $existing $observation) {
-                            if (Test-IdsRuleObservationEqual $existing $observation) { $duplicate = $true; break }
+                            if (Test-IdsRuleObservationEqual $existing $observation $matches[0].caseSensitive) { $duplicate = $true; break }
                             $contradictory = $true
                         }
                     }

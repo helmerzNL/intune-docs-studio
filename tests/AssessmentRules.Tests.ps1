@@ -1,5 +1,6 @@
 BeforeAll {
     . "$PSScriptRoot\TestHelpers\Assessment.ps1"
+    . "$PSScriptRoot\..\lib\Graph.ps1"
     . "$PSScriptRoot\..\lib\BaselinePacks.ps1"
     . "$PSScriptRoot\..\lib\AssessmentCollection.ps1"
     . "$PSScriptRoot\..\lib\AssessmentSettings.ps1"
@@ -137,6 +138,44 @@ Describe 'Conservative policy aggregation' {
         $control.policyResults.Count | Should -Be 2
         $control.policyResults[0].observed.Count | Should -Be 1
         $control.policyResults[1].observed.Count | Should -Be 1
+    }
+
+    It 'uses mapping case semantics for same-policy <Type> duplicates (caseSensitive=<CaseSensitive>)' -ForEach @(
+        @{ Type = 'string'; CaseSensitive = $false; Expected = 'ABC'; Other = 'abc'; Status = 'aligned'; Count = 1 }
+        @{ Type = 'stringSet'; CaseSensitive = $false; Expected = @('ABC', 'DEF'); Other = @('def', 'abc', 'ABC'); Status = 'aligned'; Count = 1 }
+        @{ Type = 'string'; CaseSensitive = $true; Expected = 'ABC'; Other = 'abc'; Status = 'notAssessed'; Count = 2 }
+        @{ Type = 'stringSet'; CaseSensitive = $true; Expected = @('ABC', 'DEF'); Other = @('def', 'abc', 'ABC'); Status = 'notAssessed'; Count = 2 }
+    ) {
+        $mapping = New-TestMapping $Type eq $Expected
+        $mapping.caseSensitive = $CaseSensitive
+        $snapshot = New-TestSnapshot @((New-TestObservation $Expected $Type), (New-TestObservation $Other $Type))
+        $control = (Invoke-TestAssessment (New-TestPack $mapping) $snapshot).controls[0]
+        $control.status | Should -BeExactly $Status
+        $control.policyResults[0].status | Should -BeExactly $Status
+        $control.observed.Count | Should -Be $Count
+        $control.policyResults[0].observed.Count | Should -Be $Count
+    }
+
+    It 'retains separate policy evidence under <Type> case semantics (caseSensitive=<CaseSensitive>)' -ForEach @(
+        @{ Type = 'string'; CaseSensitive = $false; Expected = 'ABC'; Other = 'abc'; Status = 'aligned'; OtherStatus = 'aligned' }
+        @{ Type = 'stringSet'; CaseSensitive = $false; Expected = @('ABC', 'DEF'); Other = @('def', 'abc'); Status = 'aligned'; OtherStatus = 'aligned' }
+        @{ Type = 'string'; CaseSensitive = $true; Expected = 'ABC'; Other = 'abc'; Status = 'potentialConflict'; OtherStatus = 'misaligned' }
+        @{ Type = 'stringSet'; CaseSensitive = $true; Expected = @('ABC', 'DEF'); Other = @('def', 'abc'); Status = 'potentialConflict'; OtherStatus = 'misaligned' }
+    ) {
+        $mapping = New-TestMapping $Type eq $Expected
+        $mapping.caseSensitive = $CaseSensitive
+        $snapshot = New-TestSnapshot @(
+            (New-TestObservation $Expected $Type),
+            (New-TestObservation $Other $Type 'settingsCatalog:two')
+        )
+        $control = (Invoke-TestAssessment (New-TestPack $mapping) $snapshot).controls[0]
+        $control.status | Should -BeExactly $Status
+        $control.observed.Count | Should -Be 2
+        $control.policyResults.Count | Should -Be 2
+        $control.policyResults[0].policyKey | Should -BeExactly 'settingsCatalog:one'
+        $control.policyResults[0].status | Should -BeExactly 'aligned'
+        $control.policyResults[1].policyKey | Should -BeExactly 'settingsCatalog:two'
+        $control.policyResults[1].status | Should -BeExactly $OtherStatus
     }
 
     It 'keeps both matching and violating policies when boolean values differ' {
@@ -359,6 +398,52 @@ Describe 'Conservative policy aggregation' {
         @($control.policyResults | Where-Object { $_.status -in @('aligned', 'missing') }).Count | Should -Be 0
     }
 
+    It 'does not infer Android enrollment applicability from an unrestricted control with <Evidence>' -ForEach @(
+        @{ Evidence = 'no context or policy mode'; Selected = $null; PolicyMode = $null; Configured = $true }
+        @{ Evidence = 'no context and absent value'; Selected = $null; PolicyMode = $null; Configured = $false }
+        @{ Evidence = 'known policy mode only'; Selected = $null; PolicyMode = 'fullyManaged'; Configured = $true }
+        @{ Evidence = 'known context only'; Selected = 'fullyManaged'; PolicyMode = $null; Configured = $true }
+    ) {
+        $pack = New-TestPack
+        $pack.platform = 'androidEnterprise'
+        $pack.controls[0].applicability.enrollmentModes.Count | Should -Be 0
+        $observation = New-TestObservation
+        $observation.configured = $Configured
+        $snapshot = New-TestSnapshot @($observation)
+        $snapshot.sources[0].platform = 'androidEnterprise'
+        $snapshot.policies[0].platform = 'androidEnterprise'
+        $snapshot.policies[0].enrollmentMode = $PolicyMode
+        $context = @{ platforms = @('androidEnterprise'); osVersions = @{} }
+        if ($Selected) { $context.enrollmentModes = @{ androidEnterprise = $Selected } }
+
+        $control = (Invoke-TestAssessment $pack $snapshot $context).controls[0]
+        $control.status | Should -BeExactly 'notAssessed'
+        $control.policyResults[0].status | Should -BeExactly 'notAssessed'
+        $control.reason | Should -Match 'enrollment'
+    }
+
+    It 'does not infer missing Android settings without enrollment context even with no policies' {
+        $pack = New-TestPack
+        $pack.platform = 'androidEnterprise'
+        $snapshot = New-TestSnapshot @()
+        $snapshot.sources[0].platform = 'androidEnterprise'
+        $context = @{ platforms = @('androidEnterprise'); osVersions = @{}; enrollmentModes = @{} }
+        (Invoke-TestAssessment $pack $snapshot $context).controls[0].status | Should -BeExactly 'notAssessed'
+    }
+
+    It 'allows an unrestricted Android control when enrollment context and policy metadata are known' {
+        $pack = New-TestPack
+        $pack.platform = 'androidEnterprise'
+        $snapshot = New-TestSnapshot
+        $snapshot.sources[0].platform = 'androidEnterprise'
+        $snapshot.policies[0].platform = 'androidEnterprise'
+        $snapshot.policies[0].enrollmentMode = 'fullyManaged'
+        $context = @{ platforms = @('androidEnterprise'); osVersions = @{}; enrollmentModes = @{ androidEnterprise = 'fullyManaged' } }
+        $control = (Invoke-TestAssessment $pack $snapshot $context).controls[0]
+        $control.status | Should -BeExactly 'aligned'
+        $control.policyResults[0].status | Should -BeExactly 'aligned'
+    }
+
     It 'excludes policies explicitly outside the selected platform, OS or enrollment scope' -ForEach @(
         @{ Scope = 'platform' }; @{ Scope = 'OS' }; @{ Scope = 'enrollment' }
     ) {
@@ -394,6 +479,26 @@ Describe 'Conservative policy aggregation' {
         $control = (Invoke-TestAssessment $pack (New-TestSnapshot)).controls[0]
         $control.status | Should -BeExactly 'notAssessed'
         $control.reason | Should -Match 'mapping'
+    }
+
+    It 'does not dismiss an incomplete source with <Failure> diagnostics' -ForEach @(
+        @{ Failure = 'null'; Errors = $null }
+        @{ Failure = 'empty'; Errors = @() }
+        @{ Failure = 'unknown stage'; Errors = @(@{ family = 'settingsCatalog'; policyKey = 'settingsCatalog:two'; stage = 'unknown' }) }
+        @{ Failure = 'policy-scoped inventory'; Errors = @(@{ family = 'settingsCatalog'; policyKey = 'settingsCatalog:two'; stage = 'inventory' }) }
+        @{ Failure = 'global settings'; Errors = @(@{ family = 'settingsCatalog'; policyKey = $null; stage = 'settings' }) }
+        @{ Failure = 'unresolved policy'; Errors = @(@{ family = 'settingsCatalog'; policyKey = 'settingsCatalog:unknown'; stage = 'settings' }) }
+        @{ Failure = 'wrong family'; Errors = @(@{ family = 'intent'; policyKey = 'settingsCatalog:two'; stage = 'settings' }) }
+    ) {
+        $pack = New-TestPack
+        $snapshot = New-TestSnapshot @((New-TestObservation), (New-TestObservation $false boolean 'settingsCatalog:two'))
+        $snapshot.policies[1].platform = 'macos'
+        $snapshot.policies[1].settingsComplete = $false
+        $snapshot.sources[0].complete = $false
+        $snapshot.sources[0].errors = $Errors
+        $control = (Invoke-TestAssessment $pack $snapshot).controls[0]
+        $control.status | Should -BeExactly 'notAssessed'
+        $control.reason | Should -Match 'incomplete'
     }
 
     It 'cannot pass or infer absence with <Failure>' -ForEach @(
@@ -451,6 +556,95 @@ Describe 'Conservative policy aggregation' {
         $result.controls[0].policyResults.Count | Should -Be 2
         @($result.controls[0].policyResults | Where-Object status -NE aligned).Count | Should -Be 0
         $result.controls[0].reason | Should -Match 'targeting'
+    }
+}
+
+Describe 'Collector to rules failure isolation' -Tag 'CollectionIntegration' {
+    It 'assesses only relevant settings failures with <Scope> and configured=<Configured>' -ForEach @(
+        @{ Scope = 'excluded OS'; Configured = $true; Status = 'aligned' }
+        @{ Scope = 'excluded OS'; Configured = $false; Status = 'missing' }
+        @{ Scope = 'excluded enrollment'; Configured = $true; Status = 'aligned' }
+        @{ Scope = 'excluded enrollment'; Configured = $false; Status = 'missing' }
+        @{ Scope = 'relevant policy'; Configured = $true; Status = 'notAssessed' }
+        @{ Scope = 'relevant policy'; Configured = $false; Status = 'notAssessed' }
+        @{ Scope = 'unknown OS'; Configured = $true; Status = 'notAssessed' }
+        @{ Scope = 'unknown platform'; Configured = $true; Status = 'notAssessed' }
+        @{ Scope = 'unknown enrollment'; Configured = $true; Status = 'notAssessed' }
+        @{ Scope = 'failed inventory'; Configured = $true; Status = 'notAssessed' }
+        @{ Scope = 'failed inventory'; Configured = $false; Status = 'notAssessed' }
+    ) {
+        $pack = New-TestPack
+        $context = @{ platforms = @('windows11'); osVersions = @{ windows11 = '10.0.22631' }; enrollmentModes = @{} }
+        $goodPolicy = @{
+            id = 'good'; platforms = 'windows10'
+            templateReference = @{ platformType = 'windows11' }
+        }
+        $failedPolicy = @{
+            id = 'failed'; platforms = 'windows10'
+            templateReference = @{ platformType = 'windows11' }
+        }
+        switch ($Scope) {
+            'excluded OS' { $failedPolicy.osMaximumVersion = '10.0.22000' }
+            'unknown OS' { $failedPolicy.osMaximumVersion = '10.0.22000'; $context.osVersions = @{} }
+            'unknown platform' { $failedPolicy.Remove('platforms'); $failedPolicy.Remove('templateReference') }
+            'failed inventory' { $failedPolicy.osMaximumVersion = '10.0.22000' }
+        }
+        if ($Scope -in @('excluded enrollment', 'unknown enrollment')) {
+            $pack.platform = 'androidEnterprise'
+            $context.platforms = @('androidEnterprise')
+            $context.enrollmentModes.androidEnterprise = 'fullyManaged'
+            foreach ($policy in @($goodPolicy, $failedPolicy)) {
+                $policy.platforms = 'androidEnterprise'
+                $policy.templateReference.platformType = 'androidEnterprise'
+                $policy.enrollmentMode = 'fullyManaged'
+            }
+            $failedPolicy.enrollmentMode = if ($Scope -eq 'excluded enrollment') { 'dedicated' } else { $null }
+        }
+        $script:integrationInventory = @{ value = @($goodPolicy, $failedPolicy) }
+        if ($Scope -eq 'failed inventory') {
+            $script:integrationInventory['@odata.nextLink'] = 'https://graph.microsoft.com/beta/deviceManagement/configurationPolicies?page=2'
+        }
+        $script:integrationSettings = @(if ($Configured) {
+            @{ settingInstance = New-IdsTestSettingInstance -Id 'synthetic.required' -Value @{ value = $true } }
+        })
+        Mock Invoke-IdsGraph {
+            param($Path)
+            if ($Path -ceq '/deviceManagement/configurationPolicies') { return $script:integrationInventory }
+            throw 'Synthetic inventory continuation failure.'
+        }
+        Mock Invoke-IdsGraphBatch {
+            param($Requests)
+            $responses = @{}
+            foreach ($request in $Requests) {
+                $entry = @{ status = 200; body = @{ value = @() } }
+                if ($request.url -match "/configurationPolicies\('failed'\)/settings") {
+                    $entry = @{ status = 403; body = @{ value = @() } }
+                } elseif ($request.url -match '/settings\?') {
+                    $entry.body.value = $script:integrationSettings
+                }
+                $responses[$request.id] = $entry
+            }
+            return $responses
+        }
+
+        $collection = Get-IdsAssessmentCollection -Packs @($pack) -Context $context
+        $collection.sources[0].complete | Should -BeFalse
+        ($collection.policies | Where-Object key -EQ 'settingsCatalog:good').settingsComplete | Should -BeTrue
+        ($collection.policies | Where-Object key -EQ 'settingsCatalog:failed').settingsComplete | Should -BeFalse
+        $collection.sources[0].errors.policyKey | Should -Contain 'settingsCatalog:failed'
+        ($collection.issues | Where-Object { $_.policyKey -eq 'settingsCatalog:failed' -and $_.stage -eq 'settings' }).statusCode | Should -Be 403
+        $snapshot = ConvertTo-IdsAssessmentSnapshot $collection
+        $snapshot.sources[0].complete | Should -BeFalse
+        $control = (Invoke-TestAssessment $pack $snapshot $context).controls[0]
+        $control.status | Should -BeExactly $Status -Because $control.reason
+        if ($Status -ne 'notAssessed') {
+            $control.policyResults.Count | Should -Be 1
+            $control.policyResults[0].policyKey | Should -BeExactly 'settingsCatalog:good'
+            $control.policyResults[0].status | Should -BeExactly $Status
+            $control.observed.Count | Should -Be ([int]$Configured)
+        } else {
+            $control.reason | Should -Match 'incomplete|unknown'
+        }
     }
 }
 
