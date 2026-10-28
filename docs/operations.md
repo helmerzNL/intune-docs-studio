@@ -32,6 +32,87 @@ chosen output folder. It is not a hosted service.
 - The exporter refuses to overwrite a manifest associated with another tenant.
   If collection is incomplete, it skips stale-file pruning rather than
   fabricating deletions.
+- Imported assessment packs persist outside the installation at
+  `%LOCALAPPDATA%\IntuneDocsStudio\AssessmentPacks`. Bundled packs are reviewed
+  application resources, not customer imports. Active tenant assessment results
+  live in memory and clear on session reset/identity replacement; saved report
+  files and imported packs are not deleted by that reset.
+- Assessment reports go only to the operator's chosen absolute report root.
+  Keep installation, documentation export, and report roots mutually disjoint:
+  no equal, ancestor, or descendant paths and no reparse-point roots/ancestors.
+  A new `assessment-<generated-id>` directory contains `assessment.md` and
+  `assessment.json` for each successful run. Reports do not change exporter
+  pages/manifests, prune previous runs, or automatically upload, commit, or push.
+
+## Assessment scope and operation
+
+> **Five checks, four partial Microsoft packs, no complete-baseline/compliance
+> claim.** Windows 11 has two Windows 26H2 baseline SmartScreen checks; macOS
+> has one FileVault recommendation. Both use **legacy Endpoint Protection only
+> over Graph beta**, not modern Settings Catalog/endpoint-security mappings.
+> The macOS legacy template is deprecated for new profiles. iOS/iPadOS has one
+> **personal-only** passcode recommendation; Android Enterprise has one
+> **personally-owned work-profile-only** encryption compliance-policy requirement
+> recommendation. A compliance-policy requirement is configuration, not measured
+> device compliance/encryption. **Missing** is scoped to the rule's completely
+> read mapped families/policy types, not tenant-wide absence.
+
+Connect and verify tenant identity, then open **Assess policies**. Select
+platforms and exact pack versions/profiles; inspect source revisions, SHA-256,
+baseline versus recommendations classification, and partial inventory. Import
+only reviewed customer-licensed schema-1 JSON via **Import pack**; validation
+does not attest to source correctness or rights. CIS benchmark PDFs and arbitrary
+Intune exports are not supported. The [import reference](assessment-rule-packs.md)
+documents fields, type/operator support, platform/enrollment context, and limits.
+No framework content is downloaded automatically.
+
+Supply known OS versions, Android enrollment mode and optional iOS/iPadOS ownership
+comparison scope, select the separate
+report destination, and click **Assess selected policies**. Windows 11 uses a
+numeric build version such as `10.0.22000`; macOS FileVault needs at least 10.13.
+Selected context is not discovered device inventory. Do not invent unknown
+values to obtain a pass. iOS ownership defaults to **Unknown**; affirmatively
+select **Personally owned** only for that target comparison. Neither scope nor
+matching configuration establishes discovered ownership or effective assignment.
+For Windows-family profiles, an explicit Windows 11 build establishes comparison
+context, not discovered Windows 11 inventory. Real OS include/exclude rules are
+honored; malformed/unsupported rules, edition and device-mode conditions remain
+not assessed. Known unrelated policy types retain global diagnostics without
+blocking mappings that explicitly exclude their type; unknown types and relevant
+or unlocalizable failures still block.
+
+Only one export or assessment can run. Wait for work to finish before resetting,
+switching identity, forgetting a profile, stopping, or updating the app. A healthy
+listener is not evidence that an assessment succeeded. Check progress/errors,
+then read both reports and the dashboard's policy/assignment and collection
+details. Interpret statuses as follows:
+
+| Status | Operator interpretation |
+|---|---|
+| Aligned | Applicable, complete observed values satisfy the rule, not evidence of delivery to devices. |
+| Misaligned | Applicable, complete configured values violate the rule. |
+| Missing | Absent/not configured in completely read mapped families/types only. Equivalent unmapped modern settings may exist. |
+| Potential conflict | Differing configured values across policies, not proof of overlapping targeting or an Intune conflict. |
+| Not applicable | Explicit context excludes the control. |
+| Not assessed | Unknown applicability, incomplete/unsupported source/settings evidence, or manual/unmapped logic; never a pass or an absence finding. |
+
+Unassigned policies must be reviewed even when aligned. Included/excluded groups
+and filters are evidence only; effective membership/targeting is not resolved.
+An assignment-only failure means unknown assignments, not erased configuration
+evidence. Review per-policy mismatches even if aggregate status is not assessed.
+Assessment coverage is assessed/listed applicable controls; configuration
+alignment is aligned/assessed controls. Unknown applicability remains in the
+coverage denominator, unavailable denominators are not 100%, and partial packs
+do not establish whole-benchmark coverage.
+
+Validation errors do not replace a valid pack; fix the JSON/limit or review the
+immutable ID/version/hash collision and use a new version for revised bytes.
+Do not delete a valid pack blindly to silence a collision. Source access failures
+(including 403), truncated pagination, and unsupported evidence are not complete
+empty reads. Recheck access/source support before rerunning. Authentication
+failures fail the run without reports; sign in again. Report-path/write failures
+do not publish a successful pair: correct permissions and root separation,
+then rerun. Busy responses mean wait, not bypass job/identity safeguards.
 
 ## Start, stop, and verify
 
@@ -83,6 +164,15 @@ output and Git checkout. Never use an output folder as an installation folder.
 5. Retain or remove the previous application folder according to local
    change-control policy only after the replacement has been verified.
 
+Customer imports at `AssessmentPacks` survive replacement; do not copy them or
+reports into the new installation. Early development builds used
+`%LOCALAPPDATA%\IntuneDocsStudio\baseline-packs`; this build does not migrate that
+folder automatically. If applicable, preserve the old customer files and
+reimport reviewed originals through the dashboard. Verify the resulting hash.
+The ZIP contains exactly four vetted Microsoft JSON packs plus the import
+reference and runtime modules; it must not contain customer imports, reports,
+tests, fixtures, plans/specs, or browser profiles.
+
 The update is a file replacement, not a migration service. No automatic
 installation, rollback, or compatibility guarantee between arbitrary builds
 is provided.
@@ -112,6 +202,15 @@ tenant's output. Before exporting:
 
 The tenant manifest prevents a detected cross-tenant overwrite; it is not a
 backup-integrity check or a guarantee that a restored Git remote is correct.
+
+Back up imported rule-pack files and chosen report roots separately as
+customer-owned data, with access controls and any CIS licensing restrictions.
+Preserve original bytes for hash provenance. Restore packs outside the app,
+review identity/version collisions, and reimport through the dashboard where
+needed. Restore reports to a separate data folder, not into exported
+documentation or the installation; opening an old report does not restore an
+authenticated in-memory result. Never include access tokens, credentials, or
+portal browser profiles in these backups.
 
 ## Limits and service objectives
 

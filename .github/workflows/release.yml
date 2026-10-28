@@ -157,7 +157,7 @@ jobs:
           if ($result.FailedCount -or $result.NotRunCount -or $result.PassedCount -eq 0) {
             throw 'PowerShell tests failed at the exact stable version commit.'
           }
-          node --test .\tests\publishing-ui.test.js
+          node --test .\tests\publishing-ui.test.js .\tests\assessment-ui.test.js
           if ($LASTEXITCODE -ne 0) { throw 'Node dashboard tests failed at the exact stable version commit.' }
           .\scripts\Test-Repository.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Repository policy validation failed at the exact stable version commit.' }

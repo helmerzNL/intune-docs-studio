@@ -113,6 +113,101 @@
     </div>
   </section>
 
+  <section class="card" id="cardAssessment">
+    <div class="card-head">
+      <span class="step">A</span>
+      <h2>Assess policies</h2>
+    </div>
+    <p class="muted">Standalone, read-only configuration alignment using the connected tenant.
+      Reports stay local and are never committed or pushed automatically. Documentation export settings below are separate.</p>
+    <div id="assessmentCatalogNote" class="notice"></div>
+    <p id="assessmentCatalogErrors" class="muted assessment-text" role="status"></p>
+    <fieldset>
+      <legend>Target platforms</legend>
+      <div id="assessmentPlatforms" class="options"></div>
+    </fieldset>
+    <label>Benchmark profile filter
+      <select id="assessmentProfile"><option value="">All available profiles</option></select>
+      <small>Select exact pack versions/profiles below; unavailable combinations cannot run.</small>
+    </label>
+    <fieldset>
+      <legend>Rule packs, versions and profiles</legend>
+      <div id="assessmentPacks" class="assessment-packs"></div>
+    </fieldset>
+    <label>Import a local rule pack (JSON)
+      <input type="file" id="assessmentImportFile" accept=".json,application/json">
+      <small>Customer-owned/licensed CIS content is not bundled or downloaded. Maximum 10 MiB UTF-8 JSON,
+        32 nesting levels, 20,000 controls, 32,768 characters per string. The server validates the original text.</small>
+    </label>
+    <button class="btn" id="btnAssessmentImport">Import pack</button>
+    <h3>User-selected applicability context</h3>
+    <p class="muted">Not discovered device inventory. Leave unknown values blank; controls requiring unknown context
+      remain not assessed. The catalog does not include per-control applicability bounds.</p>
+    <div class="grid2">
+      <label>Windows 11 OS version <input type="text" id="assessmentOsWindows11" placeholder="Unknown (for example 10.0.22000)"></label>
+      <label>macOS version <input type="text" id="assessmentOsMacos" placeholder="Unknown (for example 14.0)"></label>
+      <label>iOS/iPadOS version <input type="text" id="assessmentOsIosIpados" placeholder="Unknown"></label>
+      <label>Android Enterprise OS version <input type="text" id="assessmentOsAndroidEnterprise" placeholder="Unknown"></label>
+    </div>
+    <label>Android Enterprise enrollment mode (user-selected)
+      <select id="assessmentEnrollment">
+        <option value="">Unknown</option>
+        <option value="workProfile">Personally-owned work profile</option>
+        <option value="fullyManaged">Fully managed</option>
+        <option value="dedicated">Dedicated</option>
+        <option value="corporateOwnedWorkProfile">Corporate-owned work profile</option>
+      </select>
+    </label>
+    <label>iOS/iPadOS ownership scope (user-selected comparison context)
+      <select id="assessmentIosOwnership">
+        <option value="">Unknown</option>
+        <option value="personallyOwned">Personally owned</option>
+        <option value="corporateOwned">Corporate owned (excluded by personal-only guidance)</option>
+      </select>
+      <small>This is explicit comparison context, not discovered ownership or effective assignment.</small>
+    </label>
+    <label>Assessment report destination
+      <input type="text" id="assessmentOutputPath" spellcheck="false" placeholder="Absolute local folder, separate from application and export">
+      <small>A new run subdirectory contains assessment.md and assessment.json. Installation/export overlap is rejected by the server.</small>
+    </label>
+    <div class="row">
+      <button class="btn primary" id="btnAssessmentRun" disabled>Assess selected policies</button>
+      <button class="btn ghost" id="btnAssessmentRefresh">Refresh assessment</button>
+    </div>
+    <p id="assessmentError" class="error hidden" role="alert"></p>
+    <div class="progress"><div id="assessmentBar" class="bar"></div></div>
+    <p id="assessmentProgress" class="phase" role="status" aria-live="polite"></p>
+    <p id="assessmentReportPaths" class="assessment-text"></p>
+    <p id="assessmentLimitations" class="muted"></p>
+    <div id="assessmentSummary"></div>
+    <details>
+      <summary>Assessment context, pack identities and collection completeness</summary>
+      <p id="assessmentContextResult" class="assessment-text"></p>
+      <p id="assessmentPackResult" class="assessment-text"></p>
+      <p id="assessmentIssues" class="assessment-text"></p>
+      <div id="assessmentPolicies"></div>
+    </details>
+    <label>Filter evidence by status
+      <select id="assessmentStatusFilter">
+        <option value="">All statuses</option>
+        <option value="aligned">Aligned</option>
+        <option value="misaligned">Misaligned</option>
+        <option value="missing">Missing</option>
+        <option value="potentialConflict">Potential conflict</option>
+        <option value="notApplicable">Not applicable</option>
+        <option value="notAssessed">Not assessed</option>
+      </select>
+    </label>
+    <div class="assessment-table-wrap">
+      <table class="assessment-table">
+        <caption>Configured policy evidence — not effective device targeting</caption>
+        <thead><tr><th scope="col">Control / references</th><th scope="col">Status / reason</th>
+          <th scope="col">Expected / configured values</th><th scope="col">Source policies / assignments</th></tr></thead>
+        <tbody id="assessmentResults"></tbody>
+      </table>
+    </div>
+  </section>
+
   <!-- Step 2 -->
   <section class="card disabled" id="cardConfigure">
     <div class="card-head">

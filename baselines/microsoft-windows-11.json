@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "id": "microsoft-windows-11",
+  "version": "1.0.0",
+  "framework": "Microsoft",
+  "frameworkVersion": "Windows 26H2",
+  "classification": "baseline",
+  "platform": "windows11",
+  "profile": "Windows 26H2 baseline - shell SmartScreen, legacy Endpoint Protection mapping only",
+  "sourceRevision": "Windows 26H2; reference updated 2026-10-05",
+  "sources": [
+    {
+      "id": "windows-baseline",
+      "url": "https://learn.microsoft.com/en-us/intune/device-security/security-baselines/ref-windows-mdm-settings?pivots=mdm-26h2",
+      "revision": "Windows 26H2; updated 2026-10-05; git 63ff44f43d17d04e8cbcf5c1ab60f7614f49762e",
+      "retrievedOn": "2026-10-28"
+    },
+    {
+      "id": "windows-graph",
+      "url": "https://learn.microsoft.com/en-us/graph/api/resources/intune-deviceconfig-windows10endpointprotectionconfiguration?view=graph-rest-beta",
+      "revision": "Graph beta; updated 2026-01-08; git 0b52ae19972cd7e12cd0217dfb7ea043fad86019",
+      "retrievedOn": "2026-10-28"
+    },
+    {
+      "id": "smartscreen-csp",
+      "url": "https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-smartscreen",
+      "revision": "updated 2026-10-23; git 6e5887a2f20ef9f4a897a01f069534e71a53d71e",
+      "retrievedOn": "2026-10-28"
+    }
+  ],
+  "coverage": { "inventory": "partial", "totalSourceControls": null },
+  "controls": [
+    {
+      "id": "IDS-WIN-SHELL-SMARTSCREEN",
+      "title": "Enable shell SmartScreen",
+      "sourceIds": ["windows-baseline", "windows-graph", "smartscreen-csp"],
+      "reference": "Windows 26H2 / Administrative Templates / Windows Components / File Explorer / Configure Windows Defender SmartScreen: Enabled (atomic enablement check)",
+      "applicability": { "osMin": "10.0.22000", "osMax": null, "enrollmentModes": [] },
+      "manualReason": null,
+      "mappings": [
+        {
+          "family": "deviceConfiguration",
+          "policyTypes": ["windows10EndpointProtectionConfiguration"],
+          "settingId": null,
+          "property": "smartScreenEnableInShell",
+          "instancePath": null,
+          "valueType": "boolean",
+          "operator": "eq",
+          "expected": true,
+          "caseSensitive": true
+        }
+      ]
+    },
+    {
+      "id": "IDS-WIN-SHELL-NO-BYPASS",
+      "title": "Prevent shell SmartScreen warning bypass",
+      "sourceIds": ["windows-baseline", "windows-graph", "smartscreen-csp"],
+      "reference": "Windows 26H2 / Administrative Templates / Windows Components / File Explorer / Configure Windows Defender SmartScreen / Pick one of the following settings (Device): Warn and prevent bypass (atomic bypass check; enablement checked separately)",
+      "applicability": { "osMin": "10.0.22000", "osMax": null, "enrollmentModes": [] },
+      "manualReason": null,
+      "mappings": [
+        {
+          "family": "deviceConfiguration",
+          "policyTypes": ["windows10EndpointProtectionConfiguration"],
+          "settingId": null,
+          "property": "smartScreenBlockOverrideForFiles",
+          "instancePath": null,
+          "valueType": "boolean",
+          "operator": "eq",
+          "expected": true,
+          "caseSensitive": true
+        }
+      ]
+    }
+  ]
+}

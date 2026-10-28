@@ -67,6 +67,54 @@ Click **Stop server** in the top-right of the dashboard. You can also press Ctrl
 console window; cmd.exe then asks *"Terminate batch job (Y/N)?"* — the server has already
 stopped at that point, so either answer is fine.
 
+## Optional: assess configured policies
+
+> **Limited preview: five checks in four partial Microsoft packs, not a complete
+> baseline or compliance assessment.** Windows 11: two Windows 26H2 baseline
+> SmartScreen checks. macOS: one FileVault recommendation. These two platforms use
+> **legacy Endpoint Protection only, over Graph beta**; equivalent modern policies
+> are not mapped, and the macOS template is deprecated for new profiles.
+> iOS/iPadOS: one **personal-only** passcode recommendation. Android Enterprise:
+> one **personally-owned work-profile-only** encryption compliance-policy requirement
+> recommendation, not proof of device encryption. **Missing** means absent/not
+> configured in the completely read **mapped families/policy types only**, not
+> tenant-wide absence.
+
+1. Sign in, confirm the tenant, and find **Assess policies** beside the export
+   workflow. Select platforms and exact pack versions/profiles. Read their
+   source revision, hash, classification, and coverage before running.
+2. For CIS, choose a customer-licensed, reviewed JSON rule pack and click
+   **Import pack**. No CIS content is bundled or downloaded. PDFs and raw Intune
+   exports are not rule packs; see [the import reference](docs/assessment-rule-packs.md)
+   for schema, supported operators, and limits (10 MiB UTF-8, 32 levels,
+   20,000 controls, 32,768 characters per string).
+3. Enter known OS versions and Android enrollment mode. Windows expects a build
+   version such as `10.0.22000`. Unknown applicability remains **not assessed**.
+   Select iOS/iPadOS **Personally owned** only for that explicit comparison scope;
+   its default is **Unknown**, not assumed ownership. This is selected comparison
+   context, not discovered inventory or effective assignment. Windows-family
+   policies can use the supplied Windows 11 target build; policy include/exclude
+   rules remain authoritative and unsupported conditions remain not assessed.
+4. Choose an absolute **assessment report destination** outside both the app and
+   documentation output trees, then click **Assess selected policies**. Wait for
+   completion before another export/assessment, sign-out, reset, or shutdown.
+5. Inspect summary counts and filter the evidence table by status. Read expected
+   and configured values, policy/assignment evidence, reasons, and collection
+   limitations. Open the displayed paths: each new run folder contains
+   `assessment.md` and `assessment.json`; existing exports/manifests are unchanged.
+
+Coverage and alignment percentages concern listed configuration checks, **not
+device compliance or certification**. Incomplete/unsupported/manual evidence is
+not assessed, never a pass or missing result. Unassigned policies can align
+without reaching devices. Potential conflicts mean differing configured values,
+not proven overlapping assignments; groups/filters are not resolved to devices.
+
+Imports persist at `%LOCALAPPDATA%\IntuneDocsStudio\AssessmentPacks` through app
+updates; active tenant results clear on session reset. Reports are written only
+to the report root you choose, never automatically uploaded, committed, or pushed.
+Back up packs/reports only as customer-owned files; do not back up tokens or
+portal browser profiles. See [operator procedures](docs/operations.md).
+
 ---
 
 ## What you get

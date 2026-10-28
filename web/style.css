@@ -184,6 +184,21 @@ table.counts td:last-child { text-align: right; color: var(--muted); }
 code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
 a { color: var(--accent); }
 
+fieldset { border: 1px solid var(--border); border-radius: 8px; margin: 16px 0; padding: 14px; }
+legend { color: var(--muted); font-size: 13px; padding: 0 6px; }
+input[type=file] { display: block; margin-top: 8px; max-width: 100%; color: var(--muted); }
+.assessment-packs { display: grid; gap: 12px; }
+.assessment-pack { padding: 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
+.assessment-pack p { margin: 6px 0; }
+.assessment-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.assessment-table-wrap { overflow-x: auto; margin-top: 16px; }
+.assessment-table { width: 100%; min-width: 760px; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
+.assessment-table caption { color: var(--muted); text-align: left; padding: 8px 0; }
+.assessment-table th, .assessment-table td { border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; padding: 10px 8px; overflow-wrap: anywhere; }
+.assessment-table th { color: var(--muted); }
+.assessment-table pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+.assessment-policy + .assessment-policy { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; }
+
 @media (max-width: 820px) {
   .grid2, .sections, .options, .stats, .split, .kv { grid-template-columns: 1fr; }
 }
