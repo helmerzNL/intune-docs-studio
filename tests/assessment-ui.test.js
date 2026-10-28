@@ -321,6 +321,94 @@ test('admission validates missing packs/platforms, handles 409 and report errors
   assert.equal(d.element('assessmentReportPaths').textContent, '');
 });
 
+test('idle refresh preserves pending assessment admission and export settings until the POST resolves', async () => {
+  for (const outcome of ['409', 'network']) {
+    const previousEvidence = outcome === 'network';
+    let finish;
+    const d = assessmentDashboard((url, r) => {
+      if (url === '/api/state') return connectedState();
+      if (url === '/api/assessment' && r.method === 'POST') {
+        return new Promise((resolve, reject) => {
+          finish = () => outcome === 'network'
+            ? reject(new Error('Synthetic admission connection failed.'))
+            : resolve({ httpStatus: 409, body: { error: 'Synthetic admission rejected.' } });
+        });
+      }
+      if (url === '/api/assessment') return { running: false, done: false };
+      return {};
+    });
+    await selectAll(d);
+    d.element('outputPath').value = 'C:\\SyntheticExport';
+    d.element('optRaw').checked = true;
+    d.element('gitBranch').value = 'docs';
+    if (previousEvidence) {
+      d.run('renderAssessmentResult({ summaries: [], controls: [{ controlId: "PREVIOUS" }] })');
+      d.element('assessmentReportPaths').textContent = 'Previous server paths';
+    }
+    const pending = d.element('btnAssessmentRun').handlers.click();
+    assert.equal(d.element('btnExport').disabled, true);
+    assert.equal(d.element('btnAssessmentRun').disabled, true);
+    await d.element('btnAssessmentRefresh').handlers.click();
+    assert.equal(d.element('btnExport').disabled, true);
+    assert.equal(d.element('btnAssessmentRun').disabled, true);
+    assert.equal(d.element('btnAssessmentImport').disabled, true);
+    assert.equal(d.element('assessmentOutputPath').value, ' C:\\SyntheticReports ');
+    await d.element('btnExport').handlers.click();
+    await d.element('btnAssessmentRun').handlers.click();
+    await d.element('btnAssessmentImport').handlers.click();
+    assert.equal(d.requests.filter((r) => r.method === 'POST').length, 1);
+    finish();
+    await pending;
+    assert.match(d.element('assessmentError').textContent,
+      outcome === 'network' ? /admission connection failed/ : /409.*admission rejected/);
+    assert.equal(d.element('btnExport').disabled, false);
+    assert.equal(d.element('btnAssessmentRun').disabled, false);
+    assert.equal(d.element('btnAssessmentImport').disabled, false);
+    assert.equal(d.element('outputPath').value, 'C:\\SyntheticExport');
+    assert.equal(d.element('optRaw').checked, true);
+    assert.equal(d.element('gitBranch').value, 'docs');
+  }
+});
+
+test('tenant reset releases admission but a stale POST cannot release a newer assessment reservation', async () => {
+  let tenant = 'synthetic-first';
+  let running = false;
+  const pendingPosts = [];
+  const d = assessmentDashboard((url, r) => {
+    if (url === '/api/state') return connectedState(tenant);
+    if (url === '/api/assessment' && r.method === 'POST') {
+      return new Promise((resolve) => { pendingPosts.push(resolve); });
+    }
+    if (url === '/api/assessment') return { running, done: false };
+    return {};
+  });
+  await selectAll(d);
+  const oldStart = d.element('btnAssessmentRun').handlers.click();
+  tenant = 'synthetic-second';
+  await d.run('refreshState()');
+  assert.equal(d.element('btnExport').disabled, false);
+  assert.equal(d.element('btnAssessmentRun').disabled, false);
+  assert.equal(d.element('assessmentOutputPath').value, '');
+  await selectAll(d);
+  const newStart = d.element('btnAssessmentRun').handlers.click();
+  pendingPosts[0]({ httpStatus: 401, body: { error: 'Old session expired.' } });
+  await oldStart;
+  await d.element('btnAssessmentRefresh').handlers.click();
+  assert.equal(d.element('btnExport').disabled, true);
+  assert.equal(d.element('btnAssessmentRun').disabled, true);
+  assert.equal(d.element('assessmentOutputPath').value, ' C:\\SyntheticReports ');
+  assert.equal(d.element('assessmentProgress').textContent.includes('admitted'), false);
+  running = true;
+  pendingPosts[1]({ httpStatus: 202, body: { started: true } });
+  await newStart;
+  assert.equal(d.element('btnExport').disabled, true);
+  assert.equal(d.element('btnAssessmentRun').disabled, true);
+  running = false;
+  await d.element('btnAssessmentRefresh').handlers.click();
+  assert.equal(d.element('btnExport').disabled, false);
+  assert.equal(d.element('btnAssessmentRun').disabled, false);
+});
+
 test('an in-flight export disables assessment admission, including before export returns', async () => {
   let finish;
   const d = assessmentDashboard((url, r) => {

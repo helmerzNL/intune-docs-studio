@@ -499,6 +499,7 @@ let assessmentPacks = [];
 let assessmentGeneration = 0;
 let assessmentImporting = false;
 let assessmentBusy = false;
+let assessmentStarting = false;
 let assessmentTimer = null;
 let assessmentPolling = false;
 let assessmentCatalogRequest = 0;
@@ -620,6 +621,7 @@ function clearAssessment() {
   clearInterval(assessmentTimer);
   assessmentTimer = null;
   assessmentBusy = false;
+  assessmentStarting = false;
   assessmentPolling = false;
   assessmentImporting = false;
   clearAssessmentEvidence();
@@ -679,7 +681,7 @@ async function refreshAssessment() {
     if (!r.ok || !r.body) throw new Error(`${r.status}: ${r.body?.error || 'Progress unavailable.'}`);
     const progress = r.body;
     if (progress.running && (assessmentResult || $('assessmentReportPaths').textContent)) clearAssessmentEvidence();
-    assessmentBusy = !!progress.running;
+    assessmentBusy = assessmentStarting || !!progress.running;
     const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
     $('assessmentBar').style.width = percent + '%';
     $('assessmentProgress').textContent = `${percent}% · ${progress.phase || 'Ready'}` +
@@ -708,7 +710,7 @@ async function refreshAssessment() {
       const paths = progress.reportPaths;
       $('assessmentReportPaths').textContent = paths?.markdownPath && paths?.jsonPath
         ? `Markdown: ${paths.markdownPath}\nJSON: ${paths.jsonPath}` : '';
-    } else if (!progress.running && (assessmentResult || $('assessmentReportPaths').textContent)) {
+    } else if (!assessmentStarting && !progress.running && (assessmentResult || $('assessmentReportPaths').textContent)) {
       clearAssessment();
     }
     showAssessmentError(null);
@@ -747,6 +749,7 @@ $('btnAssessmentRun').addEventListener('click', async () => {
   assessmentTimer = null;
   assessmentPolling = false;
   assessmentBusy = true;
+  assessmentStarting = true;
   syncJobAdmission();
   showAssessmentError(null);
   try {
@@ -754,6 +757,7 @@ $('btnAssessmentRun').addEventListener('click', async () => {
       packIds: selectedPacks.map(assessmentIdentity), context, outputPath: $('assessmentOutputPath').value.trim()
     });
     if (generation !== assessmentGeneration) return;
+    assessmentStarting = false;
     if (assessmentSessionFailure(r)) return;
     if (r.status !== 202 || !r.body?.started) throw new Error(`${r.status}: ${r.body?.error || 'Assessment did not start.'}`);
     clearAssessmentEvidence();
@@ -762,6 +766,7 @@ $('btnAssessmentRun').addEventListener('click', async () => {
     await refreshAssessment();
   } catch (e) {
     if (generation === assessmentGeneration) {
+      assessmentStarting = false;
       assessmentBusy = false;
       showAssessmentError(e.message);
     }
