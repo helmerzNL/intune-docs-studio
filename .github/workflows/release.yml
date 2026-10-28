@@ -1,0 +1,177 @@
+name: Stable release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      before:
+        description: First parent SHA of the owner-requested beta-to-main promotion
+        required: true
+        type: string
+      promotion_sha:
+        description: Exact two-parent beta-to-main promotion merge SHA
+        required: true
+        type: string
+      recovery_version_commit:
+        description: Existing version commit when resuming after the version push
+        required: false
+        type: string
+      artifact_run_id:
+        description: Optional source run ID for the immutable ZIP and manifest (including a recovery run)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  checks: read
+  pull-requests: read
+
+concurrency:
+  group: stable-release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: stable-release
+    runs-on: windows-latest
+    steps:
+      - name: Check out main read-only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+          token: ${{ github.token }}
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Install pinned Pester
+        shell: pwsh
+        run: |
+          if ($PSVersionTable.PSVersion.Major -lt 7) { throw 'PowerShell 7 or later is required.' }
+          Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force
+          Import-Module Pester -RequiredVersion 5.7.1 -Force
+
+      - name: Validate promotion and calculate release plan
+        id: plan
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IDS_BEFORE: ${{ github.event_name == 'push' && github.event.before || inputs.before }}
+          IDS_PROMOTION_SHA: ${{ github.event_name == 'push' && github.sha || inputs.promotion_sha }}
+        run: |
+          if ($env:GITHUB_REF -cne 'refs/heads/main') { throw 'Stable release runs only from main.' }
+          foreach ($sha in @($env:IDS_BEFORE, $env:IDS_PROMOTION_SHA)) {
+            if ($sha -cnotmatch '^[0-9a-f]{40}$') { throw 'A full promotion SHA is required.' }
+          }
+          & .\scripts\Invoke-StableRelease.ps1 `
+            -Before $env:IDS_BEFORE `
+            -PromotionSha $env:IDS_PROMOTION_SHA `
+            -PlanOnly
+
+      - name: Require the narrow stable automation credential
+        if: steps.plan.outputs.required == 'true'
+        shell: pwsh
+        env:
+          IDS_STABLE_RELEASE_TOKEN: ${{ secrets.IDS_STABLE_RELEASE_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:IDS_STABLE_RELEASE_TOKEN)) {
+            throw 'IDS_STABLE_RELEASE_TOKEN is not configured. Add the narrow stable automation credential; do not weaken main protection.'
+          }
+
+      - name: Configure narrow Git authentication
+        if: steps.plan.outputs.required == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.IDS_STABLE_RELEASE_TOKEN }}
+        run: |
+          gh auth setup-git
+          if ($LASTEXITCODE -ne 0) { throw 'Could not configure Git with IDS_STABLE_RELEASE_TOKEN.' }
+
+      - name: Prepare or recover the single version commit
+        id: prepare
+        if: steps.plan.outputs.required == 'true'
+        shell: pwsh
+        env:
+          IDS_STABLE_RELEASE_TOKEN: ${{ secrets.IDS_STABLE_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.IDS_STABLE_RELEASE_TOKEN }}
+          IDS_BEFORE: ${{ github.event_name == 'push' && github.event.before || inputs.before }}
+          IDS_PROMOTION_SHA: ${{ github.event_name == 'push' && github.sha || inputs.promotion_sha }}
+          IDS_RECOVERY_VERSION_COMMIT: ${{ inputs.recovery_version_commit }}
+          IDS_ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
+        run: |
+          if ($env:IDS_ARTIFACT_RUN_ID -and -not $env:IDS_RECOVERY_VERSION_COMMIT) {
+            throw 'artifact_run_id is valid only with recovery_version_commit.'
+          }
+          & .\scripts\Invoke-StableRelease.ps1 `
+            -Before $env:IDS_BEFORE `
+            -PromotionSha $env:IDS_PROMOTION_SHA `
+            -RecoveryVersionCommit $env:IDS_RECOVERY_VERSION_COMMIT `
+            -PrepareOnly
+
+      - name: Reuse immutable artifact or construct the first artifact from the verified version commit
+        id: artifact
+        if: steps.plan.outputs.required == 'true'
+        shell: pwsh
+        env:
+          IDS_STABLE_RELEASE_TOKEN: ${{ secrets.IDS_STABLE_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.IDS_STABLE_RELEASE_TOKEN }}
+          IDS_BEFORE: ${{ github.event_name == 'push' && github.event.before || inputs.before }}
+          IDS_PROMOTION_SHA: ${{ github.event_name == 'push' && github.sha || inputs.promotion_sha }}
+          IDS_VERSION_COMMIT: ${{ steps.prepare.outputs.version_commit }}
+          IDS_ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
+        run: |
+          & .\scripts\Invoke-StableRelease.ps1 `
+            -Before $env:IDS_BEFORE `
+            -PromotionSha $env:IDS_PROMOTION_SHA `
+            -RecoveryVersionCommit $env:IDS_VERSION_COMMIT `
+            -PrepareArtifact `
+            -ArtifactRunId $env:IDS_ARTIFACT_RUN_ID `
+            -ArtifactDirectory (Join-Path $env:RUNNER_TEMP 'stable-package')
+
+      - name: Upload stable ZIP and immutable manifest
+        if: steps.artifact.outputs.artifact_created == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: IntuneDocsStudio-stable-${{ steps.prepare.outputs.version }}-${{ steps.prepare.outputs.version_commit }}
+          path: |
+            ${{ runner.temp }}\stable-package\IntuneDocsStudio.zip
+            ${{ runner.temp }}\stable-package\release-manifest.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Validate exact version commit before publication
+        if: steps.plan.outputs.required == 'true'
+        shell: pwsh
+        run: |
+          $expected = '${{ steps.prepare.outputs.version_commit }}'
+          $actual = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -cne $expected) {
+            throw 'Stable validation must use the exact pushed version commit.'
+          }
+          $result = Invoke-Pester -Path .\tests -Output Detailed -PassThru
+          if ($result.FailedCount -or $result.NotRunCount -or $result.PassedCount -eq 0) {
+            throw 'PowerShell tests failed at the exact stable version commit.'
+          }
+          node --test .\tests\publishing-ui.test.js
+          if ($LASTEXITCODE -ne 0) { throw 'Node dashboard tests failed at the exact stable version commit.' }
+          .\scripts\Test-Repository.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Repository policy validation failed at the exact stable version commit.' }
+
+      - name: Publish or verify immutable release, then back-merge
+        if: steps.plan.outputs.required == 'true'
+        shell: pwsh
+        env:
+          IDS_STABLE_RELEASE_TOKEN: ${{ secrets.IDS_STABLE_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.IDS_STABLE_RELEASE_TOKEN }}
+        run: |
+          & .\scripts\Invoke-StableRelease.ps1 `
+            -Before '${{ github.event_name == 'push' && github.event.before || inputs.before }}' `
+            -PromotionSha '${{ github.event_name == 'push' && github.sha || inputs.promotion_sha }}' `
+            -RecoveryVersionCommit '${{ steps.prepare.outputs.version_commit }}' `
+            -PublishPrepared `
+            -ArtifactDirectory (Join-Path $env:RUNNER_TEMP 'stable-package')

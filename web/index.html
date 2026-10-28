@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Intune Docs Studio</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234a9eff'/%3E%3Cpath d='M9 9h9a5 5 0 0 1 0 10h-5v4H9z' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="mark"></span>
+    <div>
+      <h1 id="appName">Intune Docs Studio</h1>
+      <p>Document Intune to Markdown &mdash; no app registration required</p>
+    </div>
+  </div>
+  <div class="topright">
+    <div id="buildInfo" class="badge badge-off"></div>
+    <div id="connBadge" class="badge badge-off">Not connected</div>
+    <button class="btn ghost small" id="btnQuit" title="Stop the local server and close the tool">Stop server</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- Step 1 -->
+  <section class="card" id="cardConnect">
+    <div class="card-head">
+      <span class="step">1</span>
+      <h2>Connect</h2>
+    </div>
+
+    <div id="connectedPane" class="hidden">
+      <dl class="kv">
+        <div><dt>Signed in as</dt><dd id="cAccount">&mdash;</dd></div>
+        <div><dt>Tenant</dt><dd id="cTenant">&mdash;</dd></div>
+        <div><dt>Client</dt><dd id="cClient">&mdash;</dd></div>
+        <div><dt>Method</dt><dd id="cMethod">&mdash;</dd></div>
+      </dl>
+      <h3>Granted permissions</h3>
+      <div id="scopeList" class="scopes"></div>
+  <div class="row">
+        <button class="btn ghost" id="btnSignout">Sign out</button>
+      </div>
+    </div>
+
+    <div id="signinPane">
+      <p class="muted">
+        Sign in as an Intune Administrator, Global Reader or Global Administrator. The export
+        is <strong>read-only</strong> &mdash; nothing is created in your tenant and no secret
+        is stored.
+      </p>
+
+      <div class="grid2">
+        <label>Tenant
+          <input type="text" id="tenant" value="organizations" spellcheck="false">
+          <small>Leave as <code>organizations</code>, or enter a tenant id / domain.</small>
+        </label>
+        <label>Client application
+          <select id="client"></select>
+          <small id="clientNote"></small>
+        </label>
+      </div>
+
+      <div class="recommend">
+        <div class="rec-head">
+          <strong>Use my Intune portal session</strong>
+          <span class="pill">no consent needed</span>
+        </div>
+        <p class="muted">
+          Opens the Intune admin center in a browser window. Sign in exactly as you normally
+          do &mdash; because the portal already has permission in every tenant, there is no
+          consent prompt. Works when you hold only the <strong>Intune Administrator</strong>
+          role. Your sign-in is remembered, so you only do this once.
+          <br>The captured session is temporary and cannot be renewed automatically.
+        </p>
+        <button class="btn primary" id="btnBrowser">Sign in via the Intune portal</button>
+        <button class="linkbtn" id="btnForget" title="Clear the saved browser profile">forget saved session</button>
+        <label class="check" style="margin-top:12px">
+          <input type="checkbox" id="optForcePicker">
+          <span>Force account picker
+            <small>Opens an InPrivate window and signs the session out first, so Windows SSO cannot
+            reuse your everyday account. Security keys, passkeys and Windows Hello still work.</small>
+          </span>
+        </label>
+        <div id="browserStatus" class="notice hidden"><p id="bsText"></p></div>
+      </div>
+
+      <h3>Other methods</h3>
+      <p class="muted small">
+        These request permissions for this tool directly, so the first use needs one-time
+        approval by a Global Administrator, Privileged Role Administrator, Cloud Application
+        Administrator or Application Administrator. An Intune Administrator cannot approve it.
+      </p>
+
+      <div class="row">
+        <button class="btn" id="btnInteractive">Sign in with browser</button>
+        <button class="btn" id="btnDeviceCode">Use device code</button>
+        <button class="btn" id="btnAzureCli">Use Azure CLI session</button>
+        <button class="btn" id="btnMgGraph">Use Graph PowerShell session</button>
+      </div>
+
+      <div id="deviceCodePane" class="notice hidden">
+        <p>Open <a id="dcUri" target="_blank" rel="noopener"></a> and enter this code:</p>
+        <p class="code-big" id="dcCode"></p>
+        <p class="muted" id="dcStatus">Waiting for you to complete sign-in&hellip;</p>
+      </div>
+
+      <div id="signinError" class="error hidden"></div>
+    </div>
+  </section>
+
+  <!-- Step 2 -->
+  <section class="card disabled" id="cardConfigure">
+    <div class="card-head">
+      <span class="step">2</span>
+      <h2>Configure the export</h2>
+    </div>
+
+    <label>Output folder
+      <input type="text" id="outputPath" spellcheck="false">
+      <small>A Git working folder is ideal &mdash; re-running the export produces a clean diff.</small>
+    </label>
+    <div id="folderWarn" class="error hidden"></div>
+
+    <h3>What to document <button class="linkbtn" id="btnAll">all</button> <button class="linkbtn" id="btnNone">none</button></h3>
+    <div id="sections" class="sections"></div>
+
+    <h3>Options</h3>
+    <div class="options">
+      <label class="check"><input type="checkbox" id="optRaw" checked> <span>Include raw JSON <small>source of truth for diffing</small></span></label>
+      <label class="check"><input type="checkbox" id="optScripts" checked> <span>Include script bodies <small>PowerShell, shell and custom payloads</small></span></label>
+      <label class="check"><input type="checkbox" id="optFrontMatter" checked> <span>YAML front matter <small>metadata for wikis and static site generators</small></span></label>
+      <label class="check"><input type="checkbox" id="optAdo" checked> <span>Azure DevOps <code>.order</code> files <small>page ordering for publish-as-wiki</small></span></label>
+    </div>
+
+    <h3>Git publishing (optional)</h3>
+    <label>Azure DevOps repository clone URL
+      <input type="text" id="gitRemoteUrl" spellcheck="false" placeholder="https://dev.azure.com/organization/project/_git/repository">
+      <small>Use an existing repository, not a Wiki page URL. An empty output folder will be cloned; an existing checkout must match. Leave blank to use its configured remote.</small>
+    </label>
+    <label>Target branch
+      <input type="text" id="gitBranch" spellcheck="false" placeholder="Repository default (main for an empty repository)">
+      <small>Leave blank to use the remote default on first clone, or the current branch of an existing checkout.</small>
+    </label>
+    <p class="muted">HTTPS sign-in uses Git Credential Manager (included with Git for Windows); SSH uses your configured key. Do not paste passwords or tokens into the URL. The Intune sign-in is separate.</p>
+    <div class="options">
+      <label class="check"><input type="checkbox" id="optGit"> <span>Commit to git <small>initialises a repo if needed</small></span></label>
+      <label class="check"><input type="checkbox" id="optPush"> <span>Push to remote <small>also commits changes and sets up branch tracking</small></span></label>
+    </div>
+
+    <div class="row">
+      <button class="btn primary" id="btnExport">Generate documentation</button>
+    </div>
+  </section>
+
+  <!-- Step 3 -->
+  <section class="card hidden" id="cardRun">
+    <div class="card-head">
+      <span class="step">3</span>
+      <h2>Progress</h2>
+    </div>
+    <div class="progress"><div id="bar" class="bar"></div></div>
+    <p class="phase"><span id="phase">Starting</span> <span id="pct" class="muted"></span></p>
+    <pre id="log" class="log"></pre>
+  </section>
+
+  <!-- Step 4 -->
+  <section class="card hidden" id="cardResult">
+    <div class="card-head">
+      <span class="step">4</span>
+      <h2>Result</h2>
+    </div>
+    <div id="summary"></div>
+    <div class="row">
+      <button class="btn" id="btnOpen">Open folder</button>
+      <button class="btn ghost" id="btnAgain">Run again</button>
+    </div>
+    <div class="split">
+      <div class="filelist" id="fileList"></div>
+      <pre class="preview" id="preview">Select a file to preview.</pre>
+    </div>
+  </section>
+
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

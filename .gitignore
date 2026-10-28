@@ -1,0 +1,25 @@
+# Local state — never commit
+.env*
+!.env.example
+.token-cache.json
+config.json
+.cache/
+*.log
+
+# Generated documentation (belongs in its own repository)
+intune-docs/
+*.intune-docs-manifest.json
+
+# Build output
+IntuneDocsStudio-share/
+*.zip
+tests/.repository-policy-fixtures-*/
+
+# Editor / OS
+.vs/
+.vscode/
+*.suo
+*.user
+Thumbs.db
+desktop.ini
+.DS_Store

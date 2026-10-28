@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [beta, main]
+  push:
+    branches: [beta, main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: quality
+    runs-on: windows-latest
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Verify PowerShell 7 and install Pester 5.7.1
+        shell: pwsh
+        run: |
+          if ($PSVersionTable.PSVersion.Major -lt 7) {
+            throw 'PowerShell 7 or later is required.'
+          }
+          Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force
+          Import-Module Pester -RequiredVersion 5.7.1 -Force
+
+      - name: Run PowerShell and Node tests
+        shell: pwsh
+        run: |
+          $r = Invoke-Pester -Path .\tests -Output Detailed -PassThru
+          if ($r.FailedCount -or $r.NotRunCount -or $r.PassedCount -eq 0) { exit 1 }
+          node --test .\tests\publishing-ui.test.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+  only-from-beta:
+    name: only-from-beta
+    runs-on: windows-latest
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Enforce repository and pull request policy
+        shell: pwsh
+        env:
+          IDS_EVENT_NAME: ${{ github.event_name }}
+          IDS_PR_BASE: ${{ github.event.pull_request.base.ref }}
+          IDS_PR_HEAD: ${{ github.event.pull_request.head.ref }}
+          IDS_REPOSITORY: ${{ github.repository }}
+          IDS_PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          IDS_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          IDS_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: .\scripts\Test-Repository.ps1

@@ -1,0 +1,98 @@
+name: Beta
+
+on:
+  push:
+    branches: [beta]
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact current beta-head commit to rebuild
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  beta:
+    name: beta-artifact
+    runs-on: windows-latest
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Verify PowerShell 7 and install Pester 5.7.1
+        shell: pwsh
+        run: |
+          if ($PSVersionTable.PSVersion.Major -lt 7) {
+            throw 'PowerShell 7 or later is required.'
+          }
+          Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force
+          Import-Module Pester -RequiredVersion 5.7.1 -Force
+
+      - name: Run PowerShell and Node tests
+        shell: pwsh
+        run: |
+          $r = Invoke-Pester -Path .\tests -Output Detailed -PassThru
+          if ($r.FailedCount -or $r.NotRunCount -or $r.PassedCount -eq 0) { exit 1 }
+          node --test .\tests\publishing-ui.test.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Validate repository policy
+        shell: pwsh
+        env:
+          IDS_EVENT_NAME: ${{ github.event_name }}
+        run: .\scripts\Test-Repository.ps1
+
+      - name: Confirm exact beta source commit
+        shell: pwsh
+        env:
+          IDS_EVENT_NAME: ${{ github.event_name }}
+          IDS_REQUESTED_SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          if ($env:GITHUB_REF -cne 'refs/heads/beta') {
+            throw 'Beta artifacts can only be built from the beta branch.'
+          }
+          $sourceCommit = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $sourceCommit -cnotmatch '^[0-9a-f]{40}$') {
+            throw 'The checked-out beta source must resolve to a full commit SHA.'
+          }
+          if ($sourceCommit -cne $env:GITHUB_SHA) {
+            throw 'The checked-out source does not match the workflow event commit.'
+          }
+          if ($env:IDS_EVENT_NAME -ceq 'workflow_dispatch' -and
+              $env:IDS_REQUESTED_SOURCE_COMMIT -cne $sourceCommit) {
+            throw 'Recovery dispatch must name the exact current beta-head commit.'
+          }
+          if ($env:IDS_EVENT_NAME -ceq 'push' -and $env:IDS_REQUESTED_SOURCE_COMMIT) {
+            throw 'Push builds must not specify a recovery commit.'
+          }
+          & .\Build-Package.ps1 `
+            -OutputPath (Join-Path $env:RUNNER_TEMP 'beta-package') `
+            -Channel beta `
+            -SourceCommit $sourceCommit
+
+      - name: Set artifact identity
+        id: identity
+        shell: pwsh
+        run: |
+          $version = [IO.File]::ReadAllText((Join-Path $PWD 'VERSION')).Trim()
+          if ($version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw 'VERSION must contain strict MAJOR.MINOR.PATCH.'
+          }
+          $name = "IntuneDocsStudio-beta-$version-$env:GITHUB_SHA"
+          [IO.File]::AppendAllText($env:GITHUB_OUTPUT, "name=$name`n", [Text.UTF8Encoding]::new($false))
+
+      - name: Upload beta ZIP artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.identity.outputs.name }}
+          path: ${{ runner.temp }}\beta-package\IntuneDocsStudio.zip
+          if-no-files-found: error
