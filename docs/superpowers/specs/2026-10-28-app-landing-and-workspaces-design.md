@@ -257,8 +257,8 @@ grouping and styling change.
     except documentation links (`<a href>`);
   - the iOS ownership select still starts with `Unknown`.
 - Both existing harnesses gain the minimal `window.addEventListener` and
-  `location.hash` stubs needed to load the new `app.js`. Their assertions are
-  unchanged.
+  element `setAttribute`/`removeAttribute` stubs needed to load the new
+  `app.js`. Their assertions are unchanged.
 - The CI, beta and release workflows run the new suite next to the existing
   two. `AGENTS.md` lists all three Node suites.
 - **Visual verification** uses a throwaway Node preview server kept in the
