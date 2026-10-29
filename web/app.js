@@ -25,6 +25,9 @@ let stateRequest = 0;
 let exportBusy = false;
 let exportStarting = false;
 let booting = false;
+let policyTimer = null;
+let policyPolling = false;
+let policyReloading = false;
 
 const setHidden = (id, hidden) => {
   if (hidden) $(id).classList.add('hidden');
@@ -33,18 +36,20 @@ const setHidden = (id, hidden) => {
 
 // --- Navigation ------------------------------------------------------------
 
-const views = { loading: 'viewLoading', landing: 'viewLanding', home: 'viewHome', document: 'viewDocument', assess: 'viewAssess' };
-const viewHeadings = { landing: 'landingTitle', home: 'homeTitle', document: 'documentTitle', assess: 'assessTitle' };
+const views = { loading: 'viewLoading', landing: 'viewLanding', policies: 'viewPolicies', home: 'viewHome', document: 'viewDocument', assess: 'viewAssess' };
+const viewHeadings = { landing: 'landingTitle', policies: 'policyLoadTitle', home: 'homeTitle', document: 'documentTitle', assess: 'assessTitle' };
 const navLinks = { home: 'navHome', document: 'navDocument', assess: 'navAssess' };
 const routes = { '#/document': 'document', '#/assess': 'assess' };
 let lastRoute = 'home';
 
 // In-page anchors such as the skip link (#main) keep the current route.
 const isRouteHash = (hash) => !hash || hash.startsWith('#/');
+const policiesReady = () => !!state?.auth?.connected && !policyReloading && ['ready', 'partial'].includes(state?.policies?.status);
 
 function routeView() {
   if (!state) return 'loading';
   if (!state.auth?.connected) return 'landing';
+  if (!policiesReady()) return 'policies';
   const hash = window.location.hash || '';
   if (isRouteHash(hash)) lastRoute = routes[hash] || 'home';
   return lastRoute;
@@ -55,7 +60,7 @@ function renderRoute() {
   Object.entries(views).forEach(([key, id]) => setHidden(id, key !== view));
   const signedIn = !!navLinks[view];
   setHidden('appNav', !signedIn);
-  setHidden('sessionControls', !signedIn);
+  setHidden('sessionControls', !state?.auth?.connected);
   Object.entries(navLinks).forEach(([key, id]) => {
     if (key === view) $(id).setAttribute('aria-current', 'page');
     else $(id).removeAttribute('aria-current');
@@ -106,14 +111,95 @@ async function refreshState() {
   const request = ++stateRequest;
   const { body } = await api('/api/state');
   if (!body || generation !== workspaceGeneration || request !== stateRequest) return;
+  const awaitingPolicies = !!state && !policiesReady();
   const identity = (s) => JSON.stringify(s?.auth || {}, ['connected', 'tenantId', 'account', 'client', 'method']);
   if (state && identity(state) !== identity(body)) clearWorkspace();
   state = body;
+  const policiesArrived = awaitingPolicies && policiesReady();
+  if (policiesArrived) {
+    lastRoute = 'home';
+    window.location.hash = '#/';
+  }
   if (body.export) exportBusy = exportStarting || !!body.export.running;
   renderBuild(body.build);
   renderAuth();
+  renderPolicyState();
   syncJobAdmission();
+  if (policiesArrived) $('homeTitle').focus({ preventScroll: true });
 }
+
+function renderPolicyState() {
+  const policies = state?.policies || {};
+  const waiting = !!state?.auth?.connected && !policiesReady();
+  const failed = policies.status === 'failed';
+  const percent = Math.max(0, Math.min(100, Number(policies.percent) || 0));
+  $('policyLoadBar').style.width = percent + '%';
+  $('policyLoadProgress').setAttribute('aria-valuenow', percent);
+  $('policyLoadPhase').textContent = policies.phase || 'Preparing to load policies';
+  $('policyLoadTenant').textContent = state?.auth?.tenantId ? 'Tenant ' + state.auth.tenantId : '';
+  $('policyLoadError').textContent = policies.error || '';
+  setHidden('policyLoadError', !policies.error);
+  setHidden('policyLoadSpinner', failed);
+  setHidden('btnRetryPolicies', !failed);
+  $('policySummary').textContent = `${Number(policies.count) || 0} policies loaded` +
+    (policies.capturedAt ? ` · ${policies.capturedAt}` : '');
+  $('policyFamilies').innerHTML = (policies.families || []).map((family) =>
+    `<div class="stat"><b>${Number(family.count) || 0}</b><span>${escapeHtml(family.label)}</span>` +
+    (family.complete ? '' : '<p class="muted">Incomplete evidence</p>') + '</div>').join('');
+  const partial = policies.status === 'partial';
+  setHidden('policyLimitations', !partial);
+  $('policyLimitations').textContent = partial ?
+    'Some policies could not be fully read. Assessment keeps incomplete evidence explicit; documentation skips incomplete policy families and preserves previous files. ' +
+      (policies.issues || []).map((issue) =>
+        `${issue.family}: ${issue.stage} — ${issue.reason}${issue.statusCode ? ` (HTTP ${issue.statusCode})` : ''}`).join('\n') : '';
+  if (waiting && !failed && !policyTimer) policyTimer = setInterval(pollPolicyState, 1000);
+  if (!waiting || failed) { clearInterval(policyTimer); policyTimer = null; }
+}
+
+async function pollPolicyState() {
+  if (policyPolling || !state?.auth?.connected) return;
+  const generation = workspaceGeneration;
+  policyPolling = true;
+  try { await refreshState(); }
+  catch (e) {
+    if (generation === workspaceGeneration) {
+      $('policyLoadError').textContent = 'Policy progress is unavailable. Checking the local server again…';
+      setHidden('policyLoadError', false);
+    }
+  } finally { if (generation === workspaceGeneration) policyPolling = false; }
+}
+
+async function reloadPolicies() {
+  if (policyReloading || exportBusy || assessmentBusy || !state?.auth?.connected) return;
+  const generation = workspaceGeneration;
+  policyReloading = true;
+  syncJobAdmission();
+  try {
+    const r = await post('/api/policies/reload');
+    if (generation !== workspaceGeneration) return;
+    if (assessmentSessionFailure(r)) return;
+    if (!r.ok) throw new Error(r.body?.error || 'Could not reload policies.');
+    state.policies = { status: 'loading', percent: 0 };
+    clearAssessment();
+    $('policyRefreshError').textContent = '';
+    setHidden('policyRefreshError', true);
+  } catch (e) {
+    if (generation !== workspaceGeneration) return;
+    ['policyLoadError', 'policyRefreshError'].forEach((id) => {
+      $(id).textContent = e.message; setHidden(id, false);
+    });
+  } finally {
+    if (generation === workspaceGeneration) { policyReloading = false; syncJobAdmission(); }
+  }
+  if (generation === workspaceGeneration) {
+    renderRoute();
+    renderPolicyState();
+    await pollPolicyState();
+  }
+}
+
+$('btnRetryPolicies').addEventListener('click', reloadPolicies);
+$('btnRefreshPolicies').addEventListener('click', reloadPolicies);
 
 function renderClients() {
   const sel = $('client');
@@ -165,7 +251,7 @@ function renderAuth() {
     $('cTenant').textContent = auth.tenantId || '—';
     $('cClient').textContent = auth.client || '—';
     $('cMethod').textContent = auth.method || '—';
-    checkFolder();
+    if (policiesReady()) checkFolder();
 
     const host = $('scopeList');
     host.innerHTML = '';
@@ -294,6 +380,15 @@ $('btnMgGraph').addEventListener('click', async () => {
 function clearWorkspace() {
   // Everything below belongs to the previous sign-in and must not survive it.
   workspaceGeneration++;
+  clearInterval(policyTimer);
+  policyTimer = null;
+  policyPolling = false;
+  policyReloading = false;
+  ['policySummary', 'policyFamilies', 'policyLimitations', 'policyRefreshError', 'policyLoadError', 'policyLoadTenant'].forEach((id) => {
+    $(id).textContent = '';
+  });
+  $('policyFamilies').innerHTML = '';
+  setHidden('policyRefreshError', true);
   exportBusy = false;
   exportStarting = false;
   clearAssessment();
@@ -374,6 +469,7 @@ $('btnAll').addEventListener('click', () => sectionBoxes().forEach((b) => { b.ch
 $('btnNone').addEventListener('click', () => sectionBoxes().forEach((b) => { b.checked = false; }));
 
 $('btnExport').addEventListener('click', async () => {
+  if (!policiesReady()) { alert('Load policies before documenting.'); return; }
   if (assessmentBusy || exportBusy) { alert('An export or assessment is already running.'); return; }
   const sections = sectionBoxes().filter((b) => b.checked).map((b) => b.value);
   if (!sections.length) { alert('Select at least one area to document.'); return; }
@@ -820,8 +916,10 @@ function showAssessmentError(message) {
 
 function syncJobAdmission() {
   const busy = exportBusy || assessmentBusy;
-  $('btnExport').disabled = busy || !!(state?.auth && !state.auth.connected);
-  $('btnAssessmentRun').disabled = busy || assessmentImporting || !state?.auth?.connected;
+  $('btnExport').disabled = busy || !policiesReady();
+  $('btnAssessmentRun').disabled = busy || assessmentImporting || !policiesReady();
+  $('btnRefreshPolicies').disabled = busy || policyReloading || !policiesReady();
+  $('btnRetryPolicies').disabled = busy || policyReloading;
   $('btnAssessmentImport').disabled = busy || assessmentImporting;
   $('btnAssessNew').disabled = assessmentBusy;
   ['navDocumentBusy', 'homeDocumentBusy'].forEach((id) => setHidden(id, !exportBusy));
@@ -890,12 +988,12 @@ function startAssessmentPolling() {
 }
 
 async function refreshAssessment() {
-  if (assessmentPolling || !state?.auth?.connected) return;
+  if (assessmentPolling || !policiesReady()) return;
   const generation = assessmentGeneration;
   assessmentPolling = true;
   try {
     await refreshState();
-    if (generation !== assessmentGeneration || !state?.auth?.connected) return;
+    if (generation !== assessmentGeneration || !policiesReady()) return;
     const r = await api('/api/assessment');
     if (generation !== assessmentGeneration) return;
     if (assessmentSessionFailure(r)) return;
@@ -953,6 +1051,7 @@ $('btnAssessmentRun').addEventListener('click', async () => {
   if (assessmentImporting) { showAssessmentError('Wait for the pack import to finish.'); return; }
   if (assessmentBusy || exportBusy) { showAssessmentError('An export or assessment is already running.'); return; }
   if (!state?.auth?.connected) { showAssessmentError('Sign in before assessing policies.'); return; }
+  if (!policiesReady()) { showAssessmentError('Load policies before assessing.'); return; }
   const { platforms, packs: selectedPacks } = assessmentSelection();
   if (!platforms.length || platforms.some((p) => !selectedPacks.some((pack) => pack.platform === p))) {
     showAssessmentError('Every selected platform requires a selected applicable pack; choose at least one platform.');
@@ -1104,6 +1203,29 @@ $('btnAssessmentImport').addEventListener('click', async () => {
   }
 });
 
+function renderAssessmentPolicySettings(policy) {
+  const tables = (policy.settingsTables || []).map((table) => `
+    ${table.title ? `<h4>${escapeHtml(table.title)}</h4>` : ''}
+    <div class="assessment-settings-wrap"><table class="assessment-settings">
+      <thead><tr>${(table.headers || []).map((header) => `<th scope="col">${escapeHtml(header)}</th>`).join('')}</tr></thead>
+      <tbody>${(table.rows || []).map((row) =>
+        `<tr>${(row.cells || []).map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table></div>`).join('');
+  return `<p class="muted">${escapeHtml(policy.settingsNote || 'Readable settings are unavailable for this saved result. See technical evidence.')}</p>${tables}`;
+}
+
+function renderAssessmentTypedValues(records, expected) {
+  if (!Array.isArray(records)) return assessmentText(records);
+  if (!records.length) return 'No mapped values';
+  return records.map((record) => {
+    const name = record.displayName || record.property || record.settingId || 'Unmapped setting';
+    const raw = expected ? record.expected : record.value;
+    const value = record.displayValue ?? (!expected && (record.secret === true || record.supported === false)
+      ? 'Unavailable (secret or unsupported evidence)' : JSON.stringify(raw));
+    return `<p><strong>${escapeHtml(name)}</strong>: ${expected ? escapeHtml(record.operator || '') + ' ' : ''}${escapeHtml(value)}</p>`;
+  }).join('');
+}
+
 function renderAssessmentResult(result) {
   assessmentResult = result;
   $('assessmentLimitations').textContent = assessmentLimits;
@@ -1125,7 +1247,10 @@ function renderAssessmentResult(result) {
     <div class="assessment-pack"><strong>${escapeHtml(p.name || p.key)}</strong>
       <p>${p.assignmentsComplete !== true ? 'Assignment evidence incomplete'
         : !(p.assignments || []).length ? 'Unassigned' : 'Assignment targets present — effective targeting not resolved'}</p>
-      <pre class="assessment-text">${assessmentText(p)}</pre></div>`).join('');
+      ${renderAssessmentPolicySettings(p)}
+      <details><summary>Technical policy and assignment evidence</summary>
+        <pre class="assessment-text">${assessmentText({ ...p, settingsTables: undefined, settingsNote: undefined })}</pre>
+      </details></div>`).join('');
   renderAssessmentEvidence();
 }
 
@@ -1145,15 +1270,22 @@ function renderAssessmentEvidence() {
           <p>${escapeHtml(p.policyKey)} · ${escapeHtml(policy.family)} · ${escapeHtml(policy.policyType)}</p>
           <p>${escapeHtml(assessmentStatuses[p.status] || p.status)}: ${escapeHtml(p.reason)}</p>
           <p>${assignment}</p>
-          <pre>${assessmentText(policy.assignments || [])}</pre>
-          <p>Expected: ${assessmentText(p.expected || [])}</p>
-          <p>Configured: ${assessmentText(p.observed || [])}</p></div>`;
+          <details><summary>Readable policy settings</summary>${renderAssessmentPolicySettings(policy)}</details>
+          <details><summary>Exact mappings and assignment evidence</summary>
+            <pre>${assessmentText(policy.assignments || [])}</pre>
+            <p>Expected: ${assessmentText(p.expected || [])}</p>
+            <p>Configured: ${assessmentText(p.observed || [])}</p>
+          </details></div>`;
       }).join('');
       return `<tr><td><strong>${escapeHtml(c.controlId)} ${escapeHtml(c.title)}</strong>
         <p>${escapeHtml(c.packId)} @ ${escapeHtml(c.packVersion)} · ${escapeHtml(c.platform)} · ${escapeHtml(c.profile)}</p>
         <details><summary>Framework references</summary><pre>${assessmentText(c.references || [])}</pre></details></td>
         <td><strong>${escapeHtml(assessmentStatuses[c.status] || c.status)}</strong><p>${escapeHtml(c.reason)}</p></td>
-        <td><p>Expected: ${assessmentText(c.expected)}</p><p>Configured: ${assessmentText(c.observed || [])}</p></td>
+        <td><strong>Expected</strong>${renderAssessmentTypedValues(c.expected, true)}
+          <strong>Configured</strong>${renderAssessmentTypedValues(c.observed || [], false)}
+          <details><summary>Exact typed evidence</summary>
+            <p>Expected: ${assessmentText(c.expected)}</p><p>Configured: ${assessmentText(c.observed || [])}</p>
+          </details></td>
         <td>${evidence || 'No policy evidence'}</td></tr>`;
     }).join('');
 }

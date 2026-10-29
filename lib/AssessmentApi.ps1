@@ -128,6 +128,11 @@ function Invoke-IdsAssessmentRoute {
             if ($Method -ceq 'POST' -and ((Test-IdsWorkActive $State) -or $State.Browser.running)) {
                 $response.status = 409; $response.body = @{ error = 'An export, assessment or sign-in is already running.' }; return $response
             }
+            if ($Method -ceq 'POST' -and $State.Policies) {
+                try { $null = Get-IdsLoadedPolicies $State } catch {
+                    $response.status = 409; $response.body = @{ error = $_.Exception.Message }; return $response
+                }
+            }
         }
         switch -CaseSensitive ("$Method $Path") {
             'GET /api/assessment/packs' {

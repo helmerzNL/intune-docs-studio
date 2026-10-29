@@ -3,7 +3,8 @@ function Test-IdsWorkActive {
     return [bool]($State.Export.running -or $State.Assessment.running -or $State.Browser.running -or
         ($State.Job -and -not $State.Job.handle.IsCompleted) -or
         ($State.Browser.job -and -not $State.Browser.job.handle.IsCompleted) -or
-        ($State.Assessment.job -and -not $State.Assessment.job.handle.IsCompleted))
+        ($State.Assessment.job -and -not $State.Assessment.job.handle.IsCompleted) -or
+        $State.Policies.running -or ($State.Policies.job -and -not $State.Policies.job.handle.IsCompleted))
 }
 
 function Initialize-IdsAssessment {
@@ -100,6 +101,7 @@ function Start-IdsAssessmentJob {
     Clear-IdsAssessmentJob $State
     if ($State.Assessment.job) { return $false }
     $resolved = Resolve-IdsAssessmentOptions $State $Options $Root
+    $loadedPolicies = if ($State.Policies) { Get-IdsLoadedPolicies $State } else { $null }
     $assessment = $State.Assessment
     $epoch = $assessment.epoch
     $runId = [guid]::NewGuid().ToString('N')
@@ -118,15 +120,20 @@ function Start-IdsAssessmentJob {
     $auth = @{}
     foreach ($key in $State.Auth.Keys) { $auth[$key] = $State.Auth[$key] }
     $worker = {
-        param($Root, $State, $Options, $Auth, $Epoch, $RunId)
+        param($Root, $State, $Options, $Auth, $Epoch, $RunId, $LoadedPolicies)
         $ErrorActionPreference = 'Stop'
         $a = $State.Assessment
         try {
-            foreach ($module in 'Auth', 'Graph', 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'AssessmentRules', 'AssessmentReports') {
+            foreach ($module in 'Auth', 'Graph', 'Render', 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'AssessmentRules', 'AssessmentReports', 'PolicyInventory') {
                 . (Join-Path $Root "lib\$module.ps1")
             }
             if ($Auth.transport -eq 'mggraph') { Import-Module Microsoft.Graph.Authentication -ErrorAction Stop }
             Initialize-IdsGraph -StateHolder @{ Auth = $Auth }
+            if ($LoadedPolicies) {
+                $tenants = @(@{ id = $LoadedPolicies.tenant.id; displayName = $LoadedPolicies.tenant.name })
+                $a.phase = 'Using loaded policies'; $a.percent = 10
+                $collection = Select-IdsPolicyCollection $LoadedPolicies $Options.packs $Options.context
+            } else {
             $a.phase = 'Authenticating'
             try {
                 $organization = Invoke-IdsGraph -Path '/organization?$select=id,displayName' -Version 'v1.0'
@@ -145,12 +152,16 @@ function Start-IdsAssessmentJob {
             if (@($collection.issues | Where-Object { $_.statusCode -eq 401 -or $_.authenticationFailure }).Count) {
                 throw 'Assessment authentication failed.'
             }
+            }
             $a.phase = 'Normalizing'; $a.percent = 50
             $snapshot = ConvertTo-IdsAssessmentSnapshot -Collection $collection
+            Add-IdsAssessmentPolicyPresentation -Collection $collection -Snapshot $snapshot
             $a.phase = 'Evaluating'; $a.percent = 65
             $evaluation = Compare-IdsAssessment -Packs $Options.packs -Snapshot $snapshot -Context $Options.context
+            Add-IdsAssessmentEvidencePresentation -Collection $collection -Evaluation $evaluation
             $result = ConvertTo-IdsReportProjection ([pscustomobject]@{
                 schemaVersion = 1; runId = $RunId; generatedAt = [datetime]::UtcNow.ToString('o')
+                policySnapshotAt = $LoadedPolicies.capturedAt
                 tenant = @{ id = [string]$tenants[0].id; name = [string]$tenants[0].displayName }
                 context = $Options.context; packs = @($Options.packs)
                 summaries = @($evaluation.summaries); controls = @($evaluation.controls)
@@ -184,7 +195,7 @@ function Start-IdsAssessmentJob {
         $runspace.Open()
         $ps = [powershell]::Create()
         $ps.Runspace = $runspace
-        [void]$ps.AddScript($worker).AddArgument($Root).AddArgument($State).AddArgument($resolved).AddArgument($auth).AddArgument($epoch).AddArgument($runId)
+        [void]$ps.AddScript($worker).AddArgument($Root).AddArgument($State).AddArgument($resolved).AddArgument($auth).AddArgument($epoch).AddArgument($runId).AddArgument($loadedPolicies)
         $handle = $ps.BeginInvoke()
         $assessment.job = @{ ps = $ps; handle = $handle; runspace = $runspace }
         return $true

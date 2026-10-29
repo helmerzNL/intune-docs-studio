@@ -85,6 +85,18 @@ Describe 'PowerShell runtime requirements' {
 
     Context 'local server identity' {
         BeforeAll {
+            function Wait-LocalPolicies {
+                param([string]$Base)
+                $deadline = (Get-Date).AddSeconds(20)
+                do {
+                    $inventory = (Invoke-RestMethod "$Base/api/state").policies
+                    if ($inventory.status -in @('ready', 'partial', 'failed')) { break }
+                    Start-Sleep -Milliseconds 50
+                } while ((Get-Date) -lt $deadline)
+                $inventory.status | Should -BeIn @('ready', 'partial') -Because $inventory.error
+                return $inventory
+            }
+
             function Invoke-LocalServer {
                 param([string]$Name, $Metadata, [scriptblock]$Check, [scriptblock]$Configure)
                 $folder = Join-Path $TestDrive $Name
@@ -178,10 +190,19 @@ function Invoke-IdsGraphRaw {
     return @{ value = @() }
 }
 '@
+                    Add-Content "$folder\lib\AssessmentRules.ps1" @'
+$script:OriginalCompareAssessment = ${function:Compare-IdsAssessment}
+function Compare-IdsAssessment {
+    param($Packs, $Snapshot, $Context)
+    Start-Sleep -Seconds 3
+    & $script:OriginalCompareAssessment $Packs $Snapshot $Context
+}
+'@
                 } -Check {
                     param($base)
                     $headers = @{ Origin = $base }
                     [void](Invoke-RestMethod "$base/api/signin/azurecli" -Method Post)
+                    [void](Wait-LocalPolicies $base)
                     [void](Invoke-RestMethod "$base/api/signin/devicecode" -Method Post -Body '{}' -ContentType application/json)
                     $packs = Invoke-RestMethod "$base/api/assessment/packs"
                     $body = @{ packIds = @($packs.packs[0].selectionId)
@@ -212,6 +233,7 @@ function Invoke-IdsGraphRaw {
                     (Invoke-WebRequest "$base/api/assessment/results" -SkipHttpErrorCheck).StatusCode | Should -Be 401
                     (Invoke-RestMethod "$base/api/signin/devicecode/poll").status | Should -Be 'none'
                     [void](Invoke-RestMethod "$base/api/signin/azurecli" -Method Post)
+                    [void](Wait-LocalPolicies $base)
                     (Invoke-WebRequest "$base/api/assessment/results" -SkipHttpErrorCheck).StatusCode | Should -Be 404
                 }
             }
@@ -237,20 +259,30 @@ function Get-IdsTokenFromBrowser {
 }
 function Clear-IdsBrowserProfile { }
 '@
+                Add-Content "$folder\lib\Graph.ps1" @'
+function Invoke-IdsGraphRaw {
+    param($Uri)
+    if ($Uri -match '/organization') { return @{ value = @(@{ id = 'synthetic-tenant'; displayName = 'Synthetic' }) } }
+    return @{ value = @() }
+}
+'@
             } -Check {
                 param($base)
                 foreach ($method in 'azurecli', 'mggraph') {
                     [void](Invoke-RestMethod "$base/api/signin/$method" -Method Post -Body '{}' -ContentType application/json)
                     (Invoke-RestMethod "$base/api/state").auth.method | Should -Be $method
+                    [void](Wait-LocalPolicies $base)
                 }
                 $signin = Invoke-RestMethod "$base/api/signin/interactive" -Method Post -Body '{}' -ContentType application/json
                 $nonce = [regex]::Match($signin.url, '[?&]state=([^&]+)').Groups[1].Value
                 $callback = Invoke-WebRequest "$base/?code=synthetic&state=$nonce" -MaximumRedirection 0 -SkipHttpErrorCheck -ErrorAction SilentlyContinue
                 $callback.Headers.Location | Should -Be '/?signin=ok'
                 (Invoke-RestMethod "$base/api/state").auth.method | Should -Be 'interactive'
+                [void](Wait-LocalPolicies $base)
                 [void](Invoke-RestMethod "$base/api/signin/devicecode" -Method Post -Body '{}' -ContentType application/json)
                 (Invoke-RestMethod "$base/api/signin/devicecode/poll").status | Should -Be 'ok'
                 (Invoke-RestMethod "$base/api/state").auth.method | Should -Be 'devicecode'
+                [void](Wait-LocalPolicies $base)
                 [void](Invoke-RestMethod "$base/api/signin/browser" -Method Post -Body '{}' -ContentType application/json)
                 $deadline = (Get-Date).AddSeconds(10)
                 do {
@@ -260,6 +292,7 @@ function Clear-IdsBrowserProfile { }
                 $browser.error | Should -BeNullOrEmpty
                 $browser.done | Should -BeTrue
                 (Invoke-RestMethod "$base/api/state").auth.method | Should -Be 'browser'
+                [void](Wait-LocalPolicies $base)
                 [void](Invoke-RestMethod "$base/api/signin/browser/forget" -Method Post)
                 (Invoke-RestMethod "$base/api/state").auth.connected | Should -BeFalse
                 $signin = Invoke-RestMethod "$base/api/signin/interactive" -Method Post -Body '{}' -ContentType application/json
@@ -268,6 +301,50 @@ function Clear-IdsBrowserProfile { }
                 $callback = Invoke-WebRequest "$base/?code=synthetic&state=$nonce" -MaximumRedirection 0 -SkipHttpErrorCheck -ErrorAction SilentlyContinue
                 $callback.Headers.Location | Should -Be '/?signin=state-mismatch'
                 (Invoke-RestMethod "$base/api/state").auth.connected | Should -BeFalse
+            }
+        }
+
+        It 'gates loading, cancels on sign-out, and refreshes only for same-origin requests' {
+            Invoke-LocalServer -Name 'policy-api-lifecycle' -Configure {
+                param($folder)
+                Add-Content "$folder\lib\Auth.ps1" @'
+function Get-IdsTokenFromAzureCli { return @{ transport = 'token'; tenant_id = 'synthetic-tenant' } }
+function Connect-IdsMgGraph { return @{ transport = 'token'; tenant_id = 'another-synthetic-tenant' } }
+'@
+                Add-Content "$folder\lib\Graph.ps1" @'
+function Invoke-IdsGraphRaw {
+    param($Uri)
+    if ($Uri -match '/organization') {
+        Start-Sleep -Seconds 1
+        return @{ value = @(@{ id = $script:IdsGraphState.Auth.tenant_id; displayName = 'Synthetic' }) }
+    }
+    return @{ value = @() }
+}
+'@
+            } -Check {
+                param($base)
+                $headers = @{ Origin = $base }
+                [void](Invoke-RestMethod "$base/api/signin/azurecli" -Method Post)
+                (Invoke-RestMethod "$base/api/state").policies.status | Should -Be 'loading'
+                foreach ($path in 'export', 'assessment', 'policies/reload', 'signin/azurecli') {
+                    $response = Invoke-WebRequest "$base/api/$path" -Method Post -Headers $headers -Body '{}' -ContentType application/json -SkipHttpErrorCheck
+                    $response.StatusCode | Should -Be 409 -Because $path
+                }
+                [void](Invoke-RestMethod "$base/api/signout" -Method Post)
+                $signedOut = Invoke-RestMethod "$base/api/state"
+                $signedOut.auth.connected | Should -BeFalse
+                $signedOut.policies.count | Should -Be 0
+                $signedOut.policies.status | Should -Be 'idle'
+                [void](Invoke-RestMethod "$base/api/signin/mggraph" -Method Post -Body '{}' -ContentType application/json)
+                [void](Wait-LocalPolicies $base)
+                (Invoke-RestMethod "$base/api/state").auth.tenantId | Should -Be 'another-synthetic-tenant'
+                (Invoke-WebRequest "$base/api/policies/reload" -Method Post -Body '{}' -ContentType application/json -SkipHttpErrorCheck).StatusCode | Should -Be 403
+                (Invoke-WebRequest "$base/api/policies/reload" -Method Post -Headers $headers -Body '{}' -ContentType text/plain -SkipHttpErrorCheck).StatusCode | Should -Be 415
+                $previous = (Invoke-RestMethod "$base/api/state").policies.capturedAt
+                (Invoke-WebRequest "$base/api/policies/reload" -Method Post -Headers $headers -Body '{}' -ContentType application/json).StatusCode | Should -Be 202
+                $refreshed = Wait-LocalPolicies $base
+                $refreshed.capturedAt | Should -Not -Be $previous
+                (Invoke-RestMethod "$base/api/assessment").done | Should -BeFalse
             }
         }
 
@@ -294,7 +371,14 @@ function Clear-IdsBrowserProfile { }
 function Get-IdsTokenFromAzureCli { return @{ transport = 'token'; tenant_id = 'synthetic-tenant' } }
 '@
             Add-Content "$folder\lib\Graph.ps1" @'
-function Invoke-IdsGraphRaw { Start-Sleep -Seconds 30; throw 'synthetic stop' }
+function Invoke-IdsGraphRaw {
+    param($Uri)
+    if ($Uri -match '/organization') { return @{ value = @(@{ id = 'synthetic-tenant'; displayName = 'Synthetic' }) } }
+    return @{ value = @() }
+}
+'@
+            Add-Content "$folder\lib\AssessmentRules.ps1" @'
+function Compare-IdsAssessment { Start-Sleep -Seconds 30; throw 'synthetic stop' }
 '@
             $socket = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
             $socket.Start(); $port = $socket.LocalEndpoint.Port; $socket.Stop()
@@ -311,6 +395,7 @@ function Invoke-IdsGraphRaw { Start-Sleep -Seconds 30; throw 'synthetic stop' }
                 $ready | Should -BeTrue
                 $base = "http://localhost:$port"
                 [void](Invoke-RestMethod "$base/api/signin/azurecli" -Method Post)
+                [void](Wait-LocalPolicies $base)
                 $pack = (Invoke-RestMethod "$base/api/assessment/packs").packs[0]
                 $body = @{ packIds = @($pack.selectionId); context = @{ platforms = @($pack.platform) }
                     outputPath = "$TestDrive\pipeline-reports" } | ConvertTo-Json
@@ -332,6 +417,7 @@ function Invoke-IdsGraphRaw { Start-Sleep -Seconds 30; throw 'synthetic stop' }
 Describe 'Shared runtime job and reset guards' {
     BeforeAll {
         . "$repo\lib\Assessment.ps1"
+        . "$repo\lib\PolicyInventory.ps1"
         $tokens = $null; $errors = $null
         $ast = [Management.Automation.Language.Parser]::ParseFile("$repo\IntuneDocsStudio.ps1", [ref]$tokens, [ref]$errors)
         foreach ($name in 'Start-IdsExportJob', 'Start-IdsBrowserSignIn', 'Reset-IdsSessionState', 'Clear-IdsFinishedJob') {
@@ -349,6 +435,7 @@ Describe 'Shared runtime job and reset guards' {
             Config = @{ OutputPath = 'old'; DefaultOutputPath = 'default'; Tenant = 'old'; DefaultTenant = 'organizations' }
         })
         Initialize-IdsAssessment $State
+        Initialize-IdsPolicyInventory $State
     }
     It 'rejects direct export and portal starts during <Kind> without altering the session' -TestCases @(
         @{ Kind = 'Assessment' }, @{ Kind = 'Export' }

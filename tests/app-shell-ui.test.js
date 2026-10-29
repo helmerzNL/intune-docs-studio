@@ -13,12 +13,13 @@ const css = fs.readFileSync(path.join(webRoot, 'style.css'), 'utf8');
 const build = { version: '0.1.0', channel: 'beta', commit: 'development' };
 const signedIn = (extra = {}) => ({
   build,
+  policies: { status: 'ready', count: 0, families: [], issues: [] },
   auth: { connected: true, account: 'admin@contoso.example', tenantId: '00000000-0000-0000-0000-000000000001',
     client: 'synthetic', method: 'portal', scopes: [] },
   ...extra
 });
 const signedOut = (extra = {}) => ({ build, auth: { connected: false }, ...extra });
-const viewIds = ['viewLoading', 'viewLanding', 'viewHome', 'viewDocument', 'viewAssess'];
+const viewIds = ['viewLoading', 'viewLanding', 'viewPolicies', 'viewHome', 'viewDocument', 'viewAssess'];
 const requestedIds = new Set();
 
 function shell({ hash = '', search = '', respond = () => ({}), seed = () => {} } = {}) {
@@ -98,6 +99,54 @@ function shell({ hash = '', search = '', respond = () => ({}), seed = () => {} }
 }
 
 const stateOnly = (body) => (url) => (url === '/api/state' ? body : {});
+
+test('every signed-in deep link waits for policies and blocks action handlers', async () => {
+  for (const status of ['idle', 'loading', 'failed', undefined]) {
+    const d = shell({ hash: '#/assess', respond: stateOnly(signedIn({ policies: { status } })) });
+    await d.settle();
+    assert.deepEqual(d.visibleViews(), ['viewPolicies']);
+    assert.equal(d.visible('appNav'), false);
+    assert.equal(d.visible('sessionControls'), true);
+    assert.equal(d.element('btnExport').disabled, true);
+    assert.equal(d.element('btnAssessmentRun').disabled, true);
+    d.navigate('#/document');
+    assert.deepEqual(d.visibleViews(), ['viewPolicies']);
+    await d.element('btnExport').handlers.click();
+    assert.equal(d.requests.some((r) => r.url === '/api/export'), false);
+  }
+});
+
+test('finishing policy loading leads to the workspace choice, not a stale deep link', async () => {
+  let policies = { status: 'loading', percent: 35, phase: 'Loading compliance' };
+  const d = shell({ hash: '#/assess', respond: () => signedIn({ policies }) });
+  await d.settle();
+  assert.equal(d.element('policyLoadBar').style.width, '35%');
+  policies = { status: 'ready', count: 0, capturedAt: '2026-10-29T10:00:00Z', families: [], issues: [] };
+  await d.run('refreshState()');
+  assert.deepEqual(d.visibleViews(), ['viewHome']);
+  assert.equal(d.focused(), 'homeTitle');
+  assert.match(d.element('policySummary').textContent, /0 policies/);
+});
+
+test('partial policy loading surfaces escaped limitations without blocking the choice', async () => {
+  const d = shell({ respond: stateOnly(signedIn({ policies: {
+    status: 'partial', count: 2, families: [{ label: '<b>Policy</b>', count: 2, complete: false }],
+    issues: [{ family: 'compliance', stage: 'inventory', reason: '<script>bad()</script>', statusCode: 403 }]
+  } })) });
+  await d.settle();
+  assert.deepEqual(d.visibleViews(), ['viewHome']);
+  assert.equal(d.visible('policyLimitations'), true);
+  assert.match(d.element('policyLimitations').textContent, /403/);
+  assert.doesNotMatch(d.element('policyFamilies').innerHTML, /<b>Policy<\/b>/);
+});
+
+test('failed loading offers retry and never leaves old workflow choices enabled', async () => {
+  const d = shell({ respond: stateOnly(signedIn({ policies: { status: 'failed', error: 'Synthetic loading failure' } })) });
+  await d.settle();
+  assert.equal(d.visible('btnRetryPolicies'), true);
+  assert.match(d.element('policyLoadError').textContent, /Synthetic loading failure/);
+  assert.equal(d.element('btnExport').disabled, true);
+});
 
 test('signed-out operators see only the landing page whatever the route', async () => {
   for (const hash of ['', '#/', '#/document', '#/assess', '#/unknown']) {

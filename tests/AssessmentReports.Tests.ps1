@@ -2,6 +2,9 @@ BeforeAll {
     . "$PSScriptRoot\TestHelpers\Assessment.ps1"
     . "$PSScriptRoot\..\lib\BaselinePacks.ps1"
     . "$PSScriptRoot\..\lib\AssessmentRules.ps1"
+    . "$PSScriptRoot\..\lib\Render.ps1"
+    . "$PSScriptRoot\..\lib\AssessmentCollection.ps1"
+    . "$PSScriptRoot\..\lib\AssessmentSettings.ps1"
     if (Test-Path "$PSScriptRoot\..\lib\AssessmentReports.ps1") { . "$PSScriptRoot\..\lib\AssessmentReports.ps1" }
 
     function New-ReportResult {
@@ -79,6 +82,137 @@ BeforeAll {
 }
 
 Describe 'Standalone assessment reports' {
+    It 'shares documentation labels and value formatting in readable policy tables' {
+        $catalogSettings = @([pscustomobject]@{
+            settingDefinitions = @([pscustomobject]@{
+                id = 'synthetic_enableFirewall'; displayName = 'Enable firewall'
+                options = @([pscustomobject]@{ itemId = 'synthetic_enableFirewall_1'; displayName = 'Enabled' })
+            })
+            settingInstance = [pscustomobject]@{
+                '@odata.type' = '#microsoft.graph.deviceManagementConfigurationChoiceSettingInstance'
+                settingDefinitionId = 'synthetic_enableFirewall'
+                choiceSettingValue = [pscustomobject]@{ value = 'synthetic_enableFirewall_1'; children = @() }
+            }
+        })
+        $legacySettings = @([pscustomobject]@{ smartScreenEnableInShell = $false; smartScreenBlockOverrideForFiles = $true })
+        $policies = @(
+            (New-IdsTestAssessmentPolicy -Settings $catalogSettings)
+            (New-IdsTestAssessmentPolicy -Family deviceConfiguration -PolicyType windows10EndpointProtectionConfiguration -Settings $legacySettings)
+        )
+        foreach ($policy in $policies) { $policy.platform = 'windows11' }
+        $collection = New-IdsTestAssessmentCollection $policies
+        $collection.sources = @(
+            [pscustomobject]@{ family = 'settingsCatalog'; platform = 'windows11'; complete = $true; errors = @() }
+            [pscustomobject]@{ family = 'deviceConfiguration'; platform = 'windows11'; complete = $true; errors = @() }
+        )
+        $snapshot = ConvertTo-IdsAssessmentSnapshot $collection
+        Add-IdsAssessmentPolicyPresentation $collection $snapshot
+        $readableCatalog = $snapshot.policies | Where-Object family -EQ settingsCatalog
+        $readableLegacy = $snapshot.policies | Where-Object family -EQ deviceConfiguration
+        ConvertTo-Json -InputObject $readableCatalog.settingsTables -Depth 20 -Compress |
+            Should -Be (ConvertTo-Json -InputObject @(Format-IdsSettingsCatalog $catalogSettings -AsData) -Depth 20 -Compress)
+        ConvertTo-Json -InputObject $readableLegacy.settingsTables -Depth 20 -Compress |
+            Should -Be (ConvertTo-Json -InputObject @(Format-IdsTemplateSettings $legacySettings[0] -AsData) -Depth 20 -Compress)
+        (Format-IdsSettingsCatalog $catalogSettings) | Should -Match '\| Enable firewall \| Enabled \|'
+        (Format-IdsTemplateSettings $legacySettings[0]) | Should -Match '\| Smart Screen Enable In Shell \| No \|'
+        $result = New-ReportResult
+        $mapping = $result.packs[0].controls[0].mappings[0]
+        $mapping.settingId = 'synthetic_enableFirewall'
+        $mapping.policyTypes = @('deviceManagementConfigurationPolicy')
+        $mapping.valueType = 'string'
+        $mapping.expected = 'synthetic_enableFirewall_1'
+        $evaluation = Compare-IdsAssessment $result.packs $snapshot $result.context
+        Add-IdsAssessmentEvidencePresentation $collection $evaluation
+        $result.controls = $evaluation.controls
+        $result.policies = $snapshot.policies
+        $result.controls[0].status | Should -Be 'aligned'
+        $result.controls[0].expected[0].displayName | Should -Be 'Enable firewall'
+        $result.controls[0].expected[0].displayValue | Should -Be 'Enabled'
+        $result.controls[0].observed[0].displayValue | Should -Be 'Enabled'
+        $result.controls[0].observed[0].value | Should -Be 'synthetic_enableFirewall_1'
+        $projected = ConvertTo-IdsReportProjection $result
+        $table = ($projected.policies | Where-Object family -EQ settingsCatalog).settingsTables[0]
+        $table.headers | Should -Be @('Setting', 'Value')
+        $table.rows[0].cells | Should -Be @('Enable firewall', 'Enabled')
+        $text = [Net.WebUtility]::HtmlDecode((ConvertTo-IdsAssessmentMarkdown $result))
+        $text | Should -Match '\| Enable firewall \| Enabled \|'
+        $text | Should -Match '\| Smart Screen Enable In Shell \| No \|'
+        $text | Should -Match '\| Expected \| Enable firewall \| Enabled \| eq \|'
+        $text | Should -Match '\| Configured \| Enable firewall \| Enabled \|'
+        $pair = Write-IdsAssessmentReports $result "$TestDrive\readable-reports" "$TestDrive\app" "$TestDrive\docs"
+        $json = [IO.File]::ReadAllText($pair.jsonPath) | ConvertFrom-Json
+        ($json.policies | Where-Object family -EQ settingsCatalog).settingsTables[0].rows[0].cells |
+            Should -Be @('Enable firewall', 'Enabled')
+    }
+
+    It 'withholds incomplete or secret settings and never formats arbitrary legacy payloads' {
+        $policy = New-IdsTestAssessmentPolicy -Family deviceConfiguration -PolicyType windows10EndpointProtectionConfiguration -Settings @(
+            [pscustomobject]@{ smartScreenEnableInShell = $false; arbitraryPrivateField = 'SYNTHETIC-PRIVATE' }
+        )
+        $collection = New-IdsTestAssessmentCollection @($policy)
+        $snapshot = ConvertTo-IdsAssessmentSnapshot $collection
+        Add-IdsAssessmentPolicyPresentation $collection $snapshot
+        ($snapshot.policies | ConvertTo-Json -Depth 20) | Should -Not -Match 'SYNTHETIC-PRIVATE|arbitraryPrivateField'
+        $snapshot.policies[0].settingsComplete = $false
+        Add-IdsAssessmentPolicyPresentation $collection $snapshot
+        $snapshot.policies[0].settingsTables.Count | Should -Be 0
+        $snapshot.policies[0].settingsNote | Should -Match 'withheld.*incomplete.*secret.*unsupported'
+        $secretPolicy = New-IdsTestAssessmentPolicy -Settings @([pscustomobject]@{
+            settingInstance = [pscustomobject]@{
+                '@odata.type' = '#microsoft.graph.deviceManagementConfigurationSimpleSettingInstance'
+                settingDefinitionId = 'synthetic-secret'
+                simpleSettingValue = [pscustomobject]@{
+                    '@odata.type' = '#microsoft.graph.deviceManagementConfigurationSecretSettingValue'
+                    value = 'SYNTHETIC-PRIVATE'
+                }
+            }
+        })
+        $collection = New-IdsTestAssessmentCollection @($secretPolicy)
+        $snapshot = ConvertTo-IdsAssessmentSnapshot $collection
+        Add-IdsAssessmentPolicyPresentation $collection $snapshot
+        $snapshot.policies[0].settingsTables.Count | Should -Be 0
+        ($snapshot.policies | ConvertTo-Json -Depth 20) | Should -Not -Match 'SYNTHETIC-PRIVATE|rawSettings'
+        $secretObservation = $snapshot.observations[0]
+        Set-IdsAssessmentEvidencePresentation $secretObservation @{}
+        $secretObservation.displayValue | Should -Be 'Unavailable (secret or unsupported evidence)'
+    }
+
+    It 'shares ADMX state and endpoint-security names with documentation' {
+        $admx = @([pscustomobject]@{
+            id = 'synthetic-definition-value'; enabled = $true
+            definition = [pscustomobject]@{ id = 'synthetic-admx'; displayName = 'Turn on protection'; classType = 'machine'; categoryPath = 'Security' }
+            presentationValues = @()
+        })
+        $intent = @([pscustomobject]@{ definitionId = 'synthetic_minimumPasswordLength'; value = 0 })
+        $collection = New-IdsTestAssessmentCollection @(
+            (New-IdsTestAssessmentPolicy -Family admx -PolicyType groupPolicyConfiguration -Settings $admx)
+            (New-IdsTestAssessmentPolicy -Family intent -PolicyType deviceManagementIntent -Settings $intent)
+        )
+        $snapshot = ConvertTo-IdsAssessmentSnapshot $collection
+        Add-IdsAssessmentPolicyPresentation $collection $snapshot
+        $admxTables = ($snapshot.policies | Where-Object family -EQ admx).settingsTables
+        $intentTables = ($snapshot.policies | Where-Object family -EQ intent).settingsTables
+        ConvertTo-Json -InputObject $admxTables -Depth 20 -Compress |
+            Should -Be (ConvertTo-Json -InputObject @(Format-IdsAdmxSettings $admx -AsData) -Depth 20 -Compress)
+        ConvertTo-Json -InputObject $intentTables -Depth 20 -Compress |
+            Should -Be (ConvertTo-Json -InputObject @(Format-IdsIntentSettings $intent -AsData) -Depth 20 -Compress)
+        $admxTables[0].rows[0].cells | Should -Contain 'Enabled'
+        $intentTables[0].rows[0].cells | Should -Be @('Minimum Password Length', '0')
+    }
+
+    It 'escapes readable settings without trusting them as report markup' {
+        $result = New-ReportResult
+        $policy = New-IdsTestAssessmentPolicy
+        $policy | Add-Member NoteProperty settingsTables @(@{
+            title = '<script>alert(1)</script>'; headers = @('Setting', 'Value')
+            rows = @(@{ cells = @('[click](javascript:bad())', "line`n| injected |") })
+        })
+        $result.policies = @($policy)
+        $markdown = ConvertTo-IdsAssessmentMarkdown $result
+        $markdown | Should -Not -Match '<script>|\[click\]\(javascript:|(?m)^\| injected \|'
+        $markdown | Should -Match '&#60;script&#62;'
+    }
+
     It 'renders the actual engine mapping array and preserves identity, coverage and scope' {
         $result = New-ReportResult
         $text = [Net.WebUtility]::HtmlDecode((ConvertTo-IdsAssessmentMarkdown -Result $result))

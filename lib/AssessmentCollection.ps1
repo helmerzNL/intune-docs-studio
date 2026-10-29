@@ -238,7 +238,7 @@ function Copy-IdsAssessmentEvidence {
             $secretIds -ccontains (Get-IdsAssessmentMember $Value 'settingDefinitionId')
         foreach ($name in $names) {
             if ($name -eq 'assignments') { continue }
-            if ($name -match '^(password|secret|sharedSecret|preSharedKey|accessToken|refreshToken|token|privateKey|pfxCertificate|certificateContent|payload|script|scriptContent|customConfigurationXml|encryptedValue)$' -or
+            if ($name -match '^(password|secret|sharedSecret|preSharedKey|wifiPreSharedKey|accessToken|refreshToken|token|privateKey|pfxCertificate|certificateContent|payload|script|scriptContent|customConfigurationXml|encryptedValue)$' -or
                 ($secretNode -and $name -match '^(value|valueJson)$')) {
                 $copy[$name] = $null
                 $copy['assessmentRedacted'] = $true
@@ -252,10 +252,19 @@ function Copy-IdsAssessmentEvidence {
 }
 
 function Get-IdsAssessmentCollection {
-    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Packs, [Parameter(Mandatory)][hashtable]$Context)
+    [CmdletBinding(DefaultParameterSetName = 'Selected')]
+    param(
+        [Parameter(Mandatory, Position = 0, ParameterSetName = 'Selected')][AllowEmptyCollection()][object[]]$Packs,
+        [Parameter(Mandatory, Position = 1, ParameterSetName = 'Selected')][hashtable]$Context,
+        [Parameter(Mandatory, ParameterSetName = 'All')][switch]$AllPolicies,
+        [Parameter(ParameterSetName = 'All')][switch]$IncludeDocumentation,
+        [scriptblock]$ProgressCallback
+    )
     $policies = [Collections.Generic.List[object]]::new()
     $sources = [Collections.Generic.List[object]]::new()
     $issues = [Collections.Generic.List[object]]::new()
+    $documentation = @{}
+    $documentationIssues = [Collections.Generic.List[object]]::new()
     $paths = [ordered]@{
         settingsCatalog = '/deviceManagement/configurationPolicies'
         deviceConfiguration = '/deviceManagement/deviceConfigurations'
@@ -263,11 +272,15 @@ function Get-IdsAssessmentCollection {
         admx = '/deviceManagement/groupPolicyConfigurations'
         intent = '/deviceManagement/intents'
     }
+    $familyIndex = 0
     foreach ($family in $paths.Keys) {
-        $platforms = @($Packs | Where-Object {
+        $familyIndex++
+        $platforms = if ($AllPolicies) { @('windows11', 'macos', 'iosIpados', 'androidEnterprise') } else { @($Packs | Where-Object {
             $_.platform -cin $Context.platforms -and @($_.controls.mappings.family) -ccontains $family
-        } | ForEach-Object { $_.platform } | Sort-Object -Unique)
+        } | ForEach-Object { $_.platform } | Sort-Object -Unique) }
         if ($platforms.Count -eq 0) { continue }
+        if ($IncludeDocumentation) { $documentation[$family] = [Collections.Generic.List[object]]::new() }
+        if ($ProgressCallback) { & $ProgressCallback $family ([int](5 + 90 * ($familyIndex - 1) / $paths.Count)) }
         $issueStart = $issues.Count
         $inventory = Get-IdsAssessmentPages -Path $paths[$family]
         Add-IdsAssessmentReadIssues $inventory $family $null 'inventory' $issues
@@ -282,7 +295,12 @@ function Get-IdsAssessmentCollection {
                 if ($templateItem.id) { $templates[[string]$templateItem.id] = $templateItem }
             }
         }
+        $policyIndex = 0
         foreach ($raw in $inventory.items) {
+            $policyIndex++
+            if ($ProgressCallback) {
+                & $ProgressCallback "$family ($policyIndex / $($inventory.items.Count))" ([int](5 + 90 * (($familyIndex - 1) + ($policyIndex - 1) / $inventory.items.Count) / $paths.Count))
+            }
             $id = [string](Get-IdsAssessmentMember $raw 'id')
             if ($id -cnotmatch '\A[a-zA-Z0-9_-]{1,128}\z') {
                 $issues.Add([pscustomobject]@{ family = $family; policyKey = $null; stage = 'inventory'; statusCode = $null; reason = 'Missing or unsafe Graph policy ID.' })
@@ -300,6 +318,9 @@ function Get-IdsAssessmentCollection {
                 settingsCatalog { $requests += @{ id = 'settings'; url = "$base/settings?`$expand=settingDefinitions&`$top=1000" } }
                 admx { $requests += @{ id = 'settings'; url = "$base/definitionValues?`$expand=definition" } }
                 intent { $requests += @{ id = 'settings'; url = "$base/settings" } }
+            }
+            if ($IncludeDocumentation -and $family -eq 'compliance') {
+                $requests += @{ id = 'actions'; url = "$base/scheduledActionsForRule?`$expand=scheduledActionConfigurations" }
             }
             $reads = Get-IdsAssessmentBatchPages $requests
             $settings = if ($family -in @('deviceConfiguration', 'compliance')) {
@@ -371,6 +392,21 @@ function Get-IdsAssessmentCollection {
                     $issues.Add([pscustomobject]@{ family = $family; policyKey = $key; stage = 'template'; statusCode = $null; reason = 'Intent template metadata is incomplete or unresolved.' })
                 }
             }
+            if ($IncludeDocumentation) {
+                # Keep the original document payload separate from redacted assessment
+                # evidence. Neither payload is exposed by the inventory status API.
+                $documentPolicy = [ordered]@{}
+                $names = if ($raw -is [Collections.IDictionary]) { @($raw.Keys) } else { @($raw.PSObject.Properties.Name) }
+                foreach ($propertyName in $names) { $documentPolicy[$propertyName] = Get-IdsAssessmentMember $raw $propertyName }
+                $documentPolicy['assignments'] = @($assignments.items)
+                if ($family -eq 'compliance') {
+                    $documentPolicy['scheduledActionsForRule'] = @($reads.actions.items)
+                    Add-IdsAssessmentReadIssues $reads.actions $family $key 'actions' $documentationIssues
+                }
+                $documentation[$family].Add([pscustomobject]@{
+                    policy = [pscustomobject]$documentPolicy; settings = @($settings.items); template = $template
+                })
+            }
             $type = ([string](Get-IdsAssessmentMember $raw '@odata.type')) -creplace '^#microsoft\.graph\.', ''
             if (-not $type) {
                 $type = switch ($family) {
@@ -413,5 +449,11 @@ function Get-IdsAssessmentCollection {
             $sources.Add([pscustomobject]@{ family = $family; platform = $platform; complete = ($sourceErrors.Count -eq 0); errors = $sourceErrors })
         }
     }
-    return [pscustomobject]@{ policies = $policies.ToArray(); sources = $sources.ToArray(); issues = $issues.ToArray() }
+    $result = [pscustomobject]@{ policies = $policies.ToArray(); sources = $sources.ToArray(); issues = $issues.ToArray() }
+    if ($IncludeDocumentation) {
+        foreach ($family in @($documentation.Keys)) { $documentation[$family] = $documentation[$family].ToArray() }
+        $result | Add-Member NoteProperty documentation $documentation
+        $result | Add-Member NoteProperty documentationIssues $documentationIssues.ToArray()
+    }
+    return $result
 }

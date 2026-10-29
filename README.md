@@ -47,8 +47,9 @@ needed for commit/push functionality.
 3. **Sign in** — the landing page opens first. Choose **Sign in via the Intune portal**,
    or open **Advanced sign-in options** for the other methods. Sign in as an administrator
    with access to the Intune areas you want to document.
-4. **Choose a path** — Home confirms the account and tenant and offers **Document policies**
-   and **Assess policies**.
+4. **Wait for policies to load** — progress appears automatically after sign-in.
+   Home then confirms the account and tenant and offers **Document policies** and
+   **Assess policies**, both using the same loaded policy snapshot.
 5. **Document policies** — choose your output folder and which areas to document, click
    **Generate documentation**, watch the live progress, inspect the Markdown, and optionally
    commit and push under **Git publishing**.
@@ -79,9 +80,24 @@ identity checks, and output backup/restore, see [the operator guide](docs/operat
 
 ## Assess configured policies
 
-After sign-in, the **Assess policies** path compares read-only policy evidence with
+After sign-in and policy loading, the **Assess policies** path compares read-only policy evidence with
 versioned Microsoft rules and locally imported customer packs. It does not change
 Intune, determine effective targeting, certify a benchmark, or measure device compliance.
+
+The dashboard loads Settings Catalog, configuration profiles, compliance policies,
+administrative templates, and endpoint-security intents into a tenant-scoped,
+in-memory snapshot. Home shows its collection time and family counts. Both
+workflows reuse that snapshot without collecting those policies again; other
+selected documentation areas and reference lookups are collected during export.
+Use **Refresh policies** on Home after tenant changes. Refresh clears active
+assessment results; sign-out, tenant switches, and shutdown discard the snapshot.
+It is not a disk cache or backup. The command-line export still collects directly.
+
+If loading fails, use **Retry loading** or sign out and check access. A partial
+load shows explicit collection limitations and still permits both workflows:
+assessment retains incomplete evidence as such, while documentation skips
+incomplete policy families, preserves their previous pages/raw files, and skips
+pruning for that run. It does not interpret denied or truncated reads as deletion.
 
 > **Only five checks across four partial Microsoft packs ship today.** Windows 11
 > has two Windows 26H2 **baseline** shell SmartScreen checks; macOS has one FileVault
@@ -145,6 +161,14 @@ Unknown/manual/unsupported or incomplete evidence is **not assessed**, not a pas
 or missing result. Unassigned aligned policies do not demonstrate deployment;
 potential conflicts are differing configured values, not proven targeting overlap.
 Groups, exclusions, and filters are evidence, not effective membership resolution.
+
+Policy settings in the dashboard and reports use the documentation writer's
+readable tables and expected/configured summaries: Settings Catalog definition/option names, spaced legacy property
+labels, ADMX labels/states, and endpoint-security setting names. Exact identifiers,
+typed comparisons and assignment metadata remain available as technical evidence.
+Readable tables do not change evaluation or expand supported mappings; incomplete,
+secret or unsupported policy evidence is withheld from those tables with an
+explicit note. Reports never receive the original documentation payload.
 
 Imported files persist in `%LOCALAPPDATA%\IntuneDocsStudio\AssessmentPacks` across
 application updates; packs generated from a build-kit ZIP are stored there too.
