@@ -433,12 +433,23 @@ function Get-IdsBaselinePacks {
     return [pscustomobject]@{ packs = $valid; errors = $errors.ToArray() }
 }
 
-function Import-IdsBaselinePack {
+function Import-IdsBaselinePackSet {
     param(
-        [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Bytes,
+        [Parameter(Mandatory)][byte[][]]$Packs,
         [Parameter(Mandatory)][string]$ImportedRoot
     )
-    $pack = Read-IdsBaselinePack -Bytes $Bytes
+    $candidates = [Collections.Generic.List[object]]::new()
+    $identities = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+    foreach ($bytes in $Packs) {
+        $pack = Read-IdsBaselinePack -Bytes $bytes
+        $identity = "$($pack.id)@$($pack.version)"
+        if ($identities.ContainsKey($identity)) {
+            if ($identities[$identity] -cne $pack.sha256) { throw "Pack set contains different packs with the same ID/version: $identity." }
+            continue
+        }
+        $identities[$identity] = $pack.sha256
+        $candidates.Add([pscustomobject]@{ pack = $pack; bytes = $bytes; added = $true })
+    }
     if (-not [IO.Path]::IsPathFullyQualified($ImportedRoot)) { throw 'ImportedRoot must be an absolute filesystem path outside the installation and source tree.' }
     $root = [IO.Path]::GetFullPath($ImportedRoot)
     Assert-IdsPackNoReparsePath $root
@@ -460,17 +471,23 @@ function Import-IdsBaselinePack {
             [IO.FileAccess]::Write, [IO.FileShare]::None, 4096, [IO.FileOptions]::DeleteOnClose)
         $catalog = Get-IdsBaselinePacks -BundledRoot (Join-Path $root '.unused-bundled') -ImportedRoot $root
         if ($catalog.errors.Count -gt 0) { throw 'Imported catalog has invalid or conflicting entries; repair them before importing.' }
-        foreach ($existing in $catalog.packs) {
-            if ($existing.id -ceq $pack.id -and $existing.version -ceq $pack.version) {
-                if ($existing.sha256 -cne $pack.sha256) { throw 'Imported pack ID/version already exists with different bytes.' }
-                return $pack
+        # Check every pack before the first write so a conflict leaves the catalog untouched.
+        foreach ($candidate in $candidates) {
+            foreach ($existing in $catalog.packs) {
+                if ($existing.id -ceq $candidate.pack.id -and $existing.version -ceq $candidate.pack.version) {
+                    if ($existing.sha256 -cne $candidate.pack.sha256) { throw 'Imported pack ID/version already exists with different bytes.' }
+                    $candidate.added = $false
+                }
             }
         }
-        $target = Join-Path $root "$($pack.sha256).json"
-        $staged = Join-Path $root ('.stage-' + [guid]::NewGuid().ToString('N'))
-        [IO.File]::WriteAllBytes($staged, $Bytes)
-        [IO.File]::Move($staged, $target)
-        return $pack
+        foreach ($candidate in $candidates) {
+            if (-not $candidate.added) { continue }
+            $target = Join-Path $root "$($candidate.pack.sha256).json"
+            $staged = Join-Path $root ('.stage-' + [guid]::NewGuid().ToString('N'))
+            [IO.File]::WriteAllBytes($staged, $candidate.bytes)
+            [IO.File]::Move($staged, $target)
+        }
+        return @(foreach ($candidate in $candidates) { [pscustomobject]@{ pack = $candidate.pack; added = $candidate.added } })
     } finally {
         try {
             if ($staged -and [IO.File]::Exists($staged)) { [IO.File]::Delete($staged) }
@@ -478,4 +495,12 @@ function Import-IdsBaselinePack {
             if ($lock) { $lock.Dispose() }
         }
     }
+}
+
+function Import-IdsBaselinePack {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Bytes,
+        [Parameter(Mandatory)][string]$ImportedRoot
+    )
+    return @(Import-IdsBaselinePackSet -Packs @(, $Bytes) -ImportedRoot $ImportedRoot)[0].pack
 }

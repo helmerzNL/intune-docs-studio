@@ -459,3 +459,85 @@ Describe 'Assessment pack local catalog and imports' {
         @(Get-ChildItem -LiteralPath $imported -Force).Count | Should -Be 1
     }
 }
+
+Describe 'Assessment pack batch imports' {
+    BeforeEach {
+        $imported = Join-Path $scratch ([guid]::NewGuid().ToString('N'))
+        $one = New-IdsTestPackBytes
+        $second = New-TestPack; $second.id = 'synthetic-pack-two'
+        $two = ConvertTo-TestBytes $second
+    }
+    It 'imports each unique pack once and reports added in input order' {
+        $first = @(Import-IdsBaselinePackSet -Packs @($two, $one) -ImportedRoot $imported)
+        $first.Count | Should -Be 2
+        $first[0].pack.id | Should -BeExactly 'synthetic-pack-two'
+        $first[1].pack.id | Should -BeExactly 'synthetic-pack'
+        $first[0].added | Should -BeTrue
+        $first[1].added | Should -BeTrue
+        @(Get-ChildItem -LiteralPath $imported -Force).Count | Should -Be 2
+        foreach ($case in @(@{ result = $first[0]; bytes = $two }, @{ result = $first[1]; bytes = $one })) {
+            $path = Join-Path $imported "$($case.result.pack.sha256).json"
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($path)) | Should -BeExactly ([Convert]::ToBase64String($case.bytes))
+        }
+        $again = @(Import-IdsBaselinePackSet -Packs @($two, $one) -ImportedRoot $imported)
+        $again.Count | Should -Be 2
+        $again[0].added | Should -BeFalse
+        $again[1].added | Should -BeFalse
+        $again[0].pack.sha256 | Should -BeExactly $first[0].pack.sha256
+        $again[1].pack.sha256 | Should -BeExactly $first[1].pack.sha256
+        @(Get-ChildItem -LiteralPath $imported -Force).Count | Should -Be 2
+    }
+    It 'drops byte-identical duplicates within a batch' {
+        $results = @(Import-IdsBaselinePackSet -Packs @($one, $two, $one, $two) -ImportedRoot $imported)
+        $results.Count | Should -Be 2
+        @($results | Where-Object added).Count | Should -Be 2
+        @(Get-ChildItem -LiteralPath $imported -Force).Count | Should -Be 2
+    }
+    It 'validates the whole batch before creating the storage root' {
+        $changed = New-TestPack; $changed.controls[0].mappings[0].expected = $false
+        { Import-IdsBaselinePackSet -Packs @($one, (ConvertTo-TestBytes $changed)) -ImportedRoot $imported } |
+            Should -Throw '*synthetic-pack@1.0.0*'
+        { Import-IdsBaselinePackSet -Packs @($one, [Text.Encoding]::UTF8.GetBytes('{}')) -ImportedRoot $imported } |
+            Should -Throw '*required*'
+        (Test-Path -LiteralPath $imported) | Should -BeFalse
+    }
+    It 'rejects a conflict with an existing import before writing any pack of the batch' {
+        $existing = Import-IdsBaselinePack -Bytes $one -ImportedRoot $imported
+        $changed = New-TestPack; $changed.controls[0].mappings[0].expected = $false
+        { Import-IdsBaselinePackSet -Packs @($two, (ConvertTo-TestBytes $changed)) -ImportedRoot $imported } |
+            Should -Throw 'Imported pack ID/version already exists with different bytes.'
+        $files = @(Get-ChildItem -LiteralPath $imported -Force)
+        $files.Count | Should -Be 1
+        $files[0].Name | Should -BeExactly "$($existing.sha256).json"
+    }
+    It 'keeps a single import as one validated pack' {
+        $pack = Import-IdsBaselinePack -Bytes $one -ImportedRoot $imported
+        ($pack -is [array]) | Should -BeFalse
+        $pack.PSObject.Properties.Name | Should -Not -Contain 'added'
+        $pack.id | Should -BeExactly 'synthetic-pack'
+        $pack.controls.Count | Should -Be 1
+        $pack.sha256 | Should -BeExactly (Read-IdsBaselinePack -Bytes $one).sha256
+        (Import-IdsBaselinePack -Bytes $one -ImportedRoot $imported).sha256 | Should -BeExactly $pack.sha256
+        @(Get-ChildItem -LiteralPath $imported -Force).Count | Should -Be 1
+    }
+    It 'honours another writer''s lock and releases its own lock after success and failure' {
+        [void][IO.Directory]::CreateDirectory($imported)
+        $lockPath = Join-Path $imported '.import.lock'
+        $held = [IO.FileStream]::new($lockPath, [IO.FileMode]::OpenOrCreate,
+            [IO.FileAccess]::Write, [IO.FileShare]::None, 4096, [IO.FileOptions]::DeleteOnClose)
+        try {
+            { Import-IdsBaselinePackSet -Packs @($one, $two) -ImportedRoot $imported } | Should -Throw
+        } finally { $held.Dispose() }
+        @(Get-ChildItem -LiteralPath $imported -Force).Count | Should -Be 0
+        @(Import-IdsBaselinePackSet -Packs @($one, $two) -ImportedRoot $imported).Count | Should -Be 2
+        (Test-Path -LiteralPath $lockPath) | Should -BeFalse
+        $changed = New-TestPack; $changed.controls[0].mappings[0].expected = $false
+        { Import-IdsBaselinePackSet -Packs @(, (ConvertTo-TestBytes $changed)) -ImportedRoot $imported } |
+            Should -Throw '*different bytes*'
+        (Test-Path -LiteralPath $lockPath) | Should -BeFalse
+        $probe = [IO.FileStream]::new($lockPath, [IO.FileMode]::OpenOrCreate,
+            [IO.FileAccess]::Write, [IO.FileShare]::None, 4096, [IO.FileOptions]::DeleteOnClose)
+        $probe.Dispose()
+        @(Get-ChildItem -LiteralPath $imported -Force).Count | Should -Be 2
+    }
+}
