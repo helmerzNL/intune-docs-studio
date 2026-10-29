@@ -4,7 +4,8 @@ function Test-IdsWorkActive {
         ($State.Job -and -not $State.Job.handle.IsCompleted) -or
         ($State.Browser.job -and -not $State.Browser.job.handle.IsCompleted) -or
         ($State.Assessment.job -and -not $State.Assessment.job.handle.IsCompleted) -or
-        $State.Policies.running -or ($State.Policies.job -and -not $State.Policies.job.handle.IsCompleted))
+        $State.Policies.running -or ($State.Policies.job -and -not $State.Policies.job.handle.IsCompleted) -or
+        $State.PolicyTransfer.running -or $State.PackImport.running)
 }
 
 function Initialize-IdsAssessment {
@@ -95,7 +96,7 @@ function Resolve-IdsAssessmentOptions {
 function Start-IdsAssessmentJob {
     param([hashtable]$State, [hashtable]$Options, [string]$Root)
     if (Test-IdsWorkActive $State) { return $false }
-    if (-not $State.Auth) { throw 'Not signed in.' }
+    if (-not $State.Auth -and -not $State.Policies) { throw 'Load or import a policy set first.' }
     if ($State.Browser.running) { return $false }
     Initialize-IdsAssessment $State
     Clear-IdsAssessmentJob $State
@@ -127,8 +128,10 @@ function Start-IdsAssessmentJob {
             foreach ($module in 'Auth', 'Graph', 'Render', 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'AssessmentRules', 'AssessmentReports', 'PolicyInventory') {
                 . (Join-Path $Root "lib\$module.ps1")
             }
-            if ($Auth.transport -eq 'mggraph') { Import-Module Microsoft.Graph.Authentication -ErrorAction Stop }
-            Initialize-IdsGraph -StateHolder @{ Auth = $Auth }
+            if (-not $LoadedPolicies) {
+                if ($Auth.transport -eq 'mggraph') { Import-Module Microsoft.Graph.Authentication -ErrorAction Stop }
+                Initialize-IdsGraph -StateHolder @{ Auth = $Auth }
+            }
             if ($LoadedPolicies) {
                 $tenants = @(@{ id = $LoadedPolicies.tenant.id; displayName = $LoadedPolicies.tenant.name })
                 $a.phase = 'Using loaded policies'; $a.percent = 10
@@ -162,15 +165,16 @@ function Start-IdsAssessmentJob {
             $result = ConvertTo-IdsReportProjection ([pscustomobject]@{
                 schemaVersion = 1; runId = $RunId; generatedAt = [datetime]::UtcNow.ToString('o')
                 policySnapshotAt = $LoadedPolicies.capturedAt
+                policySource = $LoadedPolicies.source
                 tenant = @{ id = [string]$tenants[0].id; name = [string]$tenants[0].displayName }
                 context = $Options.context; packs = @($Options.packs)
                 summaries = @($evaluation.summaries); controls = @($evaluation.controls)
                 policies = @($snapshot.policies); collectionIssues = @($snapshot.issues); sources = @($snapshot.sources)
             })
-            if (-not $State.Auth -or $a.epoch -ne $Epoch -or $a.runId -ne $RunId) { throw 'Assessment session expired.' }
+            if ($a.epoch -ne $Epoch -or $a.runId -ne $RunId) { throw 'Assessment session expired.' }
             $a.phase = 'Writing reports'; $a.percent = 85
             $paths = Write-IdsAssessmentReports -Result $result -OutputPath $Options.outputPath -InstallRoot $Root -ExportRoot $Options.exportRoot
-            if ($State.Auth -and $a.epoch -eq $Epoch -and $a.runId -eq $RunId) {
+            if ($a.epoch -eq $Epoch -and $a.runId -eq $RunId) {
                 $a.result = $result
                 $a.reportPaths = $paths
                 $a.partial = [bool](@($result.packs | Where-Object { $_.coverage.inventory -eq 'partial' }).Count -or

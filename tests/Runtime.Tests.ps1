@@ -87,6 +87,9 @@ Describe 'PowerShell runtime requirements' {
         BeforeAll {
             function Wait-LocalPolicies {
                 param([string]$Base)
+                if ((Invoke-RestMethod "$Base/api/state").policies.status -eq 'idle') {
+                    [void](Invoke-RestMethod "$Base/api/policies/reload" -Method Post -Headers @{ Origin = $Base } -Body '{}' -ContentType application/json)
+                }
                 $deadline = (Get-Date).AddSeconds(20)
                 do {
                     $inventory = (Invoke-RestMethod "$Base/api/state").policies
@@ -325,6 +328,17 @@ function Invoke-IdsGraphRaw {
                 param($base)
                 $headers = @{ Origin = $base }
                 [void](Invoke-RestMethod "$base/api/signin/azurecli" -Method Post)
+                $pending = Invoke-RestMethod "$base/api/state"
+                $pending.policies.status | Should -Be 'idle'
+                $pending.policies.consentRequired | Should -BeTrue
+                [void](Invoke-RestMethod "$base/api/policies/decline" -Method Post -Headers $headers -Body '{}' -ContentType application/json)
+                (Invoke-RestMethod "$base/api/state").auth.connected | Should -BeTrue
+                1..3 | ForEach-Object {
+                    $declined = Invoke-RestMethod "$base/api/state"
+                    $declined.policies.status | Should -Be 'idle'
+                    $declined.policies.consentRequired | Should -BeFalse
+                }
+                [void](Invoke-RestMethod "$base/api/policies/reload" -Method Post -Headers $headers -Body '{}' -ContentType application/json)
                 (Invoke-RestMethod "$base/api/state").policies.status | Should -Be 'loading'
                 foreach ($path in 'export', 'assessment', 'policies/reload', 'signin/azurecli') {
                     $response = Invoke-WebRequest "$base/api/$path" -Method Post -Headers $headers -Body '{}' -ContentType application/json -SkipHttpErrorCheck
@@ -341,7 +355,7 @@ function Invoke-IdsGraphRaw {
                 (Invoke-WebRequest "$base/api/policies/reload" -Method Post -Body '{}' -ContentType application/json -SkipHttpErrorCheck).StatusCode | Should -Be 403
                 (Invoke-WebRequest "$base/api/policies/reload" -Method Post -Headers $headers -Body '{}' -ContentType text/plain -SkipHttpErrorCheck).StatusCode | Should -Be 415
                 $previous = (Invoke-RestMethod "$base/api/state").policies.capturedAt
-                (Invoke-WebRequest "$base/api/policies/reload" -Method Post -Headers $headers -Body '{}' -ContentType application/json).StatusCode | Should -Be 202
+                (Invoke-WebRequest "$base/api/policies/reload" -Method Post -Headers $headers -Body '{"replace":true}' -ContentType application/json).StatusCode | Should -Be 202
                 $refreshed = Wait-LocalPolicies $base
                 $refreshed.capturedAt | Should -Not -Be $previous
                 (Invoke-RestMethod "$base/api/assessment").done | Should -BeFalse
@@ -418,6 +432,8 @@ Describe 'Shared runtime job and reset guards' {
     BeforeAll {
         . "$repo\lib\Assessment.ps1"
         . "$repo\lib\PolicyInventory.ps1"
+        . "$repo\lib\PolicyApi.ps1"
+        . "$repo\lib\LocalFolders.ps1"
         $tokens = $null; $errors = $null
         $ast = [Management.Automation.Language.Parser]::ParseFile("$repo\IntuneDocsStudio.ps1", [ref]$tokens, [ref]$errors)
         foreach ($name in 'Start-IdsExportJob', 'Start-IdsBrowserSignIn', 'Reset-IdsSessionState', 'Clear-IdsFinishedJob') {

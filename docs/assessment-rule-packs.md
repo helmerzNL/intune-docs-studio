@@ -25,7 +25,7 @@ a rule.
 
 ## Customer workflow and interpretation
 
-**Assess policies** is a five-step wizard: **Platforms**, **Baselines**,
+**Assess policies** is a six-step wizard: **Platforms**, **Import packs**, **Baselines**,
 **Context**, **Review & run** and **Results**. **Next** checks the current step;
 **Back** returns without checks. The stepper shows progress and is not
 clickable. Errors appear directly below the stepper. The wizard keeps its step
@@ -33,15 +33,20 @@ when you visit Home. After a page reload, a running or completed assessment
 opens **Results**. Sign-in, sign-out, **Forget saved session** and a session or
 workspace reset return the wizard to **Platforms** and clear the import summary.
 
-1. Sign in through the existing read-only sign-in and verify the tenant on Home,
-   then open **Assess policies**.
-2. **Platforms.** Select the platforms to assess. A platform without an
-   available pack stays disabled until you import one. **Next** requires at
+1. Load policies after explicit sign-in consent or import an offline target
+   policy set, verify its source/environment on Home, then open **Assess policies**.
+2. **Platforms.** Select the platforms to assess, even before packs exist.
+   Pack coverage is checked later. **Next** requires at
    least one platform: "Choose at least one platform to assess."
-3. **Import rule packs.** This card appears on **Platforms** and **Baselines**
-   only. It accepts the licensed CIS Intune build-kit ZIP that you downloaded
+3. **Import packs.** This separate step opens only after **Next** on Platforms.
+   Queue multiple files/folders; trash removes queued rows only. **Import** runs
+   items sequentially with genuine pending/loading/completed/error states, not
+   invented percentages. Independent failures preserve successes. The structured
+   summary shows Added, Already present, Skipped, Ignored and Failed counts with
+   expandable per-item reasons. Continue with suitable existing library packs to
+   skip importing. It accepts the licensed CIS Intune build-kit ZIP that you downloaded
    from CIS (1 byte to 32 MiB) or one schema-1 JSON rule pack (at most 10 MiB).
-   Select the file and click **Import pack**. The browser checks the file type
+   Add files and click **Import**. The browser checks the file type
    and size first; problems appear below the stepper and nothing is sent. The
    card's status line reports the result. For a build-kit ZIP, it lists the
    generated packs with their control counts, how many were new or already
@@ -52,13 +57,17 @@ workspace reset return the wizard to **Platforms** and clear the import summary.
    Policy/ADMX or OMA-URI content is parsed, and no CIS content is downloaded
    or bundled. Customers own rights to their imported material. Schema
    validation and conversion are not verification of the benchmark content or
-   mapping correctness.
+   mapping correctness. A host folder of schema-1 JSON packs is also supported.
+   Select **Policy set as custom reference** for reference-export conversion,
+   not a normal target import; see below.
 4. **Baselines.** Select exact pack versions/profiles. **Next** requires a
    selected applicable pack for every selected platform and 1–64 packs in
    total: "Every selected platform requires a selected applicable pack; choose
    at least one platform." or "Select 1–64 packs." Packs for unselected
    platforms, or outside the profile filter, are hidden. If no pack is shown,
    the step explains how to change the filter or import a pack.
+   Filtering never silently removes checked pack identities. Same-named profiles
+   are distinguished by exact baseline set/version and imported/bundled origin.
    Read the baseline/recommendations distinction, source revisions, SHA-256
    identity, origin, and inventory coverage before assessing. Customer pack
    labels are author-declared or assigned during conversion, not
@@ -83,10 +92,12 @@ workspace reset return the wizard to **Platforms** and clear the import summary.
    Settings Catalog policies that CIS build-kit packs map to, are assessed only
    when a Windows 11 build is entered (for example `10.0.22631` or
    `10.0.26100`). Otherwise their controls are reported as not assessed.
-6. **Review & run.** Check the plain-text summary: the selected platforms, each
-   pack as `id @ version` with its platform and profile, every context value
+6. **Review & run.** Check the structured per-platform summary: each exact
+   pack/version/profile, framework/set and origin, active target source/capture
+   time, and every context value
    (**Unknown** when blank), and the Windows 11 warning when it applies. Choose
-   an absolute report root disjoint from the installation and documentation
+   **Choose folder** opens a native host folder picker; cancellation keeps the
+   prior editable path. Choose an absolute report root disjoint from the installation and documentation
    export roots. Click **Assess selected policies**; an export and assessment
    cannot run together. Wait before identity changes/reset/stop. If the server
    rejects the run, the wizard stays on **Review & run** and shows the error.
@@ -112,6 +123,24 @@ uploads, commits, or Git pushes occur. Back them up only as customer-owned
 data, subject to licensing/access controls, never with tokens, credentials, or
 portal browser profiles. See [operator procedures](operations.md) for updates,
 legacy development-folder handling, and restore.
+
+### Custom reference policy sets and removal
+
+Importing a **target** set on the landing page does not create assessment rules.
+On **Import packs**, choose the separate reference kind to turn configured values
+from an Intune Docs Studio JSON folder/ZIP into deterministic schema-1 **Custom
+reference** packs. The existing normalized setting mappings determine eligibility;
+there is no tenant-policy-ID matching, blanket JSON equality, or expanded generic
+evaluation. Expected booleans, numbers, strings and supported sets retain their
+types. Unsupported, secret, unconfigured, incomplete and conflicting mappings are
+reported as skipped. An unknown original capture date (typical legacy `_raw`)
+cannot establish the required dated provenance and is explicitly skipped.
+Coverage stays partial and customer-declared; custom is not CIS/certification.
+
+Trash on an imported library row requires confirmation and physically removes
+only hash/identity-validated imported bytes under the library lock. Bundled packs
+cannot be removed. Removal/imports are blocked during active jobs; saved reports
+remain intact. Technical pack IDs, hashes and source URLs remain expandable.
 
 **Configuration alignment is not device compliance**, certification, effective
 protection, or targeting resolution. Compliance-family mappings assess the

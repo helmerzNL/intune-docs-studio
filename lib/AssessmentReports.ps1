@@ -111,11 +111,12 @@ function Copy-IdsReportRecord {
     param($InputObject, [string]$Kind)
     $schema = switch -CaseSensitive ($Kind) {
         Result { [ordered]@{
-            schemaVersion = 'number'; runId = 'text'; generatedAt = 'text'; policySnapshotAt = 'text'; tenant = 'Tenant'; context = 'Context'
+            schemaVersion = 'number'; runId = 'text'; generatedAt = 'text'; policySnapshotAt = 'text'; policySource = 'PolicySource'; tenant = 'Tenant'; context = 'Context'
             packs = 'Pack[]'; summaries = 'Summary[]'; controls = 'Control[]'; policies = 'Policy[]'
             collectionIssues = 'Issue[]'; sources = 'Source[]'
         } }
         Tenant { [ordered]@{ id = 'text'; tenantId = 'text'; name = 'text'; displayName = 'text'; defaultDomain = 'text' } }
+        PolicySource { [ordered]@{ kind = 'text'; name = 'text'; importedAt = 'text'; format = 'text' } }
         Context { [ordered]@{ platforms = 'text[]'; osVersions = 'Platforms'; enrollmentModes = 'Platforms' } }
         Platforms { [ordered]@{ windows11 = 'text'; macos = 'text'; iosIpados = 'text'; androidEnterprise = 'text' } }
         Pack { [ordered]@{

@@ -19,7 +19,7 @@ const signedIn = (extra = {}) => ({
   ...extra
 });
 const signedOut = (extra = {}) => ({ build, auth: { connected: false }, ...extra });
-const viewIds = ['viewLoading', 'viewLanding', 'viewPolicies', 'viewHome', 'viewDocument', 'viewAssess'];
+const viewIds = ['viewLoading', 'viewLanding', 'viewImport', 'viewPolicies', 'viewHome', 'viewDocument', 'viewAssess'];
 const requestedIds = new Set();
 
 function shell({ hash = '', search = '', respond = () => ({}), seed = () => {} } = {}) {
@@ -100,17 +100,55 @@ function shell({ hash = '', search = '', respond = () => ({}), seed = () => {} }
 
 const stateOnly = (body) => (url) => (url === '/api/state' ? body : {});
 
-test('every signed-in deep link waits for policies and blocks action handlers', async () => {
+test('declining policy consent keeps signed-in Home idle across refreshes without collecting', async () => {
+  let declined = false;
+  const d = shell({ respond(url) {
+    if (url === '/api/policies/decline') { declined = true; return { ok: true }; }
+    return url === '/api/state' ? signedIn({ policies: { status: 'idle', consentRequired: !declined } }) : {};
+  } });
+  await d.settle();
+  assert.deepEqual(d.visibleViews(), ['viewPolicies']);
+  await d.element('btnPoliciesNotNow').handlers.click();
+  await d.run('refreshState()');
+  await d.run('refreshState()');
+  assert.deepEqual(d.visibleViews(), ['viewHome']);
+  assert.equal(d.element('btnExport').disabled, true);
+  assert.equal(d.element('btnAssessmentRun').disabled, true);
+  assert.equal(d.requests.some((r) => r.url === '/api/policies/reload'), false);
+});
+
+test('an explicit offline source enables both workflows without authentication or connection probes', async () => {
+  const body = signedOut({ policies: { status: 'partial', count: 1, families: [], issues: [],
+    source: { kind: 'offline', name: 'Synthetic imported environment' } } });
+  const d = shell({ respond: stateOnly(body) });
+  await d.settle();
+  assert.deepEqual(d.visibleViews(), ['viewHome']);
+  d.navigate('#/document');
+  assert.deepEqual(d.visibleViews(), ['viewDocument']);
+  d.navigate('#/assess');
+  assert.deepEqual(d.visibleViews(), ['viewAssess']);
+  assert.equal(d.element('btnAssessmentRun').disabled, false);
+  d.navigate('#/signin');
+  assert.deepEqual(d.visibleViews(), ['viewLanding']);
+  assert.equal(d.visible('returnOfflineWorkspace'), true);
+  d.navigate('#/');
+  assert.deepEqual(d.visibleViews(), ['viewHome']);
+  assert.equal(d.run('state.policies.count'), 1);
+  assert.equal(d.requests.some((r) => /\/api\/(probe|signin)/.test(r.url)), false);
+});
+
+test('signed-in Home is available without policies while deep-linked workflows remain gated', async () => {
   for (const status of ['idle', 'loading', 'failed', undefined]) {
     const d = shell({ hash: '#/assess', respond: stateOnly(signedIn({ policies: { status } })) });
     await d.settle();
-    assert.deepEqual(d.visibleViews(), ['viewPolicies']);
-    assert.equal(d.visible('appNav'), false);
+    const expected = status === 'loading' || status === 'failed' ? 'viewPolicies' : 'viewHome';
+    assert.deepEqual(d.visibleViews(), [expected]);
+    assert.equal(d.visible('appNav'), expected === 'viewHome');
     assert.equal(d.visible('sessionControls'), true);
     assert.equal(d.element('btnExport').disabled, true);
     assert.equal(d.element('btnAssessmentRun').disabled, true);
     d.navigate('#/document');
-    assert.deepEqual(d.visibleViews(), ['viewPolicies']);
+    assert.deepEqual(d.visibleViews(), [expected]);
     await d.element('btnExport').handlers.click();
     assert.equal(d.requests.some((r) => r.url === '/api/export'), false);
   }
@@ -359,7 +397,7 @@ test('landing blocks share top and bottom edges and centre their content', () =>
   }
 });
 
-test('the assessment stepper has five numbered steps and wraps at 900 px; the documentation stepper is unchanged', () => {
+test('the assessment stepper has six numbered steps and wraps at 900 px; the documentation stepper is unchanged', () => {
   const narrow = css.match(/@media \(max-width: 900px\) \{([\s\S]*?)\n\}/);
   assert.ok(narrow, '900 px media query');
   assert.match(narrow[1], /\.stepper\.wide \{ flex-wrap: wrap; \}/);
@@ -371,24 +409,24 @@ test('the assessment stepper has five numbered steps and wraps at 900 px; the do
     /<li id="(\w+)"(?: class="active")?><span class="step-num" aria-hidden="true">(\d)<\/span>([^<]+)<\/li>/g
   )].map((m) => [m[1], m[2], m[3]]);
   assert.deepEqual(items, [
-    ['assessStepPlatforms', '1', 'Platforms'], ['assessStepBaselines', '2', 'Baselines'],
-    ['assessStepContext', '3', 'Context'], ['assessStepReview', '4', 'Review &amp; run'],
-    ['assessStepResults', '5', 'Results']
+    ['assessStepPlatforms', '1', 'Platforms'], ['assessStepImport', '2', 'Import packs'], ['assessStepBaselines', '3', 'Baselines'],
+    ['assessStepContext', '4', 'Context'], ['assessStepReview', '5', 'Review &amp; run'],
+    ['assessStepResults', '6', 'Results']
   ]);
   assert.match(wizard[1], /<li id="assessStepPlatforms" class="active">/);
 });
 
-test('the assessment wizard opens on step 1 with the import card, and every wizard element exists once', async () => {
+test('the assessment wizard opens with platforms only and every wizard element exists once', async () => {
   const d = shell({ hash: '#/assess', respond: stateOnly(signedIn()) });
   await d.settle();
   assert.deepEqual(d.visibleViews(), ['viewAssess']);
-  const steps = ['assessStepPlatforms', 'assessStepBaselines', 'assessStepContext', 'assessStepReview',
+  const steps = ['assessStepPlatforms', 'assessStepImport', 'assessStepBaselines', 'assessStepContext', 'assessStepReview',
     'assessStepResults'];
   assert.deepEqual(steps.map((id) => [d.element(id).className, d.element(id).getAttribute('aria-current')]),
-    [['active', 'step'], ['', null], ['', null], ['', null], ['', null]]);
+    [['active', 'step'], ['', null], ['', null], ['', null], ['', null], ['', null]]);
   const panels = ['assessPanelPlatforms', 'assessPanelBaselines', 'assessPanelContext', 'assessPanelReview',
     'assessPanelResults', 'assessImportPanel'];
-  assert.deepEqual(panels.filter((id) => d.visible(id)), ['assessPanelPlatforms', 'assessImportPanel']);
+  assert.deepEqual(panels.filter((id) => d.visible(id)), ['assessPanelPlatforms']);
   assert.equal(d.focused(), null);
   d.run("updateAssessmentContext(); renderAssessmentReview(); setAssessmentStep('results', true)");
   assert.equal(d.focused(), 'resultsTitle');

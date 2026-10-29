@@ -56,6 +56,14 @@
       <p class="eyebrow">Microsoft Intune &middot; documentation and assessment</p>
       <h2 id="landingTitle" tabindex="-1">Document and assess your Microsoft Intune configuration</h2>
       <p class="lead">A local tool for Intune administrators. No app registration required.</p>
+      <div class="card source-choice">
+        <p class="eyebrow">Already have an export?</p>
+        <h3>Work with an existing policy set</h3>
+        <p>Import an Intune Docs Studio JSON folder, ZIP or legacy <code>_raw</code> export.
+          Document and assess it fully offline, without Microsoft sign-in.</p>
+        <button id="btnOpenPolicyImport" class="btn primary">Import existing policy export</button>
+        <a id="returnOfflineWorkspace" class="btn hidden" href="#/">Return to active offline workspace</a>
+      </div>
       <ul class="features">
         <li>
           <span class="feature-icon" aria-hidden="true">
@@ -155,6 +163,31 @@
     </div>
   </section>
 
+  <section id="viewImport" class="view hidden" aria-labelledby="policyImportTitle">
+    <header class="page-head">
+      <h2 id="policyImportTitle" tabindex="-1">Import a policy source</h2>
+      <p class="muted">This is the environment to document or assess, not a reference baseline.
+        No Microsoft connection is made. A successful import replaces the active source; a failed import keeps it unchanged.</p>
+    </header>
+    <div class="card stack">
+      <label>Policy ZIP file
+        <input type="file" id="policyImportZip" accept=".zip,application/zip">
+        <small>Intune Docs Studio policy set or legacy _raw export. Maximum 32 MiB ZIP; JSON limits: 500 files, 10 MiB each, 64 MiB total.</small>
+      </label>
+      <p class="muted">Or choose a folder on the computer running this application:</p>
+      <label>Policy folder or ZIP path
+        <input id="policyImportPath" type="text" spellcheck="false" placeholder="Absolute path on the application host">
+      </label>
+      <div class="row"><button id="btnBrowsePolicyImport" class="btn">Choose host folder</button></div>
+      <p id="policyImportStatus" role="status" aria-live="polite"></p>
+      <p id="policyImportError" class="error hidden" role="alert"></p>
+      <div class="actions">
+        <button id="btnCancelPolicyImport" class="btn ghost">Back</button>
+        <button id="btnImportPolicySource" class="btn primary">Validate and import source</button>
+      </div>
+    </div>
+  </section>
+
   <section id="viewPolicies" class="view hidden" aria-labelledby="policyLoadTitle">
     <header class="page-head">
       <p class="eyebrow">Connected &middot; preparing your workspace</p>
@@ -164,6 +197,15 @@
     <div class="card policy-load-card">
       <p>First we read your current policies, settings and assignments from Microsoft Graph.
         Then choose to document them or compare them with a security baseline.</p>
+      <div id="policyConsentActions" class="notice hidden">
+        <h3>Load policies now?</h3>
+        <p>You are signed in. Collection starts only when you choose Load policies.
+          Not now takes you Home without collecting anything. An existing offline source stays independent of this sign-in.</p>
+        <div class="row">
+          <button id="btnLoadPolicies" class="btn primary">Load policies</button>
+          <button id="btnPoliciesNotNow" class="btn ghost">Not now</button>
+        </div>
+      </div>
       <div class="progress" id="policyLoadProgress" role="progressbar" aria-label="Policy loading"
         aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
         <div class="bar" id="policyLoadBar"></div>
@@ -180,7 +222,7 @@
   <!-- Home (signed in, policies loaded) -->
   <section id="viewHome" class="view hidden" aria-labelledby="homeTitle">
     <header class="page-head">
-      <p class="eyebrow">Policies loaded &middot; choose your next step</p>
+      <p class="eyebrow">Your workspace &middot; choose your next step</p>
       <h2 id="homeTitle" tabindex="-1"><span id="homeGreeting">Welcome</span></h2>
       <p id="homeTenant" class="muted"></p>
     </header>
@@ -190,9 +232,22 @@
       <p id="policySummary" class="muted"></p>
       <div id="policyFamilies" class="policy-families"></div>
       <p id="policyLimitations" class="notice hidden" role="status"></p>
-      <p class="muted">Both workflows use these loaded policies. Refresh to include changes made in Intune.
-        Other documentation categories, such as apps and scripts, are read when you export.</p>
-      <button id="btnRefreshPolicies" class="btn">Refresh policies</button>
+      <p id="policySourceDescription" class="muted"></p>
+      <div class="row">
+        <button id="btnRefreshPolicies" class="btn">Load live policies</button>
+        <button id="btnReplacePolicySource" class="btn">Import another policy source</button>
+        <a id="offlineSignIn" class="btn hidden" href="#/signin">Sign in for live policies</a>
+      </div>
+      <details class="disclosure">
+        <summary>Export this policy set as re-importable JSON</summary>
+        <div class="disclosure-body">
+          <label>Destination folder on the application host<input type="text" id="policyExportPath" spellcheck="false"></label>
+          <p class="muted small">Creates a new policy-set subfolder; does not overwrite existing exports. Contains customer-owned policy data, never sign-in tokens or browser sessions.</p>
+          <div class="row"><button id="btnBrowsePolicyExport" class="btn">Choose host folder</button>
+            <button id="btnExportPolicySource" class="btn primary">Export policy set</button></div>
+          <p id="policyExportStatus" role="status"></p>
+        </div>
+      </details>
       <p id="policyRefreshError" class="error hidden" role="alert"></p>
     </section>
 
@@ -329,16 +384,17 @@
     <header class="page-head">
       <a class="back" href="#/">&larr; Home</a>
       <h2 id="assessTitle" tabindex="-1">Assess policies</h2>
-      <p class="muted">Standalone, read-only configuration alignment using the connected tenant.
-        Reports stay local and are never committed or pushed automatically. Documentation export settings are separate.</p>
+      <p class="muted">Standalone, read-only configuration alignment using the active policy source.
+        Reports stay local and are never committed or pushed automatically. Live and offline sources use the same policy evidence.</p>
     </header>
 
     <ol class="stepper wide" aria-label="Assessment steps">
       <li id="assessStepPlatforms" class="active"><span class="step-num" aria-hidden="true">1</span>Platforms</li>
-      <li id="assessStepBaselines"><span class="step-num" aria-hidden="true">2</span>Baselines</li>
-      <li id="assessStepContext"><span class="step-num" aria-hidden="true">3</span>Context</li>
-      <li id="assessStepReview"><span class="step-num" aria-hidden="true">4</span>Review &amp; run</li>
-      <li id="assessStepResults"><span class="step-num" aria-hidden="true">5</span>Results</li>
+      <li id="assessStepImport"><span class="step-num" aria-hidden="true">2</span>Import packs</li>
+      <li id="assessStepBaselines"><span class="step-num" aria-hidden="true">3</span>Baselines</li>
+      <li id="assessStepContext"><span class="step-num" aria-hidden="true">4</span>Context</li>
+      <li id="assessStepReview"><span class="step-num" aria-hidden="true">5</span>Review &amp; run</li>
+      <li id="assessStepResults"><span class="step-num" aria-hidden="true">6</span>Results</li>
     </ol>
 
     <p id="assessmentError" class="error hidden" role="alert"></p>
@@ -382,10 +438,15 @@
         <p class="muted">Not discovered device inventory. Leave unknown values blank; controls requiring unknown context
           remain not assessed. The catalog does not include per-control applicability bounds.</p>
         <div class="grid2">
-          <label id="assessmentContextWindows11">Windows 11 OS version <input type="text" id="assessmentOsWindows11" placeholder="Unknown (for example 10.0.22000)"></label>
-          <label id="assessmentContextMacos">macOS version <input type="text" id="assessmentOsMacos" placeholder="Unknown (for example 14.0)"></label>
-          <label id="assessmentContextIosIpados">iOS/iPadOS version <input type="text" id="assessmentOsIosIpados" placeholder="Unknown"></label>
-          <label id="assessmentContextAndroidEnterprise">Android Enterprise OS version <input type="text" id="assessmentOsAndroidEnterprise" placeholder="Unknown"></label>
+          <label id="assessmentContextWindows11">Windows 11 OS build <input type="text" id="assessmentOsWindows11" placeholder="Unknown (for example 10.0.26100)">
+            <small>Enter the actual numeric build from Settings &gt; System &gt; About or winver, not “24H2”.
+              This establishes applicability of Windows 10-and-later policies to your Windows 11 comparison. Leave blank if unknown: affected controls remain not assessed.</small></label>
+          <label id="assessmentContextMacos">macOS version <input type="text" id="assessmentOsMacos" placeholder="Unknown (for example 14.0)">
+            <small>Find it in Apple menu &gt; About This Mac. Use a numeric version to evaluate OS-specific scope; blank keeps that scope unknown.</small></label>
+          <label id="assessmentContextIosIpados">iOS/iPadOS version <input type="text" id="assessmentOsIosIpados" placeholder="Unknown (for example 18.0)">
+            <small>Settings &gt; General &gt; About &gt; iOS Version. Enter the version of the devices you intend to compare, not the policy revision.</small></label>
+          <label id="assessmentContextAndroidEnterprise">Android Enterprise OS version <input type="text" id="assessmentOsAndroidEnterprise" placeholder="Unknown (for example 15.0)">
+            <small>Device Settings &gt; About phone &gt; Android version. This is your comparison scope, not discovered inventory.</small></label>
         </div>
         <div class="grid2">
           <label id="assessmentContextEnrollment">Android Enterprise enrollment mode (user-selected)
@@ -396,6 +457,7 @@
               <option value="dedicated">Dedicated</option>
               <option value="corporateOwnedWorkProfile">Corporate-owned work profile</option>
             </select>
+            <small>Use the enrollment type from Intune &gt; Devices &gt; Enrollment or the device record. It determines personal/work-profile versus corporate applicability. Unknown can leave controls not assessed.</small>
           </label>
           <label id="assessmentContextIosOwnership">iOS/iPadOS ownership scope (user-selected comparison context)
             <select id="assessmentIosOwnership">
@@ -403,7 +465,8 @@
               <option value="personallyOwned">Personally owned</option>
               <option value="corporateOwned">Corporate owned (excluded by personal-only guidance)</option>
             </select>
-            <small>This is explicit comparison context, not discovered ownership or effective assignment.</small>
+            <small>Use the Ownership field in the Intune device record for the devices you intend to compare.
+              Unknown remains unknown; personal-only controls cannot establish corporate applicability.</small>
           </label>
         </div>
         <p id="assessmentContextWarning" class="notice hidden"></p>
@@ -415,11 +478,13 @@
 
       <section class="card hidden" id="assessPanelReview" aria-labelledby="runAssessmentTitle">
         <h3 id="runAssessmentTitle" class="card-title" tabindex="-1">Review and run</h3>
-        <p id="assessmentReview" class="assessment-text"></p>
+        <div id="assessmentReview" class="assessment-review"></div>
         <label>Assessment report destination
           <input type="text" id="assessmentOutputPath" spellcheck="false" placeholder="Absolute local folder, separate from application and export">
           <small>A new run subdirectory contains assessment.md and assessment.json. Installation/export overlap is rejected by the server.</small>
         </label>
+        <button id="btnBrowseAssessmentReports" class="btn">Choose report folder</button>
+        <p id="assessmentFolderStatus" class="muted small" role="status"></p>
         <div class="actions">
           <button class="btn ghost" id="btnAssessReviewBack">Back</button>
           <button class="btn primary" id="btnAssessmentRun" disabled>Assess selected policies</button>
@@ -467,18 +532,36 @@
         </div>
       </section>
 
-      <section class="card" id="assessImportPanel" aria-labelledby="assessImportTitle">
-        <h3 id="assessImportTitle" class="card-title">Import rule packs</h3>
+      <section class="card hidden" id="assessImportPanel" aria-labelledby="assessImportTitle">
+        <h3 id="assessImportTitle" class="card-title" tabindex="-1">Import packs or use your library</h3>
+        <p>Queue files or host folders, then choose Import. These are comparison references, not the active target source.
+          Imports are never selected automatically. You may continue using existing library packs.</p>
+        <label>Queued input type
+          <select id="assessmentImportKind">
+            <option value="packs">Schema-1 rule packs / licensed CIS build-kit ZIP</option>
+            <option value="reference">Custom reference policy set (JSON folder or ZIP)</option>
+          </select>
+          <small>Other frameworks use schema-1 packs. Custom policy references use their configured values, never a CIS label or certification claim.</small>
+        </label>
         <label>Import a rule pack (JSON) or a CIS Intune build-kit archive (ZIP)
-          <input type="file" id="assessmentImportFile" accept=".json,.zip,application/json,application/zip,application/x-zip-compressed">
+          <input type="file" id="assessmentImportFile" multiple accept=".json,.zip,application/json,application/zip,application/x-zip-compressed">
           <small>Customer-owned/licensed CIS content is not bundled or downloaded. JSON: at most 10 MiB UTF-8,
             32 nesting levels, 20,000 controls, 32,768 characters per string; the server validates the original text.
             ZIP: at most 32 MiB, read in memory and never extracted; its Settings Catalog policies and schema-1 packs
             become local rule packs. PDF and Excel benchmarks are not supported.</small>
         </label>
-        <button class="btn" id="btnAssessmentImport">Import pack</button>
-        <p id="assessmentImportSummary" class="assessment-text" role="status"></p>
+        <div class="row"><button class="btn" id="btnQueueAssessmentFiles">Add files to queue</button>
+          <button class="btn" id="btnQueueAssessmentFolder">Add host folder</button></div>
+        <label>Host folder path <input id="assessmentImportHostPath" type="text" spellcheck="false">
+          <small>Use Add host folder to choose a folder on this Windows host.</small></label>
+        <button id="btnQueueAssessmentPath" class="btn small">Queue entered host folder</button>
+        <p id="assessmentQueueStatus" role="status"></p>
+        <div id="assessmentImportQueue" class="import-queue"></div>
+        <button class="btn primary" id="btnAssessmentImport">Import queued packs</button>
+        <div id="assessmentImportSummary" class="import-summary" role="status" aria-live="polite"></div>
         <p id="assessmentCatalogErrors" class="muted assessment-text" role="status"></p>
+        <div class="actions"><button id="btnAssessImportBack" class="btn ghost">Back</button>
+          <button id="btnAssessImportNext" class="btn primary">Continue to baselines</button></div>
       </section>
     </div>
   </section>

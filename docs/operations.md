@@ -60,13 +60,16 @@ chosen output folder. It is not a hosted service.
 > device compliance/encryption. **Missing** is scoped to the rule's completely
 > read mapped families/policy types, not tenant-wide absence.
 
-Sign in and verify tenant identity on Home, then open **Assess policies**. The
-wizard runs through **Platforms**, **Baselines**, **Context**, **Review & run**
+Load live policies after explicit consent, or import an offline policy set and
+verify its environment/source on Home, then open **Assess policies**. The
+wizard runs through **Platforms**, **Import packs**, **Baselines**, **Context**, **Review & run**
 and **Results**. Select platforms, then exact pack versions/profiles; inspect
 source revisions, SHA-256, baseline versus recommendations classification, and
-partial inventory. The **Import rule packs** card on **Platforms** and
-**Baselines** accepts reviewed customer-licensed schema-1 JSON or the licensed
-CIS Intune build-kit ZIP downloaded from CIS; click **Import pack**. Validation
+partial inventory. The separate **Import packs** step accepts a multi-item queue
+of reviewed customer-licensed schema-1 JSON/folders or the licensed
+CIS Intune build-kit ZIP downloaded from CIS; click **Import**. Queue trash only
+removes the pending item. The summary distinguishes added/already present/skipped/
+failed entries; independent failures retain successes. Validation
 and conversion do not attest to source correctness or rights. Packs converted
 from a build-kit ZIP are labeled CIS without verifying the source. The
 build-kit layout is unverified and the converter is defensive, so read the import
@@ -96,7 +99,9 @@ not assessed. Known unrelated policy types retain global diagnostics without
 blocking mappings that explicitly exclude their type; unknown types and relevant
 or unlocalizable failures still block.
 
-Policy loading starts automatically after sign-in. Home exposes the snapshot time,
+Policy loading starts only after **Load policies**, never because state is polled
+or reloaded. **Not now** opens Home signed in without collecting; workflows remain
+disabled until load/import. Home exposes the snapshot time,
 family counts and limitations. Documentation and assessment reuse that same
 tenant-owned in-memory snapshot; reference lookups and other documentation areas
 remain export-time reads. Refresh policies on Home to pick up tenant changes;
@@ -104,8 +109,43 @@ refresh invalidates active assessment results. Retry failed loading after checki
 access, or sign out and sign in again. Partial family reads never justify pruning:
 documentation skips those families and preserves previous pages/raw files and
 manifest entries. Assessment retains incomplete sources rather than claiming absence.
-Sign-out, tenant reset and shutdown discard the snapshot, which is not backed up.
+Sign-out/tenant reset discard live data. Imported sources stay independent of
+login and are never silently replaced; shutdown discards all in-memory sources.
 The command-line export remains a direct collection path.
+
+### Portable offline policy sources
+
+Landing import accepts version-1 Intune Docs Studio JSON folders, the same folder
+as ZIP, and older `_raw` policy JSON exports; Markdown-only or other-tool formats
+fail explicitly. Validation completes before replacing an active source. Failed
+imports retain it; confirmed successful replacement clears dependent in-memory
+results but not report files. Home exports to a fresh `policy-set-<time>-<id>`
+subfolder with `policyset.json`, five family JSON files and `references.json`.
+SHA-256 hashes, settings/definitions/templates, assignment/reference metadata,
+capture time and completeness support a readable round-trip.
+
+Offline documentation and Assessment make no Graph/auth requests, including
+lazy group-name lookups. Only the five policy families can be documented;
+unavailable names/settings stay unknown. Legacy inventories are incomplete and
+undated. Existing incomplete-family pages/raw files are preserved; new offline
+pages show limitations. Never interpret incomplete evidence as removal or a pass.
+Use the separate reference kind in the pack queue to generate supported typed
+Custom reference checks, not to replace the target source.
+
+ZIP/folder validation rejects unsafe/duplicate paths, reparse points/links,
+unsupported schemas and hash mismatches. Limits: 32 MiB ZIP, 1,000 entries,
+500 JSON files, 10 MiB per file, 64 MiB JSON total, 64 JSON levels and 16 folder
+levels. Policy-set exports exclude Auth/tokens/cookies/browser profiles and
+redact recognized policy secrets; still protect and back up the remaining files
+as customer-owned configuration, separately from application files.
+
+**Choose folder** opens a single native Windows dialog on the app host in a
+separate STA runspace; the localhost listener remains responsive. Same-origin
+JSON requests protect import/export/picker mutations. Cancel keeps the old
+editable path; a dialog error gives manual-path guidance. It is not a browser
+directory upload. Report destinations retain server-side root validation.
+Confirmed imported-library removal uses identity/hash validation and a lock,
+protects bundled packs, and never removes saved reports.
 
 Only one policy load, export or assessment can run. Sign-out and Stop server can
 cancel policy loading. For exports and assessments, wait for work to finish before resetting,

@@ -43,12 +43,39 @@ That window closes by itself once the tool has what it needs — usually within 
 **Choose the right account.** If you are asked which account to use, pick the administrator
 for the tenant you want to document — not your everyday account, if those differ.
 
-After sign-in, policies load automatically with progress. When loading finishes,
+After sign-in, choose **Load policies** or **Not now**. Nothing is collected when
+you decline, including after reload/polling; Home still opens signed in and offers
+an explicit load action. Documentation and Assessment require loaded/imported data.
+When loading finishes,
 Home shows the signed-in account, tenant, policy counts and collection time, and
 two paths: **Document policies** and **Assess policies**. Both use the same
 tenant-scoped in-memory policy snapshot. Use **Refresh policies** on Home to
 collect changes; this also clears active assessment results. Sign-out or shutdown
-discards the snapshot. Other selected documentation areas are collected on export.
+discards the live snapshot. Other selected documentation areas are collected on export.
+
+**Already have an export?** Choose **Import an existing policy export** on the
+landing page instead of signing in. Select a host JSON folder/ZIP or upload its
+ZIP. Supported inputs are a versioned Intune Docs Studio policy set and older
+exports containing `_raw` policy JSON; Markdown alone is insufficient. Import is
+transactional: a failed replacement keeps the current source. Offline Home shows
+the source, environment, dates, family counts and limitations, independently of
+any later sign-in. Both documentation and Assessment work without network/auth.
+To reconnect, use **Sign in for live policies** on offline Home. You can return
+to the active offline workspace without signing in; successful sign-in still
+requires explicit collection consent and confirmation before replacing its data.
+
+Use **Export policy set** on Home to write a new JSON subfolder for re-import or
+manual zipping. This preserves available policy evidence, names and completeness,
+not credentials or recognized secrets. Legacy inventories/settings may be incomplete
+and their capture date unknown. Do not treat unknown data as absent configuration.
+Only the five policy families are available for offline documentation; apps,
+scripts and other live-only categories are disabled. Existing incomplete-family
+output is preserved.
+
+**Choose folder** opens a native Windows dialog on the computer running the app.
+It is reused for import/export folders and Assessment report destinations; it
+does not upload a browser-side directory. Cancel retains the old path. Enter the
+absolute host path manually if a dialog cannot open.
 
 If loading fails, use **Retry loading** or check permissions and sign in again.
 Partial loads show warnings: assessment keeps incomplete evidence explicit, and
@@ -94,16 +121,19 @@ stopped at that point, so either answer is fine.
 > configured in the completely read **mapped families/policy types only**, not
 > tenant-wide absence.
 
-The assessment is a five-step wizard: **Platforms**, **Baselines**, **Context**,
+The assessment is a six-step wizard: **Platforms**, **Import packs**, **Baselines**, **Context**,
 **Review & run** and **Results**. **Next** checks each step; errors appear below
 the stepper.
 
 1. Sign in, confirm the tenant on Home, and open **Assess policies**. On
    **Platforms**, select at least one platform.
-2. To import packs, use the **Import rule packs** card on **Platforms** or
-   **Baselines**. Choose the licensed CIS Intune build-kit ZIP you downloaded from
+2. Press **Next** for **Import packs**. Add multiple files or host folders to the
+   queue. Trash removes a queued item without deleting its file. **Import** shows
+   each item's real status and an Added/Already present/Skipped/Failed summary
+   with reasons; failures do not undo other successes. Continue without importing
+   if suitable packs already exist. Choose the licensed CIS Intune build-kit ZIP you downloaded from
    CIS (at most 32 MiB) or one customer-licensed, reviewed schema-1 JSON rule pack
-   (at most 10 MiB), and click **Import pack**. The build-kit ZIP is read in memory.
+   (at most 10 MiB). The build-kit ZIP is read in memory.
    Its Settings Catalog policies become rule packs labeled CIS without verifying
    the source, so import only your licensed download. The build-kit layout is
    unverified; review the defensive converter's summary of packs, skipped entries
@@ -114,9 +144,16 @@ the stepper.
    supported; see [the import reference](docs/assessment-rule-packs.md) for
    schema, supported operators, build-kit ZIP conversion, and pack limits
    (10 MiB UTF-8, 32 levels, 20,000 controls, 32,768 characters per string).
+   **Policy set as custom reference** instead converts supported complete settings
+   from a reference policy set into expected values. This is separate from target
+   import, never CIS/certified, and explicitly skips unsupported/conflicting/secret
+   evidence and undated legacy references.
 3. On **Baselines**, select 1–64 exact pack versions/profiles, with an applicable
    pack for every selected platform. Read their source revision, hash,
-   classification, and coverage before running.
+   classification, and coverage before running. Profiles identify their baseline
+   set and imported origin. Technical details expand on demand. Imported-library
+   trash requires confirmation and leaves saved reports intact; bundled packs
+   cannot be deleted.
 4. On **Context**, enter known OS versions and Android enrollment mode for the
    selected platforms. Windows expects a build version such as `10.0.22000`.
    Unknown applicability remains **not assessed**. Select iOS/iPadOS
@@ -128,7 +165,8 @@ the stepper.
    Windows 11 build shows a non-blocking warning: Windows policies targeting
    Windows 10 and later, such as those that CIS build-kit packs check, then stay
    not assessed.
-5. On **Review & run**, check the summary. Choose an absolute
+5. On **Review & run**, check each platform's exact packs/profiles/versions, target
+   policy source and context together. Use **Choose folder** or enter an absolute
    **assessment report destination** outside both the app and documentation
    output trees, then click **Assess selected policies**. Wait for completion
    before another export/assessment, sign-out, reset, or shutdown.

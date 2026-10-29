@@ -47,9 +47,10 @@ needed for commit/push functionality.
 3. **Sign in** — the landing page opens first. Choose **Sign in via the Intune portal**,
    or open **Advanced sign-in options** for the other methods. Sign in as an administrator
    with access to the Intune areas you want to document.
-4. **Wait for policies to load** — progress appears automatically after sign-in.
-   Home then confirms the account and tenant and offers **Document policies** and
-   **Assess policies**, both using the same loaded policy snapshot.
+4. **Choose a policy source** — after sign-in, choose **Load policies** or
+   **Not now**. Declining opens Home without collecting; both workflows stay
+   disabled until you load or import policies. Alternatively, use **Import an
+   existing policy export** on the landing page without signing in.
 5. **Document policies** — choose your output folder and which areas to document, click
    **Generate documentation**, watch the live progress, inspect the Markdown, and optionally
    commit and push under **Git publishing**.
@@ -80,7 +81,7 @@ identity checks, and output backup/restore, see [the operator guide](docs/operat
 
 ## Assess configured policies
 
-After sign-in and policy loading, the **Assess policies** path compares read-only policy evidence with
+After policy loading or import, the **Assess policies** path compares read-only policy evidence with
 versioned Microsoft rules and locally imported customer packs. It does not change
 Intune, determine effective targeting, certify a benchmark, or measure device compliance.
 
@@ -89,9 +90,40 @@ administrative templates, and endpoint-security intents into a tenant-scoped,
 in-memory snapshot. Home shows its collection time and family counts. Both
 workflows reuse that snapshot without collecting those policies again; other
 selected documentation areas and reference lookups are collected during export.
-Use **Refresh policies** on Home after tenant changes. Refresh clears active
-assessment results; sign-out, tenant switches, and shutdown discard the snapshot.
-It is not a disk cache or backup. The command-line export still collects directly.
+Use **Refresh policies** on Home after tenant changes. Refresh and source replacement
+clear active assessment results, not saved reports. Live snapshots clear on sign-out
+or tenant switches. Imported offline sources remain independent of sign-in and are
+never silently replaced by live data. All active snapshots clear on shutdown.
+The command-line export still collects directly.
+
+### Offline policy sets
+
+The landing page accepts an Intune Docs Studio JSON folder, that same folder
+zipped, or an older export containing usable `_raw` policy JSON. Markdown-only
+exports and other tools' formats are not supported. Home displays the active
+environment, source, timestamps, family counts and completeness. Failed imports
+leave the current source unchanged; replacing a loaded source requires confirmation.
+
+**Export policy set** writes a new uniquely named JSON subfolder, never overwriting
+an existing export. Its version-1 `policyset.json` manifest lists SHA-256 hashes for
+five `families/*.json` files and `references.json`. Available settings, definitions,
+templates, assignments, names, original collection time and completeness survive
+re-import. Authentication objects, tokens, cookies, browser profiles and recognized
+secret values are excluded/redacted. Treat the remaining configuration as sensitive
+customer data; this is not a credential backup.
+
+Both workflows operate offline with **no Graph/authentication requests**. Offline
+documentation supports only the five policy families; apps, scripts and other live
+sections are disabled. Missing settings/names stay explicitly unknown. Incomplete
+families preserve existing pages/raw files and never justify pruning; newly
+documented offline policies show their limitations. Legacy `_raw` inventories are
+always incomplete and their collection date remains unknown.
+
+Inputs are bounded to 32 MiB ZIP, 1,000 entries, 500 JSON files, 10 MiB per JSON,
+64 MiB total JSON and 64 JSON levels (folder nesting: 16). Unsafe paths, links,
+duplicates and invalid manifests/hashes are rejected. **Choose folder** opens a
+Windows dialog on the **application host**, not an upload browser; cancellation
+keeps the previous path. Editable host paths remain available if the dialog fails.
 
 If loading fails, use **Retry loading** or sign out and check access. A partial
 load shows explicit collection limitations and still permits both workflows:
@@ -111,14 +143,18 @@ pruning for that run. It does not interpret denied or truncated reads as deletio
 > **Missing** means absent/not configured only in the rule's completely read mapped
 > families/policy types, **not absent throughout the tenant**.
 
-The assessment is a five-step wizard: **Platforms**, **Baselines**, **Context**,
+The assessment is a six-step wizard: **Platforms**, **Import packs**, **Baselines**, **Context**,
 **Review & run** and **Results**. **Next** checks each step, and errors appear
 below the stepper.
 
 1. Sign in, confirm the tenant on Home, and open **Assess policies**. On
    **Platforms**, select at least one target platform.
-2. Optionally import packs in the **Import rule packs** card on **Platforms** or
-   **Baselines**. Select the licensed CIS Intune build-kit ZIP you downloaded from
+2. Press **Next** to open **Import packs**. Queue multiple files or host folders,
+   removing unwanted queue rows with the trash button, then click **Import**.
+   Each item shows real loading/completion/error status; independent failures
+   preserve earlier successes. Read the Added/Already present/Skipped/Failed
+   summary and expandable reasons, or continue with existing library packs.
+   Select the licensed CIS Intune build-kit ZIP you downloaded from
    CIS (at most 32 MiB) or one licensed, reviewed **schema-1 JSON** rule pack (at
    most 10 MiB), then click **Import pack**. The build-kit ZIP is read in memory,
    and its Settings Catalog policies become local rule packs. The card lists
@@ -130,10 +166,17 @@ below the stepper.
    summary. PDFs, Excel, XCCDF/OVAL, Group Policy and OMA-URI content are not
    supported; CIS content is neither bundled nor downloaded. See the
    [import reference](docs/assessment-rule-packs.md) for all fields, supported
-   operators, named limits, and build-kit ZIP conversion rules.
+   operators, named limits, and build-kit ZIP conversion rules. Select **Policy
+   set as custom reference** to convert a *separate reference* export into
+   supported typed expected values; importing a target alone does not create a
+   baseline. Unsupported, incomplete, secret or conflicting settings are skipped.
+   Custom references are never labeled CIS or certified.
 3. On **Baselines**, select 1–64 exact rule-pack versions/profiles, with an
    applicable pack for every selected platform. Read their classification,
-   partial coverage, source revisions, and SHA-256 identities.
+   partial coverage, source revisions, and SHA-256 identities. Profile labels
+   include the baseline set and imported/bundled origin. Technical details are
+   expandable. Imported library packs can be removed after confirmation; bundled
+   packs and saved reports are protected.
 4. On **Context**, enter known OS versions (Windows uses a build version such as
    `10.0.22000`) and Android enrollment mode; only fields for the selected
    platforms appear. Explicitly select iOS/iPadOS **Personally owned** only for
