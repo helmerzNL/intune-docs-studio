@@ -472,3 +472,375 @@ Describe 'Build-kit Settings Catalog conversion' {
         ) -join "`n")
     }
 }
+
+Describe 'CIS build-kit archive reader' {
+    BeforeAll {
+        function New-TestPolicyJson([string]$Name = 'Synthetic L1 policy', [string]$Id = 'syn.archive', $Value = 1) {
+            $policy = New-IdsTestBuildKitPolicy -Name $Name -Instances @(New-IdsTestSettingInstance -Id $Id -Value @{ value = $Value })
+            return ConvertTo-Json -InputObject $policy -Depth 64 -Compress
+        }
+        function Get-TestSkipLines($Result) { @($Result.skipped | ForEach-Object { "$($_.entry) => $($_.reason)" }) }
+        $unreadable = 'Could not be read (encrypted, corrupt or unsupported compression).'
+    }
+
+    It 'rejects <label> bytes as an invalid ZIP archive' -ForEach @(
+        @{ label = 'text'; bytes = [Text.Encoding]::UTF8.GetBytes('not a zip archive') }
+        @{ label = 'empty'; bytes = [byte[]]::new(0) }
+    ) {
+        { ConvertFrom-IdsBaselineArchive -Bytes $bytes } |
+            Should -Throw -ExceptionType ([ArgumentException]) -ExpectedMessage 'The file is not a valid ZIP archive.'
+    }
+
+    It 'rejects archives over the <limit> limit' -ForEach @(
+        @{ limit = 'entry'; count = 1001; extension = 'txt'; message = 'Archive entry limit exceeded (1,000 entries).' }
+        @{ limit = 'JSON entry'; count = 501; extension = 'json'; message = 'Archive JSON entry limit exceeded (500 entries).' }
+    ) {
+        $entries = [ordered]@{}
+        for ($index = 0; $index -lt $count; $index++) { $entries["kit/entry$index.$extension"] = '{}' }
+        $zip = New-IdsTestZipBytes $entries
+        { ConvertFrom-IdsBaselineArchive -Bytes $zip } |
+            Should -Throw -ExceptionType ([ArgumentException]) -ExpectedMessage $message
+    }
+
+    It 'accepts archives at the entry limits' {
+        $entries = [ordered]@{}
+        for ($index = 0; $index -lt 500; $index++) {
+            $entries["kit/entry$index.json"] = '{}'
+            $entries["kit/entry$index.txt"] = 'synthetic'
+        }
+        $result = ConvertFrom-IdsBaselineArchive -Bytes (New-IdsTestZipBytes $entries)
+        $result.packs.Count | Should -Be 0
+        $result.skipped.Count | Should -Be 500
+        $result.skipped[0].reason | Should -BeExactly 'Not a Settings Catalog policy or rule pack.'
+        $result.ignored | Should -Be 500
+    }
+
+    It 'accepts an empty archive with typed empty result arrays' {
+        $result = ConvertFrom-IdsBaselineArchive -Bytes (New-IdsTestZipBytes ([ordered]@{}))
+        ($result.packs -is [byte[][]]) | Should -BeTrue
+        $result.packs.Count | Should -Be 0
+        ($result.skipped -is [object[]]) | Should -BeTrue
+        $result.skipped.Count | Should -Be 0
+        $result.ignored | Should -Be 0
+        $result.sha256 | Should -Match '\A[0-9a-f]{64}\z'
+    }
+
+    It 'rejects a damaged central directory as an invalid ZIP' {
+        $zip = New-IdsTestZipBytes ([ordered]@{ 'kit/policy.json' = (New-TestPolicyJson) })
+        $central = [BitConverter]::ToInt32($zip, $zip.Length - 6)
+        $zip[$central] = 0
+        { ConvertFrom-IdsBaselineArchive -Bytes $zip } |
+            Should -Throw -ExceptionType ([ArgumentException]) -ExpectedMessage 'The file is not a valid ZIP archive.'
+    }
+
+    It 'rejects the whole archive for the unsafe entry name <name>' -ForEach @(
+        @{ name = '../escape.json' }
+        @{ name = 'kit/../escape.json' }
+        @{ name = 'kit\..\escape.json' }
+        @{ name = 'kit/..' }
+        @{ name = '/rooted.json' }
+        @{ name = '\rooted.json' }
+        @{ name = 'C:drive.json' }
+        @{ name = 'kit/policy.json:stream' }
+    ) {
+        $zip = New-IdsTestZipBytes ([ordered]@{ 'kit/safe.json' = (New-TestPolicyJson); $name = '{}' })
+        { ConvertFrom-IdsBaselineArchive -Bytes $zip } |
+            Should -Throw -ExceptionType ([ArgumentException]) -ExpectedMessage "Archive entry names must be relative without ':' or '..' segments."
+    }
+
+    It 'ignores directories, counts other files and skips nested archives' {
+        $zip = New-IdsTestZipBytes ([ordered]@{
+            'kit/' = $null
+            'kit/L1/' = $null
+            'kit\empty\' = $null
+            'kit/readme.pdf' = 'synthetic'
+            'kit/settings.xlsx' = 'synthetic'
+            'kit/policy.xml' = '<policy />'
+            'kit/inner.ZIP' = (New-IdsTestZipBytes ([ordered]@{ 'inner.json' = (New-TestPolicyJson) }))
+            'kit/L1/policy.JSON' = (New-TestPolicyJson)
+        })
+        $result = ConvertFrom-IdsBaselineArchive -Bytes $zip
+        $result.ignored | Should -Be 3
+        (Get-TestSkipLines $result) | Should -BeExactly 'kit/inner.ZIP => Nested ZIP archives are not opened; extract and upload the inner ZIP.'
+        $result.packs.Count | Should -Be 1
+        (Read-IdsBaselinePack -Bytes $result.packs[0]).controls[0].reference |
+            Should -BeExactly "CIS build kit policy 'Synthetic L1 policy' (archive entry 'kit/L1/policy.JSON')"
+    }
+
+    It 'skips an entry that is <label>' -ForEach @(
+        @{ label = 'encrypted'; change = 'Encrypted'; declared = 0; level = 'Optimal' }
+        @{ label = 'stored with an unsupported compression method'; change = 'UnsupportedCompression'; declared = 0; level = 'Optimal' }
+        @{ label = 'corrupt'; change = 'CorruptData'; declared = 0; level = 'Optimal' }
+        @{ label = 'shorter than its declared size'; change = 'DeclaredLength'; declared = 5000; level = 'Optimal' }
+        # Recent .NET versions bound deflate output to the declared size; stored entries expose excess data.
+        @{ label = 'longer than its declared size'; change = 'DeclaredLength'; declared = 1; level = 'NoCompression' }
+    ) {
+        $zip = New-IdsTestZipBytes ([ordered]@{
+            'kit/broken.json' = (New-TestPolicyJson -Id 'syn.broken')
+            'kit/good.json' = (New-TestPolicyJson -Id 'syn.good')
+        }) -CompressionLevel $level
+        $result = ConvertFrom-IdsBaselineArchive -Bytes (Edit-IdsTestZipFirstEntry $zip $change -Length $declared)
+        (Get-TestSkipLines $result) | Should -BeExactly "kit/broken.json => $unreadable"
+        $result.packs.Count | Should -Be 1
+        (@((Read-IdsBaselinePack -Bytes $result.packs[0]).controls.id) -join ',') | Should -BeExactly 'syn.good'
+    }
+
+    It 'skips JSON entries over 10 MiB by <label> size' -ForEach @(
+        @{ label = 'declared'; level = 'Optimal'; declared = 0 }
+        @{ label = 'actual'; level = 'NoCompression'; declared = 100 }
+    ) {
+        $zip = New-IdsTestZipBytes ([ordered]@{ 'kit/large.json' = [byte[]]::new(10MB + 1) }) -CompressionLevel $level
+        if ($declared) { $zip = Edit-IdsTestZipFirstEntry $zip DeclaredLength -Length $declared }
+        $result = ConvertFrom-IdsBaselineArchive -Bytes $zip
+        $result.packs.Count | Should -Be 0
+        (Get-TestSkipLines $result) | Should -BeExactly 'kit/large.json => JSON entry exceeds the 10 MiB limit.'
+    }
+
+    It 'converts a policy exactly at the 10 MiB entry limit' {
+        $json = New-TestPolicyJson
+        $padded = $json + (' ' * (10MB - [Text.Encoding]::UTF8.GetByteCount($json)))
+        $result = ConvertFrom-IdsBaselineArchive -Bytes (New-IdsTestZipBytes ([ordered]@{ 'kit/policy.json' = $padded }))
+        $result.skipped.Count | Should -Be 0
+        $result.packs.Count | Should -Be 1
+        (Read-IdsBaselinePack -Bytes $result.packs[0]).controls.id | Should -BeExactly 'syn.archive'
+    }
+
+    It 'bounds actual decompression to 10 MiB plus one byte and counts every returned byte' {
+        $zip = New-IdsTestZipBytes ([ordered]@{ 'kit/large.json' = [byte[]]::new(11MB) })
+        $stream = [IO.MemoryStream]::new($zip, $false)
+        try {
+            $archive = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Read)
+            try {
+                $budget = @{ read = 123L }
+                $content = Read-IdsBaselineArchiveEntry $archive.Entries[0] $budget
+                $content.Length | Should -Be 10485761
+                $budget.read | Should -Be 10485884
+            } finally { $archive.Dispose() }
+        } finally { $stream.Dispose() }
+    }
+
+    It 'stops with an InvalidDataException after more than 64 MiB of JSON' {
+        $entries = [ordered]@{}
+        # Invalid UTF-8 keeps these budget fixtures away from the JSON parser.
+        $filler = [byte[]]::new(10000000)
+        [Array]::Fill($filler, [byte]255)
+        for ($index = 0; $index -lt 7; $index++) { $entries["kit/filler$index.json"] = $filler }
+        $zip = New-IdsTestZipBytes $entries
+        { ConvertFrom-IdsBaselineArchive -Bytes $zip } |
+            Should -Throw -ExceptionType ([IO.InvalidDataException]) -ExpectedMessage 'Archive JSON read limit exceeded (64 MiB).'
+    }
+
+    It 'enforces the total budget at <label>' -ForEach @(
+        @{ label = 'exactly 64 MiB'; extra = 0 }
+        @{ label = '64 MiB plus one byte'; extra = 1 }
+    ) {
+        $entries = [ordered]@{}
+        $filler = [byte[]]::new(10MB)
+        [Array]::Fill($filler, [byte]255)
+        for ($index = 0; $index -lt 6; $index++) { $entries["kit/filler$index.json"] = $filler }
+        $last = [byte[]]::new(4MB + $extra)
+        [Array]::Fill($last, [byte]255)
+        $entries['kit/last.json'] = $last
+        $zip = New-IdsTestZipBytes $entries
+        if ($extra) {
+            { ConvertFrom-IdsBaselineArchive -Bytes $zip } |
+                Should -Throw -ExceptionType ([IO.InvalidDataException]) -ExpectedMessage 'Archive JSON read limit exceeded (64 MiB).'
+        } else {
+            $result = ConvertFrom-IdsBaselineArchive -Bytes $zip
+            $result.packs.Count | Should -Be 0
+            $result.skipped.Count | Should -Be 7
+            foreach ($item in $result.skipped) { $item.reason | Should -BeExactly 'Not valid UTF-8 or UTF-16 text.' }
+        }
+    }
+
+    It 'decodes <label> JSON entries' -ForEach @(
+        @{ label = 'UTF-8 without BOM'; encoding = [Text.UTF8Encoding]::new($false); bom = $false }
+        @{ label = 'UTF-8 with BOM'; encoding = [Text.UTF8Encoding]::new($true); bom = $true }
+        @{ label = 'UTF-16 LE with BOM'; encoding = [Text.UnicodeEncoding]::new($false, $true); bom = $true }
+        @{ label = 'UTF-16 BE with BOM'; encoding = [Text.UnicodeEncoding]::new($true, $true); bom = $true }
+    ) {
+        $value = "Caf$([char]0xE9) $([char]0x2713) $([char]::ConvertFromUtf32(0x1F600))"
+        [byte[]]$bytes = $encoding.GetBytes((New-TestPolicyJson -Id 'syn.text' -Value $value))
+        if ($bom) { [byte[]]$bytes = $encoding.GetPreamble() + $bytes }
+        $result = ConvertFrom-IdsBaselineArchive -Bytes (New-IdsTestZipBytes ([ordered]@{ 'kit/text.json' = $bytes }))
+        $result.skipped.Count | Should -Be 0
+        $result.packs.Count | Should -Be 1
+        (Read-IdsBaselinePack -Bytes $result.packs[0]).controls[0].mappings[0].expected | Should -BeExactly $value
+    }
+
+    It 'skips entries that are not valid text, JSON, rule packs or Settings Catalog policies' {
+        $zip = New-IdsTestZipBytes ([ordered]@{
+            'kit/latin1.json' = [byte[]](0x7B, 0x22, 0xE9, 0x22, 0x7D)
+            'kit/odd.json' = [byte[]](0xFF, 0xFE, 0x7B)
+            'kit/invalid.json' = '{"name":'
+            'kit/deep.json' = ('[' * 65) + (']' * 65)
+            'kit/duplicate.json' = '{"name":"Synthetic L1 a","Name":"Synthetic L1 b","settings":[]}'
+            'kit/long.json' = '{"name":"' + ('x' * 40000) + '","settings":[]}'
+            'kit/readme.json' = '{"title":"Synthetic readme"}'
+            'kit/empty.json' = '[]'
+            'kit/mixed.json' = '[{"settings":[]},{"title":"Synthetic"}]'
+            'kit/list.json' = '{"value":[]}'
+            'kit/pack.json' = '{"schemaVersion":1}'
+        })
+        $result = ConvertFrom-IdsBaselineArchive -Bytes $zip
+        $result.packs.Count | Should -Be 0
+        $result.ignored | Should -Be 0
+        $lines = Get-TestSkipLines $result
+        $expected = @(
+            'kit/latin1.json => Not valid UTF-8 or UTF-16 text.'
+            'kit/odd.json => Not valid UTF-8 or UTF-16 text.'
+            'kit/invalid.json => Invalid JSON or nesting deeper than 64 levels.'
+            'kit/deep.json => Invalid JSON or nesting deeper than 64 levels.'
+            'kit/duplicate.json => Invalid JSON: Pack JSON duplicate member at $.'
+            'kit/long.json => Invalid JSON: Pack string limit (32768 characters) at $.name.'
+            'kit/readme.json => Not a Settings Catalog policy or rule pack.'
+            'kit/empty.json => Not a Settings Catalog policy or rule pack.'
+            'kit/mixed.json => Not a Settings Catalog policy or rule pack.'
+            'kit/list.json => Not a Settings Catalog policy or rule pack.'
+            'kit/pack.json => Invalid rule pack: *'
+        )
+        $lines.Count | Should -Be $expected.Count
+        for ($index = 0; $index -lt $expected.Count; $index++) { $lines[$index] | Should -BeLike $expected[$index] }
+    }
+
+    It 'skips empty JSON and invalid policy-list shapes without failing the archive' {
+        $entries = [ordered]@{
+            'kit/zero.json' = $null
+            'kit/null.json' = 'null'
+            'kit/false.json' = 'false'
+            'kit/number.json' = '42'
+            'kit/string.json' = '"synthetic"'
+            'kit/wrapped-object.json' = '{"value":{"settings":[]}}'
+            'kit/wrapped-mixed.json' = '{"value":[{"settings":[]},null]}'
+            'kit/nested.json' = '[[{"settings":[]}]]'
+            'kit/schema-first.json' = '{"schemaVersion":2,"settings":[]}'
+            'kit/good.json' = (New-TestPolicyJson)
+        }
+        $result = ConvertFrom-IdsBaselineArchive -Bytes (New-IdsTestZipBytes $entries)
+        $result.packs.Count | Should -Be 1
+        $result.skipped.Count | Should -Be 9
+        $result.skipped[0].reason | Should -BeExactly 'Invalid JSON or nesting deeper than 64 levels.'
+        foreach ($index in 1..7) {
+            $result.skipped[$index].reason | Should -BeExactly 'Not a Settings Catalog policy or rule pack.'
+        }
+        $result.skipped[8].reason | Should -BeLike 'Invalid rule pack: *'
+    }
+
+    It 'rejects malformed BOM-prefixed Unicode without replacement characters' -ForEach @(
+        @{ bytes = [byte[]](0xEF, 0xBB, 0xBF, 0xC0, 0xAF) }
+        @{ bytes = [byte[]](0xFF, 0xFE, 0x00, 0xD8) }
+        @{ bytes = [byte[]](0xFE, 0xFF, 0xDC, 0x00) }
+    ) {
+        $result = ConvertFrom-IdsBaselineArchive -Bytes (New-IdsTestZipBytes ([ordered]@{ 'kit/text.json' = $bytes }))
+        $result.packs.Count | Should -Be 0
+        (Get-TestSkipLines $result) | Should -BeExactly 'kit/text.json => Not valid UTF-8 or UTF-16 text.'
+    }
+
+    It 'rejects a UTF-32 BOM rather than treating it as UTF-16' {
+        $encoding = [Text.UTF32Encoding]::new($false, $true)
+        [byte[]]$bytes = $encoding.GetPreamble() + $encoding.GetBytes((New-TestPolicyJson))
+        $result = ConvertFrom-IdsBaselineArchive -Bytes (New-IdsTestZipBytes ([ordered]@{ 'kit/utf32.json' = $bytes }))
+        $result.packs.Count | Should -Be 0
+        (Get-TestSkipLines $result) | Should -BeExactly 'kit/utf32.json => Not valid UTF-8 or UTF-16 text.'
+    }
+
+    It 'accepts nesting at depth 64 and policy arrays containing exactly one item' {
+        $policy = New-TestPolicyJson
+        $policy = $policy.Substring(0, $policy.Length - 1) + ',"metadata":' + ('[' * 63) + (']' * 63) + '}'
+        $result = ConvertFrom-IdsBaselineArchive -Bytes (New-IdsTestZipBytes ([ordered]@{
+            'kit/depth.json' = $policy
+            'kit/singleton.json' = '[' + (New-TestPolicyJson -Id 'syn.singleton') + ']'
+        }))
+        $result.skipped.Count | Should -Be 0
+        $result.packs.Count | Should -Be 1
+        (@((Read-IdsBaselinePack -Bytes $result.packs[0]).controls.id) -join ',') | Should -BeExactly 'syn.archive,syn.singleton'
+    }
+
+    It 'converts single policies, policy arrays and value lists' {
+        $first = New-TestPolicyJson -Name 'Synthetic L1 first' -Id 'syn.first'
+        $second = New-TestPolicyJson -Name 'Synthetic L1 second' -Id 'syn.second'
+        $listed = New-TestPolicyJson -Name 'Synthetic L1 listed' -Id 'syn.listed'
+        $zip = New-IdsTestZipBytes ([ordered]@{
+            'kit/single.json' = (New-TestPolicyJson -Name 'Synthetic L1 single' -Id 'syn.single')
+            'kit/array.json' = "[$first,$second]"
+            'kit/list.json' = "{""@odata.context"":""synthetic"",""value"":[$listed]}"
+        })
+        $result = ConvertFrom-IdsBaselineArchive -Bytes $zip
+        $result.skipped.Count | Should -Be 0
+        $result.packs.Count | Should -Be 1
+        $pack = Read-IdsBaselinePack -Bytes $result.packs[0]
+        (@($pack.controls | ForEach-Object { "$($_.id) <= $($_.reference)" }) -join "`n") | Should -BeExactly (@(
+            "syn.first <= CIS build kit policy 'Synthetic L1 first' (archive entry 'kit/array.json')"
+            "syn.listed <= CIS build kit policy 'Synthetic L1 listed' (archive entry 'kit/list.json')"
+            "syn.second <= CIS build kit policy 'Synthetic L1 second' (archive entry 'kit/array.json')"
+            "syn.single <= CIS build kit policy 'Synthetic L1 single' (archive entry 'kit/single.json')"
+        ) -join "`n")
+    }
+
+    It 'passes schema-1 rule packs through and skips invalid ones' {
+        $packBytes = New-IdsTestPackBytes
+        [byte[]]$withBom = [byte[]](0xEF, 0xBB, 0xBF) + $packBytes
+        $utf16 = [Text.UnicodeEncoding]::new($true, $true)
+        [byte[]]$utf16Bytes = $utf16.GetPreamble() + $utf16.GetBytes([Text.Encoding]::UTF8.GetString($packBytes))
+        $zip = New-IdsTestZipBytes ([ordered]@{
+            'packs/synthetic.json' = $packBytes
+            'packs/synthetic-bom.json' = $withBom
+            'packs/synthetic-utf16.json' = $utf16Bytes
+            'packs/invalid.json' = '{"schemaVersion":1,"id":"synthetic-invalid"}'
+        })
+        $result = ConvertFrom-IdsBaselineArchive -Bytes $zip
+        $result.packs.Count | Should -Be 3
+        foreach ($bytes in $result.packs) {
+            [Convert]::ToBase64String($bytes) | Should -BeExactly ([Convert]::ToBase64String($packBytes))
+        }
+        (Get-TestSkipLines $result) | Should -BeLike 'packs/invalid.json => Invalid rule pack: *'
+    }
+
+    It 'keeps rule packs in entry order rather than path order' {
+        $result = ConvertFrom-IdsBaselineArchive -Bytes (New-IdsTestZipBytes ([ordered]@{
+            'z/windows.json' = (New-IdsTestPackBytes -Platform windows11)
+            'a/macos.json' = (New-IdsTestPackBytes -Platform macos)
+        }))
+        $result.packs.Count | Should -Be 2
+        (@($result.packs | ForEach-Object { (Read-IdsBaselinePack -Bytes $_).platform }) -join ',') |
+            Should -BeExactly 'windows11,macos'
+    }
+
+    It 'converts mixed archives deterministically and imports them idempotently' {
+        $secret = New-IdsTestBuildKitPolicy -Name 'Synthetic L1 secret' -Instances @(
+            New-IdsTestSettingInstance -Id 'syn.secret' -Value @{
+                '@odata.type' = '#microsoft.graph.deviceManagementConfigurationSecretSettingValue'; value = 'synthetic-hidden-value' })
+        $zip = New-IdsTestZipBytes ([ordered]@{
+            'kit/readme.txt' = 'synthetic'
+            'kit/notes.json' = '{"title":"Synthetic notes"}'
+            'kit/L2/policy.json' = (New-TestPolicyJson -Name 'Synthetic L2 policy' -Id 'syn.level2')
+            'packs/synthetic.json' = (New-IdsTestPackBytes)
+            'kit/L1/policy.json' = (New-TestPolicyJson -Name 'Synthetic L1 policy' -Id 'syn.level1')
+            'kit/L1/secret.json' = (ConvertTo-Json -InputObject $secret -Depth 64 -Compress)
+        }) -LastWriteTime ([DateTimeOffset]::new(2026, 10, 3, 23, 30, 0, [TimeSpan]::FromHours(-8)))
+        $first = ConvertFrom-IdsBaselineArchive -Bytes $zip
+        $second = ConvertFrom-IdsBaselineArchive -Bytes $zip
+        $hashStream = [IO.MemoryStream]::new($zip)
+        try { $hash = (Get-FileHash -InputStream $hashStream -Algorithm SHA256).Hash.ToLowerInvariant() }
+        finally { $hashStream.Dispose() }
+        $first.sha256 | Should -BeExactly $hash
+        $first.ignored | Should -Be 1
+        (@($first.packs | ForEach-Object { (Read-IdsBaselinePack -Bytes $_).id }) -join ',') |
+            Should -BeExactly 'synthetic-pack,cis.windows11.l1,cis.windows11.l2'
+        ((Get-TestSkipLines $first) -join "`n") | Should -BeExactly (@(
+            'kit/notes.json => Not a Settings Catalog policy or rule pack.'
+            "kit/L1/secret.json => Setting 'syn.secret' in policy 'Synthetic L1 secret' is secret and was not converted."
+        ) -join "`n")
+        $level1 = Read-IdsBaselinePack -Bytes $first.packs[1]
+        $level1.sources[0].retrievedOn | Should -BeExactly '2026-10-03'
+        $level1.sources[0].revision | Should -BeExactly "Archive SHA-256 $($first.sha256)"
+        $second.packs.Count | Should -Be $first.packs.Count
+        for ($index = 0; $index -lt $first.packs.Count; $index++) {
+            [Convert]::ToBase64String($second.packs[$index]) | Should -BeExactly ([Convert]::ToBase64String($first.packs[$index]))
+        }
+        $root = Join-Path $TestDrive 'imported'
+        (@(Import-IdsBaselinePackSet -Packs $first.packs -ImportedRoot $root).added -join ',') | Should -BeExactly 'True,True,True'
+        (@(Import-IdsBaselinePackSet -Packs $second.packs -ImportedRoot $root).added -join ',') | Should -BeExactly 'False,False,False'
+        @(Get-ChildItem -LiteralPath $root -Filter '*.json').Count | Should -Be 3
+    }
+}

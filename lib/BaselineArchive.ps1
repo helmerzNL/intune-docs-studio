@@ -1,6 +1,6 @@
 <#
-    CIS build-kit conversion. Requires BaselinePacks.ps1, AssessmentCollection.ps1
-    and AssessmentSettings.ps1.
+    In-memory CIS build-kit archive reading and conversion. Requires
+    BaselinePacks.ps1, AssessmentCollection.ps1 and AssessmentSettings.ps1.
 
     Policy values come from ConvertFrom-IdsPackJsonElement. Nothing is written
     here. Generated packs are deterministic for the same archive, so importing
@@ -351,4 +351,167 @@ function ConvertTo-IdsBuildKitPacks {
         $packs.Add($bytes)
     }
     return [pscustomobject]@{ packs = $packs.ToArray(); skipped = $skipped.ToArray() }
+}
+
+function Read-IdsBaselineArchiveEntry {
+    param($Entry, $Budget)
+    # Bound actual decompression even when the declared size is false.
+    # Bytes from entries that are later skipped still consume the budget.
+    $limit = 10MB + 1
+    $buffer = [byte[]]::new(81920)
+    $content = [IO.MemoryStream]::new()
+    $source = $null
+    try {
+        $source = $Entry.Open()
+        while ($content.Length -lt $limit -and $Budget.read -le 64MB) {
+            $count = $source.Read($buffer, 0, [int][Math]::Min([long]$buffer.Length, $limit - $content.Length))
+            if ($count -le 0) { break }
+            $Budget.read += $count
+            $content.Write($buffer, 0, $count)
+        }
+        return ,($content.ToArray())
+    } finally {
+        if ($source) { $source.Dispose() }
+        $content.Dispose()
+    }
+}
+
+function ConvertFrom-IdsBaselineArchiveText {
+    param([byte[]]$Bytes)
+    # UTF-32 LE shares the UTF-16 LE prefix, but is not a supported encoding.
+    if ($Bytes.Length -ge 4 -and $Bytes[0] -eq 0xFF -and $Bytes[1] -eq 0xFE -and $Bytes[2] -eq 0 -and $Bytes[3] -eq 0) {
+        throw [Text.DecoderFallbackException]::new('UTF-32 text is not supported.')
+    }
+    if ($Bytes.Length -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF) {
+        return [Text.UTF8Encoding]::new($false, $true).GetString($Bytes, 3, $Bytes.Length - 3)
+    }
+    if ($Bytes.Length -ge 2 -and $Bytes[0] -eq 0xFF -and $Bytes[1] -eq 0xFE) {
+        return [Text.UnicodeEncoding]::new($false, $false, $true).GetString($Bytes, 2, $Bytes.Length - 2)
+    }
+    if ($Bytes.Length -ge 2 -and $Bytes[0] -eq 0xFE -and $Bytes[1] -eq 0xFF) {
+        return [Text.UnicodeEncoding]::new($true, $false, $true).GetString($Bytes, 2, $Bytes.Length - 2)
+    }
+    return [Text.UTF8Encoding]::new($false, $true).GetString($Bytes)
+}
+
+function Get-IdsBaselineArchivePolicies {
+    param($Value)
+    if ($Value -is [Collections.IDictionary] -and $Value.Contains('settings')) { return ,@(, $Value) }
+    $list = $Value
+    if ($Value -is [Collections.IDictionary] -and $Value.Contains('value')) { $list = $Value['value'] }
+    if ($list -isnot [Collections.IList] -or $list.Count -eq 0) { return $null }
+    foreach ($item in $list) {
+        if ($item -isnot [Collections.IDictionary] -or -not $item.Contains('settings')) { return $null }
+    }
+    return ,@($list)
+}
+
+function ConvertFrom-IdsBaselineArchive {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Bytes)
+    Add-Type -AssemblyName System.IO.Compression
+    $sha256 = Get-IdsBuildKitSha256 $Bytes
+    $packs = [Collections.Generic.List[byte[]]]::new()
+    $skipped = [Collections.Generic.List[object]]::new()
+    $policies = [Collections.Generic.List[object]]::new()
+    $ignored = 0
+    $budget = @{ read = 0L }
+    $unreadable = 'Could not be read (encrypted, corrupt or unsupported compression).'
+    $options = [Text.Json.JsonDocumentOptions]::new()
+    $options.MaxDepth = 64
+    $stream = [IO.MemoryStream]::new($Bytes, $false)
+    $archive = $null
+    try {
+        try {
+            $archive = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Read, $true)
+            # Invoke the getter explicitly: PowerShell property access can
+            # suppress its central-directory validation exception as $null.
+            $entries = @($archive.get_Entries())
+        } catch {
+            # ZipArchive reports damage as InvalidDataException, which the API maps to 413.
+            throw [ArgumentException]::new('The file is not a valid ZIP archive.')
+        }
+        if ($entries.Count -gt 1000) { throw [ArgumentException]::new('Archive entry limit exceeded (1,000 entries).') }
+        $jsonCount = 0
+        foreach ($entry in $entries) {
+            $name = $entry.FullName
+            if ($name.StartsWith('/') -or $name.StartsWith('\') -or $name.Contains(':') -or
+                (($name -split '[/\\]') -contains '..')) {
+                throw [ArgumentException]::new("Archive entry names must be relative without ':' or '..' segments.")
+            }
+            if ($name.EndsWith('.json', [StringComparison]::OrdinalIgnoreCase)) { $jsonCount++ }
+        }
+        if ($jsonCount -gt 500) { throw [ArgumentException]::new('Archive JSON entry limit exceeded (500 entries).') }
+
+        foreach ($entry in $entries) {
+            $name = $entry.FullName
+            if ($name.EndsWith('/') -or $name.EndsWith('\')) { continue }
+            if ($name.EndsWith('.zip', [StringComparison]::OrdinalIgnoreCase)) {
+                $skipped.Add([pscustomobject]@{ entry = $name; reason = 'Nested ZIP archives are not opened; extract and upload the inner ZIP.' })
+                continue
+            }
+            if (-not $name.EndsWith('.json', [StringComparison]::OrdinalIgnoreCase)) { $ignored++; continue }
+            $encrypted = $entry.PSObject.Properties['IsEncrypted']
+            if ($encrypted -and $encrypted.Value) {
+                $skipped.Add([pscustomobject]@{ entry = $name; reason = $unreadable })
+                continue
+            }
+            if ($entry.Length -gt 10MB) {
+                $skipped.Add([pscustomobject]@{ entry = $name; reason = 'JSON entry exceeds the 10 MiB limit.' })
+                continue
+            }
+            $content = $null
+            try { $content = Read-IdsBaselineArchiveEntry $entry $budget }
+            catch [IO.InvalidDataException], [IO.IOException], [NotSupportedException], [InvalidOperationException] { $content = $null }
+            # Outside the entry catch: the budget fails the whole request.
+            if ($budget.read -gt 64MB) { throw [IO.InvalidDataException]::new('Archive JSON read limit exceeded (64 MiB).') }
+            if ($null -eq $content) {
+                $skipped.Add([pscustomobject]@{ entry = $name; reason = $unreadable })
+                continue
+            }
+            if ($content.Length -gt 10MB) {
+                $skipped.Add([pscustomobject]@{ entry = $name; reason = 'JSON entry exceeds the 10 MiB limit.' })
+                continue
+            }
+            if ($content.Length -ne $entry.Length) {
+                $skipped.Add([pscustomobject]@{ entry = $name; reason = $unreadable })
+                continue
+            }
+            try { $text = ConvertFrom-IdsBaselineArchiveText $content } catch {
+                $skipped.Add([pscustomobject]@{ entry = $name; reason = 'Not valid UTF-8 or UTF-16 text.' })
+                continue
+            }
+            try { $document = [Text.Json.JsonDocument]::Parse($text, $options) } catch {
+                $skipped.Add([pscustomobject]@{ entry = $name; reason = 'Invalid JSON or nesting deeper than 64 levels.' })
+                continue
+            }
+            try { $value = ConvertFrom-IdsPackJsonElement $document.RootElement } catch {
+                $skipped.Add([pscustomobject]@{ entry = $name; reason = "Invalid JSON: $($_.Exception.Message)" })
+                continue
+            } finally { $document.Dispose() }
+            if ($value -is [Collections.IDictionary] -and $value.Contains('schemaVersion')) {
+                $packBytes = [Text.UTF8Encoding]::new($false).GetBytes($text)
+                try { [void](Read-IdsBaselinePack -Bytes $packBytes) } catch {
+                    $skipped.Add([pscustomobject]@{ entry = $name; reason = "Invalid rule pack: $($_.Exception.Message)" })
+                    continue
+                }
+                $packs.Add($packBytes)
+                continue
+            }
+            $found = Get-IdsBaselineArchivePolicies $value
+            if ($null -eq $found) {
+                $skipped.Add([pscustomobject]@{ entry = $name; reason = 'Not a Settings Catalog policy or rule pack.' })
+                continue
+            }
+            foreach ($policy in $found) {
+                $policies.Add([pscustomobject]@{ entry = $name; policy = $policy; lastWriteTime = $entry.LastWriteTime })
+            }
+        }
+    } finally {
+        if ($archive) { $archive.Dispose() }
+        $stream.Dispose()
+    }
+    $converted = ConvertTo-IdsBuildKitPacks -Policies $policies.ToArray() -ArchiveSha256 $sha256
+    foreach ($pack in $converted.packs) { $packs.Add($pack) }
+    foreach ($item in $converted.skipped) { $skipped.Add($item) }
+    return [pscustomobject]@{ packs = $packs.ToArray(); skipped = $skipped.ToArray(); ignored = $ignored; sha256 = $sha256 }
 }

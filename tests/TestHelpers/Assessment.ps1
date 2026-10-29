@@ -90,3 +90,49 @@ function New-IdsTestBuildKitItem {
         [DateTimeOffset]$LastWriteTime = [DateTimeOffset]::new(2026, 10, 1, 12, 0, 0, [TimeSpan]::Zero))
     return [pscustomobject]@{ entry = $Entry; policy = $Policy; lastWriteTime = $LastWriteTime }
 }
+
+function New-IdsTestZipBytes {
+    param([Parameter(Mandatory)][Collections.IDictionary]$Entries, [string]$CompressionLevel = 'Optimal',
+        [DateTimeOffset]$LastWriteTime = [DateTimeOffset]::new(2026, 10, 1, 12, 0, 0, [TimeSpan]::Zero))
+    Add-Type -AssemblyName System.IO.Compression
+    $stream = [IO.MemoryStream]::new()
+    try {
+        $archive = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Create, $true)
+        try {
+            foreach ($pair in $Entries.GetEnumerator()) {
+                $entry = $archive.CreateEntry([string]$pair.Key, [IO.Compression.CompressionLevel]$CompressionLevel)
+                $entry.LastWriteTime = $LastWriteTime
+                if ($null -eq $pair.Value) { continue }
+                $bytes = $pair.Value
+                if ($bytes -isnot [byte[]]) { $bytes = [Text.UTF8Encoding]::new($false).GetBytes([string]$pair.Value) }
+                $content = $entry.Open()
+                try { $content.Write($bytes, 0, $bytes.Length) } finally { $content.Dispose() }
+            }
+        } finally { $archive.Dispose() }
+        return ,($stream.ToArray())
+    } finally { $stream.Dispose() }
+}
+
+function Edit-IdsTestZipFirstEntry {
+    param([Parameter(Mandatory)][byte[]]$Bytes,
+        [Parameter(Mandatory)][ValidateSet('Encrypted', 'UnsupportedCompression', 'CorruptData', 'DeclaredLength')][string]$Change,
+        [uint32]$Length = 0)
+    # These synthetic ZIPs have no comment; the central directory offset is
+    # six bytes before the end and the first local header starts at zero.
+    $copy = [byte[]]$Bytes.Clone()
+    $central = [BitConverter]::ToInt32($copy, $copy.Length - 6)
+    switch ($Change) {
+        Encrypted { $copy[6] = $copy[6] -bor 1; $copy[$central + 8] = $copy[$central + 8] -bor 1 }
+        UnsupportedCompression { $copy[8] = 14; $copy[$central + 10] = 14 }
+        CorruptData {
+            $start = 30 + [BitConverter]::ToUInt16($copy, 26) + [BitConverter]::ToUInt16($copy, 28)
+            $end = $start + [BitConverter]::ToInt32($copy, $central + 20)
+            for ($index = $start; $index -lt $end; $index++) { $copy[$index] = 0xFF }
+        }
+        DeclaredLength {
+            [BitConverter]::GetBytes($Length).CopyTo($copy, 22)
+            [BitConverter]::GetBytes($Length).CopyTo($copy, $central + 24)
+        }
+    }
+    return ,$copy
+}
