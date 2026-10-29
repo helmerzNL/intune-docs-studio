@@ -336,6 +336,16 @@ details:not(.disclosure) > summary { cursor: pointer; color: var(--accent); }
 .stepper li.active .step-num { background: var(--accent-dim); border-color: var(--accent-dim); color: #fff; }
 .stepper li.done { color: var(--text); }
 .stepper li.done .step-num { background: rgba(63, 185, 80, .15); border-color: rgba(63, 185, 80, .45); color: var(--ok); }
+.stepper.wide li { padding: 0; }
+.stepper.wide button {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 14px;
+  border: 0; border-radius: inherit; background: transparent; color: inherit;
+  font: inherit; text-align: left;
+}
+.stepper.wide button:enabled { cursor: pointer; }
+.stepper.wide button:enabled:hover { background: var(--surface-2); }
+.stepper.wide button:disabled { cursor: default; }
+.stepper.wide button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 label { display: block; margin-bottom: 14px; font-size: 13px; }
 label small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }

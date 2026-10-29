@@ -236,9 +236,10 @@
       <div class="row">
         <button id="btnRefreshPolicies" class="btn">Load live policies</button>
         <button id="btnReplacePolicySource" class="btn">Import another policy source</button>
+        <button id="btnShowPolicyExport" class="btn">Export policy set...</button>
         <a id="offlineSignIn" class="btn hidden" href="#/signin">Sign in for live policies</a>
       </div>
-      <details class="disclosure">
+      <details id="policyExportPanel" class="disclosure">
         <summary>Export this policy set as re-importable JSON</summary>
         <div class="disclosure-body">
           <label>Destination folder on the application host<input type="text" id="policyExportPath" spellcheck="false"></label>
@@ -389,12 +390,12 @@
     </header>
 
     <ol class="stepper wide" aria-label="Assessment steps">
-      <li id="assessStepPlatforms" class="active"><span class="step-num" aria-hidden="true">1</span>Platforms</li>
-      <li id="assessStepImport"><span class="step-num" aria-hidden="true">2</span>Import packs</li>
-      <li id="assessStepBaselines"><span class="step-num" aria-hidden="true">3</span>Baselines</li>
-      <li id="assessStepContext"><span class="step-num" aria-hidden="true">4</span>Context</li>
-      <li id="assessStepReview"><span class="step-num" aria-hidden="true">5</span>Review &amp; run</li>
-      <li id="assessStepResults"><span class="step-num" aria-hidden="true">6</span>Results</li>
+      <li id="assessStepPlatforms" class="active"><button type="button" id="btnAssessStepPlatforms" disabled aria-label="Back to Platforms"><span class="step-num" aria-hidden="true">1</span>Platforms</button></li>
+      <li id="assessStepImport"><button type="button" id="btnAssessStepImport" disabled aria-label="Back to Import packs"><span class="step-num" aria-hidden="true">2</span>Import packs</button></li>
+      <li id="assessStepBaselines"><button type="button" id="btnAssessStepBaselines" disabled aria-label="Back to Baselines"><span class="step-num" aria-hidden="true">3</span>Baselines</button></li>
+      <li id="assessStepContext"><button type="button" id="btnAssessStepContext" disabled aria-label="Back to Context"><span class="step-num" aria-hidden="true">4</span>Context</button></li>
+      <li id="assessStepReview"><button type="button" id="btnAssessStepReview" disabled aria-label="Back to Review and run"><span class="step-num" aria-hidden="true">5</span>Review &amp; run</button></li>
+      <li id="assessStepResults"><button type="button" id="btnAssessStepResults" disabled aria-label="Back to Results"><span class="step-num" aria-hidden="true">6</span>Results</button></li>
     </ol>
 
     <p id="assessmentError" class="error hidden" role="alert"></p>

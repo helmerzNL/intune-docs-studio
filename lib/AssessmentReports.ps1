@@ -7,7 +7,8 @@
     Write-IdsAssessmentReports publishes a new assessment.md/assessment.json
     pair and returns root (the new run directory), markdownPath and jsonPath.
     OutputPath, InstallRoot and ExportRoot must be absolute, mutually disjoint
-    filesystem trees without reparse-point ancestors. Reports are never pruned,
+    filesystem trees without link/junction ancestors. Non-redirecting Windows
+    cloud placeholders are allowed. Reports are never pruned,
     overwritten, exported to the documentation tree, committed or pushed.
 
     Optional Result.sources preserves normalized source completeness; absent
@@ -377,14 +378,59 @@ function ConvertTo-IdsAssessmentMarkdown {
     return ConvertTo-IdsProjectedAssessmentMarkdown (ConvertTo-IdsReportProjection $Result)
 }
 
+function Get-IdsReportReparseTag {
+    param([string]$Path)
+    if (-not $IsWindows) { return 0 }
+    if (-not ('Ids.ReportPathNative' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace Ids {
+    public static class ReportPathNative {
+        [StructLayout(LayoutKind.Sequential)] struct AttributeTag { public uint Attributes, Tag; }
+        [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+        static extern SafeFileHandle CreateFile(string path, uint access, uint share, IntPtr security, uint mode, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        static extern bool GetFileInformationByHandleEx(SafeFileHandle file, int kind, out AttributeTag value, uint size);
+        public static uint Tag(string path) {
+            using (var file = CreateFile(path, 0, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero)) {
+                if (file.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                AttributeTag value;
+                if (!GetFileInformationByHandleEx(file, 9, out value, 8))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                return value.Tag;
+            }
+        }
+    }
+}
+'@
+    }
+    return [Ids.ReportPathNative]::Tag($Path)
+}
+
+function Test-IdsReportCloudTag {
+    param([uint32]$Tag)
+    # Cloud tags do not redirect the filesystem namespace; links and unknown tags stay blocked.
+    return ($Tag -band 0xFFFF0FFFu) -eq 0x9000001Au -or $Tag -in @(0x80000015u, 0x80000021u)
+}
+
+function Get-IdsReportDirectoryAttributes {
+    param([string]$Path)
+    return [IO.File]::GetAttributes($Path)
+}
+
 function Assert-IdsReportDirectoryPath {
     param([string]$Path)
     $current = $Path
     while ($current) {
         try {
-            $attributes = [IO.File]::GetAttributes($current)
+            $attributes = Get-IdsReportDirectoryAttributes $current
             if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                throw 'Assessment report roots must not contain a reparse point.'
+                if (-not (Test-IdsReportCloudTag (Get-IdsReportReparseTag $current))) {
+                    throw "De map '$current' bevat een symbolische koppeling, junction of onbekend reparse point. Kies via Choose report folder een gewone lokale map buiten de applicatie en documentatie, bijvoorbeeld een nieuwe map onder C:\IntuneReports. Verplaats zo nodig de applicatie of documentatie uit de gekoppelde map. OneDrive-cloudmappen zonder omleiding zijn toegestaan."
+                }
             }
             if (($attributes -band [IO.FileAttributes]::Directory) -eq 0) {
                 throw 'Assessment report roots must be directories.'

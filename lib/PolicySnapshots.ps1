@@ -211,11 +211,13 @@ function Import-IdsPolicySnapshot {
     foreach ($family in Get-IdsPolicyFamilies) {
         $collection.documentation[$family] = @(foreach ($doc in $collection.documentation[$family]) { ConvertTo-IdsPolicyGraphObject $doc })
     }
+    $origin = if ($manifest.source.origin) { $manifest.source.origin } else { $manifest.source }
     return @{
         tenant = @{ id = $manifest.tenant.id; name = $manifest.tenant.name }
         capturedAt = $manifest.capturedAt; collection = $collection
         references = Copy-IdsPolicyPayload $references
-        source = @{ kind = 'offline'; name = $manifest.tenant.name; importedAt = [datetime]::UtcNow.ToString('o'); format = 'policy-set-v1' }
+        source = @{ kind = 'offline'; name = $manifest.tenant.name; importedAt = [datetime]::UtcNow.ToString('o')
+            format = 'policy-set-v1'; origin = Copy-IdsPolicyPayload $origin }
     }
 }
 

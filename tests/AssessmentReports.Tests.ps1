@@ -301,6 +301,33 @@ Describe 'Standalone assessment reports' {
             { Write-IdsAssessmentReports (New-ReportResult) $roots[0] $roots[1] $roots[2] } | Should -Throw '*reparse*'
         }
         @(Get-ChildItem $real).Count | Should -Be 0
+        Get-IdsReportReparseTag $alias | Should -Be 0xA0000003u
+        { Get-IdsReportCanonicalRoot "$alias\new" } | Should -Throw '*Kies via Choose report folder*'
+    }
+
+    It 'allows only known non-redirecting Windows cloud placeholder tags' {
+        foreach ($tag in @(0x9000001Au, 0x9000101Au, 0x9000F01Au, 0x80000015u, 0x80000021u)) {
+            Test-IdsReportCloudTag $tag | Should -BeTrue
+        }
+        foreach ($tag in @(0, 0xA0000003u, 0xA000000Cu, 0x900000FFu, 0xB000001Au)) {
+            Test-IdsReportCloudTag $tag | Should -BeFalse
+        }
+    }
+
+    It 'allows a cloud ancestor while preserving overlap checks and rejecting unknown reparse tags' {
+        $cloud = Join-Path $TestDrive 'synthetic-cloud'
+        [void][IO.Directory]::CreateDirectory($cloud)
+        Mock Get-IdsReportDirectoryAttributes {
+            if ($Path -eq $cloud) { return [IO.FileAttributes]::Directory -bor [IO.FileAttributes]::ReparsePoint }
+            return [IO.File]::GetAttributes($Path)
+        }
+        Mock Get-IdsReportReparseTag { return 0x9000301Au }
+        $output = Join-Path $cloud 'reports'
+        $pair = Write-IdsAssessmentReports (New-ReportResult) $output "$TestDrive\app" "$TestDrive\docs"
+        Test-Path $pair.markdownPath | Should -BeTrue
+        { Write-IdsAssessmentReports (New-ReportResult) "$TestDrive\docs\reports" "$TestDrive\app" "$TestDrive\docs" } | Should -Throw '*overlap*'
+        Mock Get-IdsReportReparseTag { return 0x900000FFu }
+        { Get-IdsReportCanonicalRoot $output } | Should -Throw '*reparse point*Kies*'
     }
 
     It 'fails after the first staged file without publishing or deleting other runs' {

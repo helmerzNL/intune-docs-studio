@@ -276,6 +276,12 @@ function openPolicyImport() {
 }
 $('btnOpenPolicyImport').addEventListener('click', openPolicyImport);
 $('btnReplacePolicySource').addEventListener('click', openPolicyImport);
+$('btnShowPolicyExport').addEventListener('click', () => {
+  if (!policiesReady() || exportBusy || assessmentBusy || assessmentImporting) return;
+  $('policyExportPanel').open = true;
+  $('policyExportPath').focus({ preventScroll: true });
+  $('policyExportPanel').scrollIntoView({ block: 'nearest' });
+});
 $('btnCancelPolicyImport').addEventListener('click', () => {
   if (sourceTransferBusy) return;
   sourceImportOpen = false; renderRoute();
@@ -961,6 +967,21 @@ const assessmentSteps = {
   review: ['assessStepReview', 'assessPanelReview', 'runAssessmentTitle'],
   results: ['assessStepResults', 'assessPanelResults', 'resultsTitle']
 };
+let assessmentCurrentStep = 'platforms';
+function syncAssessmentStepNavigation() {
+  const order = Object.keys(assessmentSteps);
+  const busy = exportBusy || assessmentBusy || assessmentImporting || sourceTransferBusy || !!state?.transfer?.running;
+  order.forEach((name, i) => {
+    $(assessmentSteps[name][0].replace('assessStep', 'btnAssessStep')).disabled =
+      busy || i >= order.indexOf(assessmentCurrentStep);
+  });
+}
+Object.entries(assessmentSteps).forEach(([name, [item]]) => {
+  const button = item.replace('assessStep', 'btnAssessStep');
+  $(button).addEventListener('click', () => {
+    if (!$(button).disabled) moveAssessmentStep(name);
+  });
+});
 const assessmentContextFields = {
   windows11: ['assessmentContextWindows11'],
   macos: ['assessmentContextMacos'],
@@ -980,6 +1001,7 @@ const assessmentWindowsWarning = 'Windows policies targeting Windows 10 and late
   '(for example 10.0.22631 or 10.0.26100); otherwise their controls are reported as not assessed.';
 
 function setAssessmentStep(step, focus) {
+  assessmentCurrentStep = step;
   const order = Object.keys(assessmentSteps);
   const current = order.indexOf(step);
   order.forEach((name, i) => {
@@ -989,6 +1011,7 @@ function setAssessmentStep(step, focus) {
     else $(item).removeAttribute('aria-current');
     setHidden(panel, i !== current);
   });
+  syncAssessmentStepNavigation();
   if (!focus) return;
   window.scrollTo(0, 0);
   $(assessmentSteps[step][2]).focus({ preventScroll: true });
@@ -1056,6 +1079,7 @@ function blockAssessmentStep(message) {
 }
 
 function moveAssessmentStep(step) {
+  if (exportBusy || assessmentBusy || assessmentImporting || sourceTransferBusy || state?.transfer?.running) return;
   showAssessmentError(null);
   if (step === 'context') updateAssessmentContext();
   if (step === 'review') renderAssessmentReview();
@@ -1098,8 +1122,8 @@ function syncJobAdmission() {
   $('btnRetryPolicies').disabled = busy || policyReloading;
   $('btnAssessmentImport').disabled = busy || assessmentImporting;
   $('btnAssessNew').disabled = assessmentBusy;
-  ['btnImportPolicySource', 'btnReplacePolicySource', 'btnOpenPolicyImport', 'btnExportPolicySource'].forEach((id) => {
-    $(id).disabled = busy || assessmentImporting || (id === 'btnExportPolicySource' && !policiesReady());
+  ['btnImportPolicySource', 'btnReplacePolicySource', 'btnOpenPolicyImport', 'btnExportPolicySource', 'btnShowPolicyExport'].forEach((id) => {
+    $(id).disabled = busy || assessmentImporting || (['btnExportPolicySource', 'btnShowPolicyExport'].includes(id) && !policiesReady());
   });
   ['btnLoadPolicies', 'btnPoliciesNotNow'].forEach((id) => { $(id).disabled = busy || policyReloading; });
   ['btnQueueAssessmentFiles', 'btnQueueAssessmentFolder', 'btnQueueAssessmentPath', 'btnAssessImportBack', 'btnAssessImportNext'].forEach((id) => {
@@ -1113,6 +1137,7 @@ function syncJobAdmission() {
   });
   ['navDocumentBusy', 'homeDocumentBusy'].forEach((id) => setHidden(id, !exportBusy));
   ['navAssessBusy', 'homeAssessBusy'].forEach((id) => setHidden(id, !assessmentBusy));
+  syncAssessmentStepNavigation();
 }
 
 function clearAssessmentEvidence() {
@@ -1210,6 +1235,7 @@ async function refreshAssessment() {
     }
     if (progress.running) setAssessmentStep('results');
     if (progress.done) {
+      const firstResult = !assessmentResult;
       clearAssessmentEvidence();
       const results = await api('/api/assessment/results');
       if (generation !== assessmentGeneration) return;
@@ -1221,7 +1247,7 @@ async function refreshAssessment() {
       }
       if (!results.ok || !results.body) throw new Error(`${results.status}: ${results.body?.error || 'Results unavailable.'}`);
       renderAssessmentResult(results.body);
-      setAssessmentStep('results');
+      if (firstResult) setAssessmentStep('results');
       $('assessmentBar').style.width = percent + '%';
       $('assessmentProgress').textContent = `${percent}% · ${progress.phase || 'Complete'}` +
         (progress.partial ? ' · Partial evidence — review collection limitations' : '');
@@ -1281,7 +1307,11 @@ $('btnAssessmentRun').addEventListener('click', async () => {
     if (generation !== assessmentGeneration) return;
     assessmentStarting = false;
     if (assessmentSessionFailure(r)) return;
-    if (r.status !== 202 || !r.body?.started) throw new Error(`${r.status}: ${r.body?.error || 'Assessment did not start.'}`);
+    if (r.status !== 202 || !r.body?.started) {
+      throw new Error(r.status === 400
+        ? r.body?.error || 'Controleer de gekozen rapportmap en context voordat je opnieuw start.'
+        : `${r.status}: ${r.body?.error || 'Assessment did not start.'}`);
+    }
     clearAssessmentEvidence();
     $('assessmentProgress').textContent = 'Assessment admitted. Collecting policy evidence…';
     setAssessmentStep('results', true);

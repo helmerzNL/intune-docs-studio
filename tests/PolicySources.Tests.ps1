@@ -103,6 +103,35 @@ Describe 'Explicit policy sources and portable snapshots' {
         (Get-ChildItem -LiteralPath $output.path -Filter '*.json' -Recurse | Get-Content -Raw) -join '' | Should -Not -Match 'SYNTHETIC-CREDENTIAL-MUST-NOT-EXPORT'
     }
 
+    It 're-exports an imported source without sign-in and preserves original provenance and incomplete evidence' {
+        $original = New-TestPolicySource
+        $original.collection.sources[0].complete = $false
+        $firstExport = Export-IdsPolicySnapshot $original (Join-Path $TestDrive 'original') $script:root
+        $firstImport = Import-IdsPolicySnapshot -Path $firstExport.path
+        $state = New-TestSourceState
+        Set-IdsActivePolicySnapshot $state $firstImport
+        $state.Auth | Should -BeNullOrEmpty
+        try {
+            $request = New-TestSourceRequest @{ path = (Join-Path $TestDrive 'offline-export') }
+            $response = Invoke-IdsPolicyRoute POST /api/policies/export $request $state $script:root
+            $response.status | Should -Be 202
+            Wait-TestSourceTransfer $state
+            $state.PolicyTransfer.status | Should -Be 'completed'
+            [object]::ReferenceEquals($firstImport, $state.Policies.snapshot) | Should -BeTrue
+            $secondImport = Import-IdsPolicySnapshot -Path $state.PolicyTransfer.result.path
+            $secondImport.source.kind | Should -Be 'offline'
+            $secondImport.source.origin.kind | Should -Be 'live'
+            $secondImport.source.origin.name | Should -Be $original.source.name
+            $secondImport.capturedAt | Should -BeExactly $original.capturedAt
+            $secondImport.tenant.name | Should -BeExactly $original.tenant.name
+            $secondImport.references.groups['synthetic-group'] | Should -BeExactly 'Synthetic operators'
+            $secondImport.collection.policies[0].rawSettings[0].smartScreenEnableInShell | Should -BeTrue
+            $secondImport.collection.policies[0].assignments[0].target.groupId | Should -BeExactly 'synthetic-group'
+            (ConvertTo-Json (Copy-IdsPolicyPayload $secondImport.collection) -Depth 64 -Compress) |
+                Should -BeExactly (ConvertTo-Json (Copy-IdsPolicyPayload $firstImport.collection) -Depth 64 -Compress)
+        } finally { Stop-IdsPolicyTransfer $state }
+    }
+
     It 'rejects malformed, duplicate or unsafe input without replacing the active source' {
         $state = New-TestSourceState
         $snapshot = New-TestPolicySource; $snapshot.source.kind = 'offline'
@@ -130,7 +159,9 @@ Describe 'Explicit policy sources and portable snapshots' {
         $snapshot.collection.sources.complete | Should -Not -Contain $true
         $snapshot.capturedAt | Should -BeNullOrEmpty
         $roundtrip = Export-IdsPolicySnapshot $snapshot (Join-Path $TestDrive 'legacy-roundtrip') $script:root
-        (Import-IdsPolicySnapshot -Path $roundtrip.path).capturedAt | Should -BeNullOrEmpty
+        $reimported = Import-IdsPolicySnapshot -Path $roundtrip.path
+        $reimported.capturedAt | Should -BeNullOrEmpty
+        $reimported.source.origin.format | Should -BeExactly 'legacy-raw'
     }
 
     It 'documents imported policies without Graph or authentication and preserves incomplete prior pages' {
@@ -183,7 +214,12 @@ Describe 'Explicit policy sources and portable snapshots' {
     It 'returns selected, cancelled and failed folder results without blocking or duplicating dialogs' {
         $state = New-TestSourceState
         try {
-            Start-IdsFolderPicker $state $script:root $TestDrive { param($Path) Start-Sleep -Milliseconds 150; @{ status = 'selected'; path = $Path } } | Should -BeTrue
+            Start-IdsFolderPicker $state $script:root $TestDrive {
+                param($Path)
+                if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') { throw 'Native dialog requires STA' }
+                Start-Sleep -Milliseconds 150
+                @{ status = 'selected'; path = $Path }
+            } | Should -BeTrue
             Start-IdsFolderPicker $state $script:root $TestDrive { throw 'Unexpected second dialog' } | Should -BeFalse
             $until = [datetime]::UtcNow.AddSeconds(10)
             while ($state.FolderPicker.job -and [datetime]::UtcNow -lt $until) { Start-Sleep -Milliseconds 30; Sync-IdsFolderPicker $state }
@@ -198,6 +234,20 @@ Describe 'Explicit policy sources and portable snapshots' {
             $state.FolderPicker.status | Should -Be 'failed'
             $state.FolderPicker.error | Should -Match 'host'
         } finally { Stop-IdsFolderPicker $state }
+    }
+
+    It 'owns the real native dialog with a topmost form and disposes both windows' {
+        $source = (Get-Command Show-IdsNativeFolderDialog).ScriptBlock
+        $calls = $source.Ast.FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $node.Member.Value -eq 'ShowDialog'
+        }, $true)
+        $calls.Count | Should -Be 1
+        $calls[0].Arguments.Count | Should -Be 1
+        $calls[0].Arguments[0].VariablePath.UserPath | Should -BeExactly 'owner'
+        $source.ToString() | Should -Match '\$owner\.TopMost = \$true'
+        $source.ToString() | Should -Match 'Activate\(\$owner.Handle\)'
+        $source.ToString() | Should -Match '\$dialog.Dispose\(\); \$owner.Dispose\(\)'
     }
 
     It 'commits a validated import atomically, rejects failed replacements and invalidates dependent results' {

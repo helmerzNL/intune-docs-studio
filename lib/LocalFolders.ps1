@@ -6,12 +6,40 @@ function Show-IdsNativeFolderDialog {
         Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 namespace Ids {
     public static class FolderDialogNative {
         public delegate bool WindowVisitor(IntPtr window, IntPtr state);
         [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+        [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, IntPtr process);
+        [DllImport("user32.dll")] static extern bool AttachThreadInput(uint first, uint second, bool attach);
+        [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr window);
+        [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+        [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr window, StringBuilder name, int count);
+        [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
         [DllImport("user32.dll")] static extern bool EnumThreadWindows(uint id, WindowVisitor visitor, IntPtr state);
         [DllImport("user32.dll")] static extern bool PostMessage(IntPtr window, uint message, IntPtr wparam, IntPtr lparam);
+        public static void Activate(IntPtr window) {
+            uint current = GetCurrentThreadId();
+            uint foreground = GetWindowThreadProcessId(GetForegroundWindow(), IntPtr.Zero);
+            bool attached = foreground != 0 && foreground != current && AttachThreadInput(current, foreground, true);
+            try { SetForegroundWindow(window); }
+            finally { if (attached) AttachThreadInput(current, foreground, false); }
+        }
+        public static bool ActivateDialog(uint thread) {
+            bool activated = false;
+            EnumThreadWindows(thread, (window, state) => {
+                var name = new StringBuilder(64);
+                GetClassName(window, name, name.Capacity);
+                if (!IsWindowVisible(window) || name.ToString() != "#32770") return true;
+                SetWindowPos(window, new IntPtr(-1), 0, 0, 0, 0, 0x43);
+                Activate(window);
+                activated = GetForegroundWindow() == window;
+                return !activated;
+            }, IntPtr.Zero);
+            return activated;
+        }
         public static void Close(uint id) {
             if (id != 0) EnumThreadWindows(id, (window, state) => {
                 PostMessage(window, 0x0010, IntPtr.Zero, IntPtr.Zero);
@@ -24,14 +52,31 @@ namespace Ids {
     }
     $Holder.threadId = [Ids.FolderDialogNative]::GetCurrentThreadId()
     $dialog = [Windows.Forms.FolderBrowserDialog]::new()
+    $owner = [Windows.Forms.Form]::new()
+    $activation = [Windows.Forms.Timer]::new()
     try {
-        $dialog.Description = 'Choose a folder on the computer running Intune Docs Studio'
+        $owner.ShowInTaskbar = $false
+        $owner.FormBorderStyle = 'None'
+        $owner.Size = [Drawing.Size]::new(1, 1)
+        $owner.StartPosition = 'CenterScreen'
+        $owner.Opacity = 0
+        $owner.TopMost = $true
+        $owner.Show()
+        [Ids.FolderDialogNative]::Activate($owner.Handle)
+        $dialog.Description = 'Intune Docs Studio - Choose a folder'
+        $dialog.UseDescriptionForTitle = $true
         if ($InitialPath -and [IO.Directory]::Exists($InitialPath)) { $dialog.SelectedPath = $InitialPath }
-        if ($dialog.ShowDialog() -eq [Windows.Forms.DialogResult]::OK) {
+        # The shell creates its window inside ShowDialog; activate that window once it exists.
+        $activation.Interval = 100
+        $activation.add_Tick({
+            if ([Ids.FolderDialogNative]::ActivateDialog($Holder.threadId)) { $activation.Stop() }
+        })
+        $activation.Start()
+        if ($dialog.ShowDialog($owner) -eq [Windows.Forms.DialogResult]::OK) {
             return @{ status = 'selected'; path = $dialog.SelectedPath }
         }
         return @{ status = 'cancelled'; path = $null }
-    } finally { $dialog.Dispose(); $Holder.threadId = 0 }
+    } finally { $activation.Dispose(); $dialog.Dispose(); $owner.Dispose(); $Holder.threadId = 0 }
 }
 
 function Start-IdsFolderPicker {
@@ -56,7 +101,7 @@ function Start-IdsFolderPicker {
             $Holder.status = $result.status
         } catch {
             $Holder.status = 'failed'
-            $Holder.error = 'Could not open or complete the native folder picker. Enter a folder path on the application host instead.'
+            $Holder.error = 'Could not open or complete the native folder picker. Enter a folder path on the application host instead. ' + $_.Exception.Message
         }
     }
     $rs = $null; $ps = $null
