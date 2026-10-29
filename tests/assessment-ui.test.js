@@ -11,17 +11,22 @@ function assessmentDashboard(respond = () => ({})) {
   const requests = [];
   const timers = new Map();
   const alerts = [];
+  let focused = null;
   function element(id) {
     if (!elements.has(id)) {
       const classes = new Set();
+      const attributes = new Map();
       const el = {
-        value: '', checked: false, disabled: false, children: [], options: [], handlers: {},
+        id, value: '', checked: false, disabled: false, children: [], options: [], handlers: {},
         files: [], textContent: '', style: {}, dataset: {},
         classList: { add(name) { classes.add(name); }, remove(name) { classes.delete(name); },
           contains(name) { return classes.has(name); } },
         addEventListener(event, handler) { this.handlers[event] = handler; },
         appendChild(child) { this.children.push(child); },
-        setAttribute() {}, removeAttribute() {}, focus() {},
+        setAttribute(name, value) { attributes.set(name, String(value)); },
+        getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null; },
+        removeAttribute(name) { attributes.delete(name); },
+        focus() { focused = id; },
         scrollIntoView() {}
       };
       let html = '';
@@ -45,7 +50,7 @@ function assessmentDashboard(respond = () => ({})) {
       createElement: () => element(Symbol())
     },
     window: { location: { search: '' }, history: { replaceState() {} }, addEventListener() {}, scrollTo() {} },
-    URLSearchParams, TextEncoder,
+    URLSearchParams, TextEncoder, btoa,
     fetch: async (url, options) => {
       const request = { url, payload: options && JSON.parse(options.body), method: options?.method || 'GET' };
       requests.push(request);
@@ -59,7 +64,7 @@ function assessmentDashboard(respond = () => ({})) {
     alert(message) { alerts.push(message); }, confirm() { return true; }
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'web', 'app.js'), 'utf8'), context);
-  return { element, requests, context, timers, alerts,
+  return { element, requests, context, timers, alerts, focused: () => focused,
     run(code) { return vm.runInContext(code, context); } };
 }
 
@@ -222,6 +227,8 @@ test('import sends original JSON text and preserves selected pack and export opt
   await d.element('btnAssessmentImport').handlers.click();
   assert.equal(d.requests.find((r) => r.method === 'POST').payload.content, original);
   assert.equal(boxes(d, 'assessmentPacks')[0].checked, true);
+  assert.match(d.element('assessmentImportSummary').textContent, /locally/);
+  assert.equal(d.element('assessmentProgress').textContent, '');
   reject = true;
   await d.element('btnAssessmentImport').handlers.click();
   assert.match(d.element('assessmentError').textContent, /400.*<Invalid pack>/);
@@ -575,6 +582,7 @@ test('stale import completion and assessment admission cannot repopulate a reset
       : { httpStatus: 202, body: { started: true } });
     await pending;
     assert.equal(d.element('assessmentProgress').textContent, '', operation);
+    assert.equal(d.element('assessmentImportSummary').textContent, '', operation);
     assert.equal(d.element('assessmentReportPaths').textContent, '', operation);
     assert.equal(d.element('assessmentOutputPath').value, '', operation);
     assert.equal(boxes(d, 'assessmentPacks').some((b) => b.value.startsWith('stale-import')), false);
@@ -737,4 +745,420 @@ test('shutdown honors server 409 and permits stopping after a previously observe
   blocked = false;
   await d.element('btnQuit').handlers.click();
   assert.match(d.element('body').innerHTML, /has stopped/);
+});
+
+// --- Assessment wizard -------------------------------------------------------
+
+const stepIds = ['assessStepPlatforms', 'assessStepBaselines', 'assessStepContext', 'assessStepReview',
+  'assessStepResults'];
+const panelIds = ['assessPanelPlatforms', 'assessPanelBaselines', 'assessPanelContext', 'assessPanelReview',
+  'assessPanelResults'];
+const isHidden = (d, id) => d.element(id).classList.contains('hidden');
+const click = (d, id) => d.element(id).handlers.click();
+const windowsWarning = 'Windows policies targeting Windows 10 and later, such as the Settings Catalog policies ' +
+  'that CIS build-kit packs map to, are assessed only when a Windows 11 build is entered (for example 10.0.22631 ' +
+  'or 10.0.26100); otherwise their controls are reported as not assessed.';
+
+function expectStep(d, number, focusedHeading) {
+  assert.deepEqual(panelIds.filter((id) => !isHidden(d, id)), [panelIds[number - 1]]);
+  assert.deepEqual(stepIds.map((id) => d.element(id).className),
+    stepIds.map((_, i) => (i + 1 < number ? 'done' : i + 1 === number ? 'active' : '')));
+  assert.deepEqual(stepIds.map((id) => d.element(id).getAttribute('aria-current')),
+    stepIds.map((_, i) => (i + 1 === number ? 'step' : null)));
+  assert.equal(isHidden(d, 'assessImportPanel'), number > 2);
+  if (focusedHeading !== undefined) assert.equal(d.focused(), focusedHeading);
+}
+
+test('wizard Next and Back validate the current step, mark the stepper and focus the new heading', async () => {
+  const d = assessmentDashboard((url) => (url === '/api/state' ? connectedState() : {}));
+  await new Promise(setImmediate);
+  renderCatalog(d);
+  expectStep(d, 1, null);
+  click(d, 'btnAssessPlatformsNext');
+  assert.equal(d.element('assessmentError').textContent, 'Choose at least one platform to assess.');
+  assert.equal(isHidden(d, 'assessmentError'), false);
+  expectStep(d, 1, null);
+  const platforms = boxes(d, 'assessmentPlatforms');
+  platforms[0].checked = true;
+  platforms[1].checked = true;
+  platforms[0].handlers.change();
+  click(d, 'btnAssessPlatformsNext');
+  assert.equal(isHidden(d, 'assessmentError'), true);
+  expectStep(d, 2, 'baselinesTitle');
+  boxes(d, 'assessmentPacks')[0].checked = true;
+  click(d, 'btnAssessBaselinesNext');
+  assert.equal(d.element('assessmentError').textContent,
+    'Every selected platform requires a selected applicable pack; choose at least one platform.');
+  expectStep(d, 2, 'baselinesTitle');
+  boxes(d, 'assessmentPacks')[1].checked = true;
+  click(d, 'btnAssessBaselinesNext');
+  assert.equal(isHidden(d, 'assessmentError'), true);
+  expectStep(d, 3, 'contextTitle');
+  click(d, 'btnAssessContextNext');
+  expectStep(d, 4, 'runAssessmentTitle');
+  click(d, 'btnAssessReviewBack');
+  expectStep(d, 3, 'contextTitle');
+  click(d, 'btnAssessContextBack');
+  expectStep(d, 2, 'baselinesTitle');
+  click(d, 'btnAssessBaselinesBack');
+  expectStep(d, 1, 'platformsTitle');
+  assert.deepEqual(boxes(d, 'assessmentPacks').map((b) => b.checked), [true, true, false, false]);
+  renderCatalog(d, Array.from({ length: 65 }, (_, i) => ({ ...syntheticPacks()[0], id: `synthetic-bulk-${i}` })));
+  click(d, 'btnAssessPlatformsNext');
+  click(d, 'btnAssessmentSelectAll');
+  click(d, 'btnAssessBaselinesNext');
+  assert.equal(d.element('assessmentError').textContent, 'Select 1–64 packs.');
+  expectStep(d, 2);
+});
+
+test('background refresh shows a running or completed assessment without moving focus; errors keep the step', async () => {
+  for (const progress of [{ running: true, percent: 20, phase: 'Collecting' }, { done: true, percent: 100 }]) {
+    const d = assessmentDashboard((url) => {
+      if (url === '/api/state') return connectedState();
+      if (url === '/api/assessment') return progress;
+      if (url === '/api/assessment/results') return { summaries: [], controls: [{ controlId: 'SYN-BOOT' }] };
+      return {};
+    });
+    await new Promise(setImmediate);
+    expectStep(d, 5, null);
+  }
+  let failing = false;
+  const d = assessmentDashboard((url) => {
+    if (url === '/api/state') return connectedState();
+    if (url === '/api/assessment') return failing ? { done: true, error: 'Synthetic report failure.' } : {};
+    return {};
+  });
+  await new Promise(setImmediate);
+  expectStep(d, 1, null);
+  d.run("setAssessmentStep('context')");
+  failing = true;
+  await d.run('refreshAssessment()');
+  expectStep(d, 3, null);
+  assert.match(d.element('assessmentError').textContent, /Synthetic report failure/);
+});
+
+test('admission moves to results with focus and New assessment waits for the run, then keeps every choice', async () => {
+  let status = 409;
+  let started = false;
+  let running = false;
+  const d = assessmentDashboard((url, r) => {
+    if (url === '/api/state') return connectedState();
+    if (url === '/api/assessment' && r.method === 'POST') {
+      if (status === 409) return { httpStatus: 409, body: { error: 'An export is already running.' } };
+      started = true;
+      running = true;
+      return { httpStatus: 202, body: { started: true } };
+    }
+    if (url === '/api/assessment') {
+      return { running, done: started && !running, percent: running ? 30 : 100, phase: 'Synthetic' };
+    }
+    if (url === '/api/assessment/results') return { summaries: [], controls: [{ controlId: 'SYN-NEW' }] };
+    return {};
+  });
+  await selectAll(d);
+  d.element('assessmentOsMacos').value = '14.0';
+  d.element('assessmentEnrollment').value = 'fullyManaged';
+  click(d, 'btnAssessPlatformsNext');
+  click(d, 'btnAssessBaselinesNext');
+  click(d, 'btnAssessContextNext');
+  expectStep(d, 4, 'runAssessmentTitle');
+  await click(d, 'btnAssessmentRun');
+  assert.match(d.element('assessmentError').textContent, /409.*already running/);
+  expectStep(d, 4, 'runAssessmentTitle');
+  status = 202;
+  await click(d, 'btnAssessmentRun');
+  expectStep(d, 5, 'resultsTitle');
+  assert.equal(d.element('btnAssessNew').disabled, true);
+  click(d, 'btnAssessNew');
+  expectStep(d, 5, 'resultsTitle');
+  running = false;
+  await Array.from(d.timers.values())[0]();
+  assert.match(d.element('assessmentResults').innerHTML, /SYN-NEW/);
+  assert.equal(d.element('btnAssessNew').disabled, false);
+  expectStep(d, 5, 'resultsTitle');
+  click(d, 'btnAssessNew');
+  expectStep(d, 1, 'platformsTitle');
+  assert.equal(boxes(d, 'assessmentPlatforms').every((b) => b.checked), true);
+  assert.equal(boxes(d, 'assessmentPacks').every((b) => b.checked), true);
+  assert.equal(d.element('assessmentOsMacos').value, '14.0');
+  assert.equal(d.element('assessmentEnrollment').value, 'fullyManaged');
+  assert.equal(d.element('assessmentOutputPath').value, ' C:\\SyntheticReports ');
+  assert.match(d.element('assessmentResults').innerHTML, /SYN-NEW/);
+});
+
+test('clearing the workspace returns to step 1 and clears the import summary, review and warning', async () => {
+  const d = assessmentDashboard((url) => (url === '/api/state' ? connectedState() : {}));
+  await selectAll(d);
+  click(d, 'btnAssessPlatformsNext');
+  click(d, 'btnAssessBaselinesNext');
+  click(d, 'btnAssessContextNext');
+  d.element('assessmentImportSummary').textContent = 'Synthetic import summary';
+  assert.notEqual(d.element('assessmentReview').textContent, '');
+  assert.equal(isHidden(d, 'assessmentContextWarning'), false);
+  const focused = d.focused();
+  d.run('clearWorkspace()');
+  expectStep(d, 1, focused);
+  for (const id of ['assessmentImportSummary', 'assessmentReview', 'assessmentContextWarning']) {
+    assert.equal(d.element(id).textContent, '', id);
+  }
+  assert.equal(isHidden(d, 'assessmentContextWarning'), true);
+});
+
+test('pack rows outside the selected platforms or profile are hidden, with an empty state and scoped Select all/none', () => {
+  const d = assessmentDashboard();
+  renderCatalog(d);
+  const rowsHidden = () => d.element('assessmentPacks').children.map((row) => row.classList.contains('hidden'));
+  const checked = () => boxes(d, 'assessmentPacks').map((b) => b.checked);
+  const empty = 'No rule pack matches the selected platforms and profile. ' +
+    'Choose other platforms or a different profile, or import a pack below.';
+  assert.deepEqual(rowsHidden(), [true, true, true, true]);
+  assert.equal(d.element('assessmentPacksEmpty').textContent, empty);
+  assert.equal(isHidden(d, 'assessmentPacksEmpty'), false);
+  const platforms = boxes(d, 'assessmentPlatforms');
+  platforms[0].checked = true;
+  platforms[3].checked = true;
+  platforms[0].handlers.change();
+  assert.deepEqual(rowsHidden(), [false, true, true, false]);
+  assert.equal(isHidden(d, 'assessmentPacksEmpty'), true);
+  assert.equal(d.element('assessmentPacksEmpty').textContent, '');
+  click(d, 'btnAssessmentSelectAll');
+  assert.deepEqual(checked(), [true, false, false, true]);
+  click(d, 'btnAssessmentSelectNone');
+  assert.deepEqual(checked(), [false, false, false, false]);
+  d.element('assessmentProfile').value = 'Imported test profile';
+  d.element('assessmentProfile').handlers.change();
+  assert.deepEqual(rowsHidden(), [true, true, true, false]);
+  click(d, 'btnAssessmentSelectAll');
+  assert.deepEqual(checked(), [false, false, false, true]);
+  platforms[3].checked = false;
+  platforms[3].handlers.change();
+  assert.deepEqual(rowsHidden(), [true, true, true, true]);
+  assert.deepEqual(checked(), [false, false, false, false]);
+  assert.equal(d.element('assessmentPacksEmpty').textContent, empty);
+  assert.equal(isHidden(d, 'assessmentPacksEmpty'), false);
+  const html = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
+  assert.match(html, /<div id="assessmentPacks" class="assessment-packs"><\/div>\s*<p id="assessmentPacksEmpty"/);
+});
+
+test('context shows only the selected platforms\' fields and warns while the Windows 11 build is blank', () => {
+  const d = assessmentDashboard();
+  renderCatalog(d);
+  const fields = {
+    windows11: ['assessmentContextWindows11'],
+    macos: ['assessmentContextMacos'],
+    iosIpados: ['assessmentContextIosIpados', 'assessmentContextIosOwnership'],
+    androidEnterprise: ['assessmentContextAndroidEnterprise', 'assessmentContextEnrollment']
+  };
+  const platforms = boxes(d, 'assessmentPlatforms');
+  Object.keys(fields).forEach((key, i) => {
+    platforms.forEach((box, j) => { box.checked = j === i; });
+    platforms[0].handlers.change();
+    click(d, 'btnAssessPlatformsNext');
+    boxes(d, 'assessmentPacks')[i].checked = true;
+    click(d, 'btnAssessBaselinesNext');
+    expectStep(d, 3, 'contextTitle');
+    for (const [platform, ids] of Object.entries(fields)) {
+      for (const id of ids) assert.equal(isHidden(d, id), platform !== key, `${key}: ${id}`);
+    }
+    assert.equal(isHidden(d, 'assessmentContextWarning'), key !== 'windows11', key);
+    click(d, 'btnAssessContextBack');
+    click(d, 'btnAssessBaselinesBack');
+  });
+  platforms.forEach((box) => { box.checked = true; });
+  platforms[0].handlers.change();
+  click(d, 'btnAssessPlatformsNext');
+  click(d, 'btnAssessmentSelectAll');
+  click(d, 'btnAssessBaselinesNext');
+  expectStep(d, 3, 'contextTitle');
+  for (const id of Object.values(fields).flat()) assert.equal(isHidden(d, id), false, id);
+  assert.equal(d.element('assessmentContextWarning').textContent, windowsWarning);
+  d.element('assessmentOsWindows11').value = '10.0.26100';
+  d.element('assessmentOsWindows11').handlers.input();
+  assert.equal(isHidden(d, 'assessmentContextWarning'), true);
+  assert.equal(d.element('assessmentContextWarning').textContent, '');
+  d.element('assessmentOsWindows11').value = '   ';
+  d.element('assessmentOsWindows11').handlers.input();
+  assert.equal(isHidden(d, 'assessmentContextWarning'), false);
+  click(d, 'btnAssessContextNext');
+  expectStep(d, 4, 'runAssessmentTitle');
+});
+
+test('the review lists platforms, packs and every context value as plain text', async () => {
+  const d = assessmentDashboard((url) => (url === '/api/state' ? connectedState() : {}));
+  await selectAll(d);
+  d.element('assessmentOsMacos').value = ' 14.0 ';
+  d.element('assessmentEnrollment').value = 'corporateOwnedWorkProfile';
+  click(d, 'btnAssessPlatformsNext');
+  click(d, 'btnAssessBaselinesNext');
+  click(d, 'btnAssessContextNext');
+  expectStep(d, 4, 'runAssessmentTitle');
+  assert.equal(d.element('assessmentReview').textContent, [
+    'Platforms: Windows 11, macOS, iOS/iPadOS, Android Enterprise',
+    '',
+    'Rule packs:',
+    'synthetic-windows11 @ 1.0.0 — Windows 11 · Test profile',
+    'synthetic-macos @ 1.0.0 — macOS · Test profile',
+    'synthetic-iosipados @ 1.0.0 — iOS/iPadOS · Test profile',
+    'synthetic-androidenterprise @ 1.0.0 — Android Enterprise · Imported test profile',
+    '',
+    'Context (user-selected, not discovered device inventory):',
+    'Windows 11 — OS version: Unknown',
+    'macOS — OS version: 14.0',
+    'iOS/iPadOS — OS version: Unknown; ownership scope: Unknown',
+    'Android Enterprise — OS version: Unknown; enrollment mode: Corporate-owned work profile',
+    '',
+    windowsWarning
+  ].join('\n'));
+  assert.equal(d.element('assessmentReview').innerHTML, '');
+  d.element('assessmentOsWindows11').value = '10.0.22631';
+  click(d, 'btnAssessReviewBack');
+  click(d, 'btnAssessContextNext');
+  assert.match(d.element('assessmentReview').textContent, /Windows 11 — OS version: 10\.0\.22631/);
+  assert.equal(d.element('assessmentReview').textContent.includes('Windows policies targeting'), false);
+  const html = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
+  for (const select of ['assessmentEnrollment', 'assessmentIosOwnership']) {
+    const options = html.match(new RegExp(`id="${select}">([\\s\\S]*?)</select>`))[1];
+    const labelled = [...options.matchAll(/<option value="(\w+)">([^<]+)<\/option>/g)];
+    assert.ok(labelled.length >= 2, select);
+    for (const [, value, label] of labelled) {
+      d.element(select).value = value;
+      d.run('renderAssessmentReview()');
+      assert.ok(d.element('assessmentReview').textContent.includes(label), `${select}: ${value}`);
+    }
+  }
+});
+
+// --- ZIP rule-pack import ----------------------------------------------------
+
+const importTypeMessage = 'Choose a JSON rule pack (at most 10 MiB) or a ZIP archive (at most 32 MiB).';
+const importedNotice = 'Select the platforms and packs to assess; imports are never selected automatically.';
+
+test('the import card accepts JSON and ZIP files and the catalog note names the supported formats', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
+  assert.match(html,
+    /id="assessmentImportFile" accept="\.json,\.zip,application\/json,application\/zip,application\/x-zip-compressed"/);
+  const d = assessmentDashboard();
+  renderCatalog(d);
+  const note = d.element('assessmentCatalogNote').textContent;
+  for (const phrase of ['never bundled', 'licensed CIS Intune build-kit ZIP', 'schema-1 JSON rule pack',
+    'PDF and Excel benchmarks are not supported']) {
+    assert.ok(note.includes(phrase), phrase);
+  }
+});
+
+test('ZIP import posts base64, lists the result and merges packs without selecting them or dropping catalog errors', async () => {
+  const bytes = Array.from({ length: 0x8000 * 2 + 5 }, (_, i) => (i * 7) & 0xff);
+  const present = { ...syntheticPacks()[0], origin: 'imported', controlCount: 2, added: false };
+  const created = { ...syntheticPacks()[0], id: 'synthetic-kit-level-1', version: '1.0.0+abc123',
+    sha256: 'c'.repeat(64), origin: 'imported', framework: 'CIS', profile: 'Level 1', controlCount: 1, added: true };
+  const skipped = Array.from({ length: 12 }, (_, i) => ({
+    entry: `kit/<extra-${i}>.json`, reason: 'Not a Settings Catalog policy or rule pack.' }));
+  const d = assessmentDashboard((url, r) => (url === '/api/assessment/packs' && r.method === 'POST'
+    ? { httpStatus: 201, body: { packs: [present, created], added: 1, skipped, skippedCount: 14, ignored: 3,
+      archive: { sha256: 'd'.repeat(64) } } }
+    : {}));
+  d.run(`renderAssessmentPacks(${JSON.stringify({ packs: syntheticPacks(),
+    errors: [{ origin: 'imported', reason: 'Synthetic invalid pack.' }] })})`);
+  boxes(d, 'assessmentPlatforms')[0].checked = true;
+  boxes(d, 'assessmentPlatforms')[0].handlers.change();
+  boxes(d, 'assessmentPacks')[0].checked = true;
+  let reads = 0;
+  d.element('assessmentImportFile').files = [{ name: 'Synthetic-Kit.ZIP', size: bytes.length,
+    arrayBuffer: async () => { reads++; return Uint8Array.from(bytes).buffer; },
+    text: async () => { throw new Error('A ZIP archive must not be read as text.'); } }];
+  await click(d, 'btnAssessmentImport');
+  assert.equal(d.element('assessmentError').textContent, '');
+  assert.equal(reads, 1);
+  assert.deepEqual(d.requests.find((r) => r.method === 'POST').payload,
+    { archive: Buffer.from(bytes).toString('base64') });
+  assert.equal(d.element('assessmentImportSummary').textContent, [
+    `Imported 2 rule packs locally. ${importedNotice}`,
+    '1 new, 1 already present.',
+    'synthetic-windows11 @ 1.0.0 — Windows 11 · Test profile · 2 controls · already present',
+    'synthetic-kit-level-1 @ 1.0.0+abc123 — Windows 11 · Level 1 · 1 control · new',
+    'Skipped 14 archive entries:',
+    ...skipped.slice(0, 10).map((s) => `${s.entry}: ${s.reason}`),
+    '…and 4 more.',
+    '3 other files were ignored (not JSON).'
+  ].join('\n'));
+  assert.equal(d.element('assessmentImportSummary').innerHTML, '');
+  assert.equal(d.element('assessmentProgress').textContent, '');
+  const rows = Object.fromEntries(boxes(d, 'assessmentPacks').map((b) => [b.value, b]));
+  assert.equal(Object.keys(rows).length, 5);
+  assert.equal(rows[`synthetic-windows11@1.0.0#${'0'.repeat(64)}`].checked, true);
+  const added = rows[`synthetic-kit-level-1@1.0.0+abc123#${'c'.repeat(64)}`];
+  assert.equal(added.disabled, false);
+  assert.equal(added.checked, false);
+  assert.equal(d.element('assessmentCatalogErrors').textContent, 'imported: Synthetic invalid pack.');
+});
+
+test('import checks the file type and size before reading, and a reset during a ZIP read sends nothing', async () => {
+  const d = assessmentDashboard();
+  let reads = 0;
+  const read = async () => { reads++; return new ArrayBuffer(1); };
+  const zipMessage = 'Choose a nonempty ZIP archive, at most 32 MiB.';
+  for (const [file, message] of [
+    [undefined, importTypeMessage],
+    [{ name: 'benchmark.pdf', size: 2 }, importTypeMessage],
+    [{ name: 'benchmark.xlsx', size: 2 }, importTypeMessage],
+    [{ name: 'kit.zip.txt', size: 2 }, importTypeMessage],
+    [{ name: 'kit.zip', size: 0 }, zipMessage],
+    [{ name: 'kit.ZIP', size: 32 * 1024 * 1024 + 1 }, zipMessage],
+    [{ name: 'pack.JSON', size: 10 * 1024 * 1024 + 1 }, 'Choose a nonempty JSON rule pack, at most 10 MiB.']
+  ]) {
+    d.element('assessmentImportFile').files = file ? [{ ...file, arrayBuffer: read, text: read }] : [];
+    await click(d, 'btnAssessmentImport');
+    assert.equal(d.element('assessmentError').textContent, message, file?.name || 'no file');
+  }
+  assert.equal(reads, 0);
+  assert.equal(d.requests.filter((r) => r.method === 'POST').length, 0);
+  d.element('assessmentImportFile').files = [{ name: 'kit.Zip', size: 32 * 1024 * 1024,
+    arrayBuffer: async () => Uint8Array.from([0, 127, 128, 255]).buffer }];
+  await click(d, 'btnAssessmentImport');
+  assert.deepEqual(d.requests.find((r) => r.method === 'POST').payload,
+    { archive: Buffer.from([0, 127, 128, 255]).toString('base64') });
+  let release;
+  d.element('assessmentImportFile').files = [{ name: 'kit.zip', size: 1,
+    arrayBuffer: () => new Promise((resolve) => { release = resolve; }) }];
+  const pending = click(d, 'btnAssessmentImport');
+  d.run('clearAssessment()');
+  release(Uint8Array.from([1]).buffer);
+  await pending;
+  assert.equal(d.requests.filter((r) => r.method === 'POST').length, 1);
+  assert.equal(d.element('btnAssessmentImport').disabled, false);
+});
+
+test('an archive with nothing importable shows the error and the skipped and ignored files, and imports nothing', async () => {
+  let response;
+  const d = assessmentDashboard((url, r) => (url === '/api/assessment/packs' && r.method === 'POST' ? response : {}));
+  renderCatalog(d);
+  response = { httpStatus: 400, body: {
+    error: 'The archive contains no importable rule packs or Settings Catalog policies. ' +
+      'PDF, Excel, XCCDF/OVAL, Group Policy and OMA-URI content is not supported.',
+    skipped: [{ entry: 'kit/<notes>.json', reason: 'Not a Settings Catalog policy or rule pack.' }],
+    skippedCount: 1, ignored: 1 } };
+  d.element('assessmentImportFile').files = [{ name: 'kit.zip', size: 3,
+    arrayBuffer: async () => Uint8Array.from([1, 2, 3]).buffer }];
+  await click(d, 'btnAssessmentImport');
+  assert.match(d.element('assessmentError').textContent, /^400: The archive contains no importable rule packs/);
+  assert.equal(d.element('assessmentImportSummary').textContent, [
+    'Nothing was imported.',
+    'Skipped 1 archive entry:',
+    'kit/<notes>.json: Not a Settings Catalog policy or rule pack.',
+    '1 other file was ignored (not JSON).'
+  ].join('\n'));
+  assert.equal(boxes(d, 'assessmentPacks').length, 4);
+  response = { httpStatus: 413, body: { error: 'Synthetic archive limit exceeded.' } };
+  await click(d, 'btnAssessmentImport');
+  assert.equal(d.element('assessmentError').textContent, '413: Synthetic archive limit exceeded.');
+  assert.equal(d.element('assessmentImportSummary').textContent, '');
+  response = { httpStatus: 201, body: { pack: { ...syntheticPacks()[1], id: 'synthetic-json',
+    sha256: 'e'.repeat(64), origin: 'imported' } } };
+  d.element('assessmentImportFile').files = [{ name: 'pack.json', size: 2, text: async () => '{}' }];
+  await click(d, 'btnAssessmentImport');
+  assert.deepEqual(d.requests.filter((r) => r.method === 'POST').at(-1).payload, { content: '{}' });
+  assert.equal(d.element('assessmentError').textContent, '');
+  assert.equal(d.element('assessmentImportSummary').textContent,
+    `Imported 1 rule pack locally. ${importedNotice}\nsynthetic-json @ 1.0.0 — macOS · Test profile`);
+  assert.equal(boxes(d, 'assessmentPacks').length, 5);
 });

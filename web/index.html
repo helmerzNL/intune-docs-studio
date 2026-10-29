@@ -300,48 +300,62 @@
         Reports stay local and are never committed or pushed automatically. Documentation export settings are separate.</p>
     </header>
 
+    <ol class="stepper wide" aria-label="Assessment steps">
+      <li id="assessStepPlatforms" class="active"><span class="step-num" aria-hidden="true">1</span>Platforms</li>
+      <li id="assessStepBaselines"><span class="step-num" aria-hidden="true">2</span>Baselines</li>
+      <li id="assessStepContext"><span class="step-num" aria-hidden="true">3</span>Context</li>
+      <li id="assessStepReview"><span class="step-num" aria-hidden="true">4</span>Review &amp; run</li>
+      <li id="assessStepResults"><span class="step-num" aria-hidden="true">5</span>Results</li>
+    </ol>
+
+    <p id="assessmentError" class="error hidden" role="alert"></p>
+
     <div id="cardAssessment" class="stack">
-      <section class="card" aria-labelledby="baselinesTitle">
-        <h3 id="baselinesTitle" class="card-title">Baselines</h3>
-        <div id="assessmentCatalogNote" class="notice"></div>
-        <p id="assessmentCatalogErrors" class="muted assessment-text" role="status"></p>
+      <section class="card" id="assessPanelPlatforms" aria-labelledby="platformsTitle">
+        <h3 id="platformsTitle" class="card-title" tabindex="-1">Choose platforms</h3>
         <fieldset>
           <legend>Target platforms</legend>
           <div id="assessmentPlatforms" class="options"></div>
         </fieldset>
+        <div class="actions">
+          <button class="btn primary" id="btnAssessPlatformsNext">Next</button>
+        </div>
+      </section>
+
+      <section class="card hidden" id="assessPanelBaselines" aria-labelledby="baselinesTitle">
+        <h3 id="baselinesTitle" class="card-title" tabindex="-1">Baselines</h3>
+        <div id="assessmentCatalogNote" class="notice"></div>
         <label>Benchmark profile filter
           <select id="assessmentProfile"><option value="">All available profiles</option></select>
           <small>Select exact pack versions/profiles below; unavailable combinations cannot run.</small>
         </label>
         <fieldset>
           <legend>Rule packs, versions and profiles</legend>
-          <div id="assessmentPacks" class="assessment-packs"></div>
-        </fieldset>
-        <details class="disclosure">
-          <summary>Import a rule pack</summary>
-          <div class="disclosure-body">
-            <label>Import a local rule pack (JSON)
-              <input type="file" id="assessmentImportFile" accept=".json,application/json">
-              <small>Customer-owned/licensed CIS content is not bundled or downloaded. Maximum 10 MiB UTF-8 JSON,
-                32 nesting levels, 20,000 controls, 32,768 characters per string. The server validates the original text.</small>
-            </label>
-            <button class="btn" id="btnAssessmentImport">Import pack</button>
+          <div class="assessment-pack-actions">
+            <button class="btn small ghost" id="btnAssessmentSelectAll">Select all</button>
+            <button class="btn small ghost" id="btnAssessmentSelectNone">Select none</button>
           </div>
-        </details>
+          <div id="assessmentPacks" class="assessment-packs"></div>
+          <p id="assessmentPacksEmpty" class="muted hidden"></p>
+        </fieldset>
+        <div class="actions">
+          <button class="btn ghost" id="btnAssessBaselinesBack">Back</button>
+          <button class="btn primary" id="btnAssessBaselinesNext">Next</button>
+        </div>
       </section>
 
-      <section class="card" aria-labelledby="contextTitle">
-        <h3 id="contextTitle" class="card-title">User-selected applicability context <span class="muted">(optional)</span></h3>
+      <section class="card hidden" id="assessPanelContext" aria-labelledby="contextTitle">
+        <h3 id="contextTitle" class="card-title" tabindex="-1">User-selected applicability context <span class="muted">(optional)</span></h3>
         <p class="muted">Not discovered device inventory. Leave unknown values blank; controls requiring unknown context
           remain not assessed. The catalog does not include per-control applicability bounds.</p>
         <div class="grid2">
-          <label>Windows 11 OS version <input type="text" id="assessmentOsWindows11" placeholder="Unknown (for example 10.0.22000)"></label>
-          <label>macOS version <input type="text" id="assessmentOsMacos" placeholder="Unknown (for example 14.0)"></label>
-          <label>iOS/iPadOS version <input type="text" id="assessmentOsIosIpados" placeholder="Unknown"></label>
-          <label>Android Enterprise OS version <input type="text" id="assessmentOsAndroidEnterprise" placeholder="Unknown"></label>
+          <label id="assessmentContextWindows11">Windows 11 OS version <input type="text" id="assessmentOsWindows11" placeholder="Unknown (for example 10.0.22000)"></label>
+          <label id="assessmentContextMacos">macOS version <input type="text" id="assessmentOsMacos" placeholder="Unknown (for example 14.0)"></label>
+          <label id="assessmentContextIosIpados">iOS/iPadOS version <input type="text" id="assessmentOsIosIpados" placeholder="Unknown"></label>
+          <label id="assessmentContextAndroidEnterprise">Android Enterprise OS version <input type="text" id="assessmentOsAndroidEnterprise" placeholder="Unknown"></label>
         </div>
         <div class="grid2">
-          <label>Android Enterprise enrollment mode (user-selected)
+          <label id="assessmentContextEnrollment">Android Enterprise enrollment mode (user-selected)
             <select id="assessmentEnrollment">
               <option value="">Unknown</option>
               <option value="workProfile">Personally-owned work profile</option>
@@ -350,7 +364,7 @@
               <option value="corporateOwnedWorkProfile">Corporate-owned work profile</option>
             </select>
           </label>
-          <label>iOS/iPadOS ownership scope (user-selected comparison context)
+          <label id="assessmentContextIosOwnership">iOS/iPadOS ownership scope (user-selected comparison context)
             <select id="assessmentIosOwnership">
               <option value="">Unknown</option>
               <option value="personallyOwned">Personally owned</option>
@@ -359,25 +373,34 @@
             <small>This is explicit comparison context, not discovered ownership or effective assignment.</small>
           </label>
         </div>
+        <p id="assessmentContextWarning" class="notice hidden"></p>
+        <div class="actions">
+          <button class="btn ghost" id="btnAssessContextBack">Back</button>
+          <button class="btn primary" id="btnAssessContextNext">Next</button>
+        </div>
       </section>
 
-      <section class="card" aria-labelledby="runAssessmentTitle">
-        <h3 id="runAssessmentTitle" class="card-title">Run</h3>
+      <section class="card hidden" id="assessPanelReview" aria-labelledby="runAssessmentTitle">
+        <h3 id="runAssessmentTitle" class="card-title" tabindex="-1">Review and run</h3>
+        <p id="assessmentReview" class="assessment-text"></p>
         <label>Assessment report destination
           <input type="text" id="assessmentOutputPath" spellcheck="false" placeholder="Absolute local folder, separate from application and export">
           <small>A new run subdirectory contains assessment.md and assessment.json. Installation/export overlap is rejected by the server.</small>
         </label>
-        <div class="row">
+        <div class="actions">
+          <button class="btn ghost" id="btnAssessReviewBack">Back</button>
           <button class="btn primary" id="btnAssessmentRun" disabled>Assess selected policies</button>
-          <button class="btn ghost" id="btnAssessmentRefresh">Refresh assessment</button>
         </div>
-        <p id="assessmentError" class="error hidden" role="alert"></p>
-        <div class="progress"><div id="assessmentBar" class="bar"></div></div>
-        <p id="assessmentProgress" class="phase" role="status" aria-live="polite"></p>
       </section>
 
-      <section class="card" aria-labelledby="resultsTitle">
-        <h3 id="resultsTitle" class="card-title">Results</h3>
+      <section class="card hidden" id="assessPanelResults" aria-labelledby="resultsTitle">
+        <h3 id="resultsTitle" class="card-title" tabindex="-1">Results</h3>
+        <div class="progress"><div id="assessmentBar" class="bar"></div></div>
+        <p id="assessmentProgress" class="phase" role="status" aria-live="polite"></p>
+        <div class="row">
+          <button class="btn primary" id="btnAssessNew">New assessment</button>
+          <button class="btn ghost" id="btnAssessmentRefresh">Refresh assessment</button>
+        </div>
         <p id="assessmentReportPaths" class="assessment-text"></p>
         <p id="assessmentLimitations" class="muted"></p>
         <div id="assessmentSummary"></div>
@@ -409,6 +432,20 @@
             <tbody id="assessmentResults"></tbody>
           </table>
         </div>
+      </section>
+
+      <section class="card" id="assessImportPanel" aria-labelledby="assessImportTitle">
+        <h3 id="assessImportTitle" class="card-title">Import rule packs</h3>
+        <label>Import a rule pack (JSON) or a CIS Intune build-kit archive (ZIP)
+          <input type="file" id="assessmentImportFile" accept=".json,.zip,application/json,application/zip,application/x-zip-compressed">
+          <small>Customer-owned/licensed CIS content is not bundled or downloaded. JSON: at most 10 MiB UTF-8,
+            32 nesting levels, 20,000 controls, 32,768 characters per string; the server validates the original text.
+            ZIP: at most 32 MiB, read in memory and never extracted; its Settings Catalog policies and schema-1 packs
+            become local rule packs. PDF and Excel benchmarks are not supported.</small>
+        </label>
+        <button class="btn" id="btnAssessmentImport">Import pack</button>
+        <p id="assessmentImportSummary" class="assessment-text" role="status"></p>
+        <p id="assessmentCatalogErrors" class="muted assessment-text" role="status"></p>
       </section>
     </div>
   </section>
