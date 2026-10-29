@@ -291,6 +291,25 @@ test('the page has unique IDs, no external resources and honors reduced motion',
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
 });
 
+test('landing blocks share top and bottom edges and centre their content', () => {
+  const rule = (selector) => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = css.match(new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`));
+    assert.ok(match, `top-level ${selector} rule`);
+    return match[1];
+  };
+  const landing = rule('.landing');
+  assert.match(landing, /align-items:\s*stretch/);
+  assert.doesNotMatch(landing, /align-items:\s*center/);
+  assert.match(landing, /align-content:\s*center/);
+  for (const block of ['.hero', '.signin-card']) {
+    const body = rule(block);
+    assert.match(body, /display:\s*flex/, block);
+    assert.match(body, /flex-direction:\s*column/, block);
+    assert.match(body, /justify-content:\s*center/, block);
+  }
+});
+
 test('every element the script uses exists exactly once in the page', () => {
   const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
   const literal = [...script.matchAll(/\$\('([A-Za-z][\w-]*)'\)/g)].map((m) => m[1]);
