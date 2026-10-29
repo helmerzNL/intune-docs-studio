@@ -1545,6 +1545,20 @@ deletions(-)`. If the opt-in pre-commit hook is installed, it passes.
 
 ### Task 3: In-memory build-kit archive reader
 
+**Integrity review correction (2026-10-29):** the original Step 4 code below
+is superseded by `lib\BaselineArchive.ps1`; do not copy its `Entry.Open()`
+reader. Matching `ZipArchiveEntry.Length` does not prove integrity: .NET can
+clamp deflated output and omit CRC checks. The implemented reader uses bounded
+central/local metadata (including ZIP64 and signed/unsigned data descriptors),
+unclamped stored/deflate streams, CRC-32, full actual-length comparison, and
+bounded DEFLATE framing validation. `DeflateStream` alone also accepts a
+missing final block or trailing compressed bytes. The framing pass counts
+symbols without generating another decompressed copy. The mutable read budget
+survives entry exceptions; PowerShell does not copy `[ref]` arguments back on
+a failed managed invocation. The 64 MiB error remains outside the entry catch.
+These corrections implement the spec's existing corrupt-entry rule, not a new
+API. Task 4 must use the current source, not this historical implementation.
+
 Add `ConvertFrom-IdsBaselineArchive` to `lib\BaselineArchive.ps1`. It reads a
 ZIP archive from a byte array in memory and extracts nothing to disk. It
 enforces the archive limits and passes schema-1 rule packs through. It collects
@@ -1668,8 +1682,12 @@ Notes for this task:
     - It throws only `[ArgumentException]` (HTTP 400) or
       `[IO.InvalidDataException]` (HTTP 413), with the messages above.
   - Internal helpers:
-    - `Read-IdsBaselineArchiveEntry($Entry, $Budget)` → `byte[]`, at most
-      10 MiB + 1 bytes. `$Budget` is `@{ read = 0L }`.
+    - `Initialize-IdsBaselineArchiveReader` loads the dependency-free managed
+      integrity helper once. Its bounded `ReadDirectory` returns entry metadata.
+    - `Read-IdsBaselineArchiveEntry($Bytes, $Entry, $Budget)` → `byte[]`, at
+      most 10 MiB + 1 bytes. `$Entry` is validated raw-directory metadata, not
+      a `ZipArchiveEntry`. `$Budget` is the shared `@{ read = 0L }`, updated
+      even when CRC/length/framing validation subsequently fails.
     - `ConvertFrom-IdsBaselineArchiveText([byte[]]$Bytes)` → string.
     - `Get-IdsBaselineArchivePolicies($Value)` → an array of policies, or
       `$null`.

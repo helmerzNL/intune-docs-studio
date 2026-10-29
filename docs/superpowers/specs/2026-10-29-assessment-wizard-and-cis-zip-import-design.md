@@ -224,6 +224,25 @@ a read-only `MemoryStream`; nothing is extracted.
 | JSON entry over 10 MiB (declared or actual) | Skipped. |
 | More than 64 MiB of JSON read in total | HTTP 413 (decompression bomb guard). |
 
+Entry integrity requires the central-directory CRC-32 and complete actual
+uncompressed length to match. Do not infer integrity from
+`ZipArchiveEntry.Open()` EOF: it can clamp output to a false declared length.
+The dependency-free managed reader validates bounded central/local metadata,
+reads only each entry's compressed span, and verifies complete DEFLATE framing
+(including its final block and absence of trailing compressed bytes).
+The framing pass counts symbols without creating a second decompressed copy.
+Bytes read from entries later rejected for corruption still count toward the
+archive budget, whose failure is checked outside the per-entry skip catch.
+
+Supported ZIP variants include stored/deflate entries, signed or unsigned
+data descriptors (32-bit and ZIP64), ZIP64 entry/directory metadata, UTF-8
+names, archive/entry comments, and prefixed archives with correct offsets.
+Multi-disk/encrypted archives and other compression methods are unsupported.
+Malformed or inconsistent metadata is rejected rather than recovered;
+trailing data after the end record/comment is not accepted. Central-directory
+digital signatures, if present, are metadata only and are not authenticated.
+CRC-32 detects corruption; it does not authenticate a customer-supplied pack.
+
 JSON entries may use UTF-8 (with or without a BOM) or UTF-16 LE/BE with a BOM.
 They are parsed
 with `System.Text.Json` (depth 64) and converted with the existing

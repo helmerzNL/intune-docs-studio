@@ -572,7 +572,7 @@ Describe 'CIS build-kit archive reader' {
         @{ label = 'stored with an unsupported compression method'; change = 'UnsupportedCompression'; declared = 0; level = 'Optimal' }
         @{ label = 'corrupt'; change = 'CorruptData'; declared = 0; level = 'Optimal' }
         @{ label = 'shorter than its declared size'; change = 'DeclaredLength'; declared = 5000; level = 'Optimal' }
-        # Recent .NET versions bound deflate output to the declared size; stored entries expose excess data.
+        @{ label = 'longer than its declared deflated size'; change = 'DeclaredLength'; declared = 1; level = 'Optimal' }
         @{ label = 'longer than its declared size'; change = 'DeclaredLength'; declared = 1; level = 'NoCompression' }
     ) {
         $zip = New-IdsTestZipBytes ([ordered]@{
@@ -588,12 +588,144 @@ Describe 'CIS build-kit archive reader' {
     It 'skips JSON entries over 10 MiB by <label> size' -ForEach @(
         @{ label = 'declared'; level = 'Optimal'; declared = 0 }
         @{ label = 'actual'; level = 'NoCompression'; declared = 100 }
+        @{ label = 'actual deflated'; level = 'Optimal'; declared = 100 }
     ) {
         $zip = New-IdsTestZipBytes ([ordered]@{ 'kit/large.json' = [byte[]]::new(10MB + 1) }) -CompressionLevel $level
         if ($declared) { $zip = Edit-IdsTestZipFirstEntry $zip DeclaredLength -Length $declared }
         $result = ConvertFrom-IdsBaselineArchive -Bytes $zip
         $result.packs.Count | Should -Be 0
         (Get-TestSkipLines $result) | Should -BeExactly 'kit/large.json => JSON entry exceeds the 10 MiB limit.'
+    }
+
+    It 'skips a stored policy changed to other valid JSON without updating its CRC' {
+        $json = New-TestPolicyJson -Value 1
+        $zip = New-IdsTestZipBytes ([ordered]@{
+            'kit/changed.json' = $json
+            'kit/good.json' = (New-TestPolicyJson -Id 'syn.good')
+        }) -CompressionLevel NoCompression
+        $start = 30 + [BitConverter]::ToUInt16($zip, 26) + [BitConverter]::ToUInt16($zip, 28)
+        $value = $json.IndexOf('"value":1', [StringComparison]::Ordinal)
+        $value | Should -BeGreaterOrEqual 0
+        $zip[$start + $value + 8] = [byte][char]'2'
+        $result = ConvertFrom-IdsBaselineArchive -Bytes $zip
+        (Get-TestSkipLines $result) | Should -BeExactly "kit/changed.json => $unreadable"
+        $result.packs.Count | Should -Be 1
+        (Read-IdsBaselinePack -Bytes $result.packs[0]).controls.id | Should -BeExactly 'syn.good'
+    }
+
+    It 'skips deflated data beyond the declared length with <label> CRC' -ForEach @(
+        @{ label = 'full-data'; prefixCrc = $false }
+        @{ label = 'valid-prefix'; prefixCrc = $true }
+    ) {
+        $pack = New-IdsTestPackBytes
+        [byte[]]$data = $pack + [Text.Encoding]::UTF8.GetBytes('invalid suffix')
+        $zip = New-IdsTestZipBytes ([ordered]@{ 'kit/hidden.json' = $data })
+        $zip = Edit-IdsTestZipFirstEntry $zip DeclaredLength -Length $pack.Length
+        if ($prefixCrc) {
+            $prefix = New-IdsTestZipBytes ([ordered]@{ 'kit/hidden.json' = $pack })
+            $crc = [BitConverter]::ToUInt32($prefix, 14)
+            $central = [BitConverter]::ToInt32($zip, $zip.Length - 6)
+            [BitConverter]::GetBytes($crc).CopyTo($zip, 14)
+            [BitConverter]::GetBytes($crc).CopyTo($zip, $central + 16)
+        }
+        $result = ConvertFrom-IdsBaselineArchive -Bytes $zip
+        (Get-TestSkipLines $result) | Should -BeExactly "kit/hidden.json => $unreadable"
+        $result.packs.Count | Should -Be 0
+    }
+
+    It 'counts unclamped bytes from a corrupt deflated entry toward the archive budget' {
+        $entries = [ordered]@{}
+        $filler = [byte[]]::new(10000000)
+        [Array]::Fill($filler, [byte]255)
+        for ($index = 0; $index -lt 7; $index++) { $entries["kit/filler$index.json"] = $filler }
+        $zip = Edit-IdsTestZipFirstEntry (New-IdsTestZipBytes $entries) DeclaredLength -Length 100
+        { ConvertFrom-IdsBaselineArchive -Bytes $zip } |
+            Should -Throw -ExceptionType ([IO.InvalidDataException]) -ExpectedMessage 'Archive JSON read limit exceeded (64 MiB).'
+    }
+
+    It 'preserves <label> ZIP compatibility while verifying integrity' -ForEach @(
+        @{ label = 'signed data descriptor'; descriptor = 'Signed'; zip64 = $false; local64 = $false; level = 'Optimal' }
+        @{ label = 'unsigned data descriptor'; descriptor = 'Unsigned'; zip64 = $false; local64 = $false; level = 'Optimal' }
+        @{ label = 'stored data descriptor'; descriptor = 'Signed'; zip64 = $false; local64 = $false; level = 'NoCompression' }
+        @{ label = 'ZIP64 directory and entry'; descriptor = 'None'; zip64 = $true; local64 = $false; level = 'Optimal' }
+        @{ label = 'ZIP64 signed descriptor'; descriptor = 'Signed'; zip64 = $true; local64 = $false; level = 'Optimal' }
+        @{ label = 'ZIP64 unsigned descriptor'; descriptor = 'Unsigned'; zip64 = $true; local64 = $false; level = 'Optimal' }
+        @{ label = 'local-only ZIP64'; descriptor = 'None'; zip64 = $false; local64 = $true; level = 'Optimal' }
+        @{ label = 'local-only ZIP64 descriptor'; descriptor = 'Signed'; zip64 = $false; local64 = $true; level = 'Optimal' }
+    ) {
+        $pack = New-IdsTestPackBytes
+        $zip = New-IdsTestZipVariant -Content $pack -Descriptor $descriptor -Zip64:$zip64 -LocalZip64:$local64 `
+            -CompressionLevel $level -Name "kit/$([char]0xE9).json" -Comment 'synthetic comment' `
+            -Prefix ([Text.Encoding]::ASCII.GetBytes('synthetic prefix'))
+        $result = ConvertFrom-IdsBaselineArchive -Bytes $zip
+        $result.skipped.Count | Should -Be 0
+        $result.packs.Count | Should -Be 1
+        [Convert]::ToBase64String($result.packs[0]) | Should -BeExactly ([Convert]::ToBase64String($pack))
+    }
+
+    It 'skips inconsistent local metadata: <field>' -ForEach @(
+        @{ field = 'CRC'; offset = 14 }
+        @{ field = 'method'; offset = 8 }
+        @{ field = 'name'; offset = 30 }
+    ) {
+        $zip = New-IdsTestZipBytes ([ordered]@{
+            'kit/changed.json' = (New-TestPolicyJson)
+            'kit/good.json' = (New-TestPolicyJson -Id 'syn.good')
+        })
+        $zip[$offset] = ($zip[$offset] + 1) % 256
+        $result = ConvertFrom-IdsBaselineArchive -Bytes $zip
+        (Get-TestSkipLines $result) | Should -BeExactly "kit/changed.json => $unreadable"
+        $result.packs.Count | Should -Be 1
+        (Read-IdsBaselinePack -Bytes $result.packs[0]).controls.id | Should -BeExactly 'syn.good'
+    }
+
+    It 'skips a mismatched data descriptor' {
+        $zip = New-IdsTestZipVariant -Content (New-IdsTestPackBytes) -Descriptor Signed
+        $central = [BitConverter]::ToInt32($zip, $zip.Length - 6)
+        $zip[$central - 12] = ($zip[$central - 12] + 1) % 256
+        $result = ConvertFrom-IdsBaselineArchive -Bytes $zip
+        $result.packs.Count | Should -Be 0
+        (Get-TestSkipLines $result) | Should -BeExactly "kit/policy.json => $unreadable"
+    }
+
+    It 'skips <label> deflate framing even when CRC and actual length match' -ForEach @(
+        @{ label = 'missing final block'; final = 0; suffix = [byte[]]@() }
+        @{ label = 'trailing compressed garbage'; final = 1; suffix = [byte[]](0, 1) }
+    ) {
+        $pack = New-IdsTestPackBytes
+        # A DEFLATE stored block: BFINAL/BTYPE, LEN, NLEN, literal bytes.
+        [byte[]]$raw = [byte[]]@($final) + [BitConverter]::GetBytes([uint16]$pack.Length) +
+            [BitConverter]::GetBytes([uint16](65535 - $pack.Length)) + $pack + $suffix
+        $zip = New-IdsTestZipVariant -Content $pack -DeflateData $raw
+        $result = ConvertFrom-IdsBaselineArchive -Bytes $zip
+        $result.packs.Count | Should -Be 0
+        (Get-TestSkipLines $result) | Should -BeExactly "kit/policy.json => $unreadable"
+    }
+
+    It 'accepts a complete deflate stored block' {
+        $pack = New-IdsTestPackBytes
+        [byte[]]$raw = [byte[]]@(1) + [BitConverter]::GetBytes([uint16]$pack.Length) +
+            [BitConverter]::GetBytes([uint16](65535 - $pack.Length)) + $pack
+        $result = ConvertFrom-IdsBaselineArchive -Bytes (New-IdsTestZipVariant -Content $pack -DeflateData $raw)
+        $result.skipped.Count | Should -Be 0
+        $result.packs.Count | Should -Be 1
+        [Convert]::ToBase64String($result.packs[0]) | Should -BeExactly ([Convert]::ToBase64String($pack))
+    }
+
+    It 'accepts fixed-Huffman deflate framing before classifying its JSON' {
+        $bytes = [Text.Encoding]::ASCII.GetBytes('123456789')
+        $raw = [byte[]](0x33, 0x34, 0x32, 0x36, 0x31, 0x35, 0x33, 0xB7, 0xB0, 0x04, 0x00)
+        $result = ConvertFrom-IdsBaselineArchive -Bytes (New-IdsTestZipVariant -Content $bytes -DeflateData $raw)
+        (Get-TestSkipLines $result) | Should -BeExactly 'kit/policy.json => Not a Settings Catalog policy or rule pack.'
+    }
+
+    It 'rejects impossible ZIP64 directory offsets without unchecked indexing' {
+        $zip = New-IdsTestZipVariant -Content (New-IdsTestPackBytes) -Zip64
+        $locator = $zip.Length - 42
+        $record = [BitConverter]::ToInt32($zip, $locator + 8)
+        [BitConverter]::GetBytes([uint64]::MaxValue).CopyTo($zip, $record + 48)
+        { ConvertFrom-IdsBaselineArchive -Bytes $zip } |
+            Should -Throw -ExceptionType ([ArgumentException]) -ExpectedMessage 'The file is not a valid ZIP archive.'
     }
 
     It 'converts a policy exactly at the 10 MiB entry limit' {
@@ -607,16 +739,12 @@ Describe 'CIS build-kit archive reader' {
 
     It 'bounds actual decompression to 10 MiB plus one byte and counts every returned byte' {
         $zip = New-IdsTestZipBytes ([ordered]@{ 'kit/large.json' = [byte[]]::new(11MB) })
-        $stream = [IO.MemoryStream]::new($zip, $false)
-        try {
-            $archive = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Read)
-            try {
-                $budget = @{ read = 123L }
-                $content = Read-IdsBaselineArchiveEntry $archive.Entries[0] $budget
-                $content.Length | Should -Be 10485761
-                $budget.read | Should -Be 10485884
-            } finally { $archive.Dispose() }
-        } finally { $stream.Dispose() }
+        Initialize-IdsBaselineArchiveReader
+        $entries = [Ids.BaselineZipReader]::ReadDirectory($zip, 1)
+        $budget = @{ read = 123L }
+        $content = Read-IdsBaselineArchiveEntry $zip $entries[0] $budget
+        $content.Length | Should -Be 10485761
+        $budget.read | Should -Be 10485884
     }
 
     It 'stops with an InvalidDataException after more than 64 MiB of JSON' {

@@ -353,27 +353,361 @@ function ConvertTo-IdsBuildKitPacks {
     return [pscustomobject]@{ packs = $packs.ToArray(); skipped = $skipped.ToArray() }
 }
 
-function Read-IdsBaselineArchiveEntry {
-    param($Entry, $Budget)
-    # Bound actual decompression even when the declared size is false.
-    # Bytes from entries that are later skipped still consume the budget.
-    $limit = 10MB + 1
-    $buffer = [byte[]]::new(81920)
-    $content = [IO.MemoryStream]::new()
-    $source = $null
-    try {
-        $source = $Entry.Open()
-        while ($content.Length -lt $limit -and $Budget.read -le 64MB) {
-            $count = $source.Read($buffer, 0, [int][Math]::Min([long]$buffer.Length, $limit - $content.Length))
-            if ($count -le 0) { break }
-            $Budget.read += $count
-            $content.Write($buffer, 0, $count)
-        }
-        return ,($content.ToArray())
-    } finally {
-        if ($source) { $source.Dispose() }
-        $content.Dispose()
+function Initialize-IdsBaselineArchiveReader {
+    if ('Ids.BaselineZipReader' -as [type]) { return }
+    # ZipArchiveEntry.Open() can clamp deflate output to an untrusted declared
+    # length and does not check CRC. Read bounded raw spans instead; keep the
+    # checksum loop in managed code rather than PowerShell's per-byte pipeline.
+    Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.IO.Compression;
+
+namespace Ids {
+    public sealed class BaselineZipEntry {
+        public ulong Length, CompressedLength, LocalOffset, DirectoryOffset, NameOffset;
+        public uint Crc;
+        public ushort Flags, Method, NameLength;
+        public bool Valid = true;
     }
+
+    public static class BaselineZipReader {
+        const long EntryLimit = 10 * 1024 * 1024, ArchiveLimit = 64 * 1024 * 1024;
+        static readonly uint[] CrcTable = CreateCrcTable();
+
+        static InvalidDataException Invalid() { return new InvalidDataException("Invalid ZIP metadata or entry integrity."); }
+        static void Range(ulong offset, ulong size, ulong limit) {
+            if (offset > limit || size > limit - offset) throw Invalid();
+        }
+        static ushort U16(byte[] b, ulong p) {
+            Range(p, 2, (ulong)b.Length);
+            return (ushort)(b[(int)p] | b[(int)p + 1] << 8);
+        }
+        static uint U32(byte[] b, ulong p) {
+            Range(p, 4, (ulong)b.Length);
+            return (uint)(b[(int)p] | b[(int)p + 1] << 8 | b[(int)p + 2] << 16 | b[(int)p + 3] << 24);
+        }
+        static ulong U64(byte[] b, ulong p) {
+            return U32(b, p) | ((ulong)U32(b, p + 4) << 32);
+        }
+
+        static void Extra64(byte[] b, ulong start, ushort length, ref ulong size,
+                            ref ulong packed, ref ulong local, ref ulong disk) {
+            ulong end = start + length;
+            Range(start, length, (ulong)b.Length);
+            bool needed = size == uint.MaxValue || packed == uint.MaxValue ||
+                          local == uint.MaxValue || disk == ushort.MaxValue;
+            bool found = false;
+            for (ulong p = start; p < end;) {
+                Range(p, 4, end);
+                ushort tag = U16(b, p), count = U16(b, p + 2);
+                p += 4;
+                Range(p, count, end);
+                ulong next = p + count;
+                if (tag == 1) {
+                    if (found) throw Invalid();
+                    found = true;
+                    if (size == uint.MaxValue) { Range(p, 8, next); size = U64(b, p); p += 8; }
+                    if (packed == uint.MaxValue) { Range(p, 8, next); packed = U64(b, p); p += 8; }
+                    if (local == uint.MaxValue) { Range(p, 8, next); local = U64(b, p); p += 8; }
+                    if (disk == ushort.MaxValue) { Range(p, 4, next); disk = U32(b, p); }
+                }
+                p = next;
+            }
+            if (needed && !found) throw Invalid();
+        }
+
+        public static BaselineZipEntry[] ReadDirectory(byte[] b, int expectedCount) {
+            if (expectedCount < 0 || expectedCount > 1000) throw Invalid();
+            long endRecord = -1;
+            // The only scan is the format's bounded EOCD/comment window.
+            for (int p = b.Length - 22; p >= Math.Max(0, b.Length - 65557); p--) {
+                if (U32(b, (ulong)p) == 0x06054b50 &&
+                    (ulong)p + 22 + U16(b, (ulong)p + 20) == (ulong)b.Length) {
+                    endRecord = p; break;
+                }
+            }
+            if (endRecord < 0) throw Invalid();
+            ulong eocd = (ulong)endRecord, end = eocd;
+            if (U16(b, eocd + 4) != 0 || U16(b, eocd + 6) != 0) throw Invalid();
+            ulong count = U16(b, eocd + 10), onDisk = U16(b, eocd + 8);
+            ulong size = U32(b, eocd + 12), start = U32(b, eocd + 16);
+            bool zip64 = count == ushort.MaxValue || onDisk == ushort.MaxValue ||
+                         size == uint.MaxValue || start == uint.MaxValue;
+            if (zip64) {
+                if (eocd < 20) throw Invalid();
+                ulong locator = eocd - 20;
+                if (U32(b, locator) != 0x07064b50 || U32(b, locator + 4) != 0 ||
+                    U32(b, locator + 16) != 1) throw Invalid();
+                ulong record = U64(b, locator + 8);
+                Range(record, 56, locator);
+                ulong recordSize = U64(b, record + 4);
+                if (U32(b, record) != 0x06064b50 || recordSize < 44 ||
+                    recordSize != locator - record - 12 || U32(b, record + 16) != 0 ||
+                    U32(b, record + 20) != 0) throw Invalid();
+                ulong count64 = U64(b, record + 32), size64 = U64(b, record + 40), start64 = U64(b, record + 48);
+                if (U64(b, record + 24) != count64 ||
+                    (count != ushort.MaxValue && count != count64) ||
+                    (onDisk != ushort.MaxValue && onDisk != count64) ||
+                    (size != uint.MaxValue && size != size64) ||
+                    (start != uint.MaxValue && start != start64)) throw Invalid();
+                count = onDisk = count64; size = size64; start = start64; end = record;
+            }
+            if (count != onDisk || count != (ulong)expectedCount) throw Invalid();
+            Range(start, size, end);
+            ulong directoryEnd = start + size, position = start;
+            var entries = new BaselineZipEntry[expectedCount];
+            for (int i = 0; i < entries.Length; i++) {
+                Range(position, 46, directoryEnd);
+                if (U32(b, position) != 0x02014b50) throw Invalid();
+                ushort nameLength = U16(b, position + 28), extraLength = U16(b, position + 30);
+                ulong next = position + 46 + nameLength + extraLength + U16(b, position + 32);
+                Range(position, next - position, directoryEnd);
+                var entry = new BaselineZipEntry {
+                    Flags = U16(b, position + 8), Method = U16(b, position + 10),
+                    Crc = U32(b, position + 16), CompressedLength = U32(b, position + 20),
+                    Length = U32(b, position + 24), LocalOffset = U32(b, position + 42),
+                    DirectoryOffset = start, NameOffset = position + 46, NameLength = nameLength
+                };
+                ulong disk = U16(b, position + 34);
+                try {
+                    Extra64(b, position + 46 + nameLength, extraLength, ref entry.Length,
+                            ref entry.CompressedLength, ref entry.LocalOffset, ref disk);
+                    if (disk != 0) entry.Valid = false;
+                } catch (InvalidDataException) { entry.Valid = false; }
+                entries[i] = entry;
+                position = next;
+            }
+            // An optional central-directory digital signature is metadata, not content.
+            if (position != directoryEnd) {
+                Range(position, 6, directoryEnd);
+                if (U32(b, position) != 0x05054b50 ||
+                    position + 6 + U16(b, position + 4) != directoryEnd) throw Invalid();
+            }
+            return entries;
+        }
+
+        static bool DescriptorMatches(byte[] b, ulong p, ulong end, BaselineZipEntry e, bool wide) {
+            ulong width = wide ? 20UL : 12UL;
+            if (p > end || width > end - p || U32(b, p) != e.Crc) return false;
+            return wide
+                ? U64(b, p + 4) == e.CompressedLength && U64(b, p + 12) == e.Length
+                : U32(b, p + 4) == e.CompressedLength && U32(b, p + 8) == e.Length;
+        }
+
+        static ulong DataOffset(byte[] b, BaselineZipEntry e) {
+            if (!e.Valid || (e.Flags & 0x41) != 0 || (e.Method != 0 && e.Method != 8)) throw Invalid();
+            ulong p = e.LocalOffset;
+            Range(p, 30, e.DirectoryOffset);
+            if (U32(b, p) != 0x04034b50 || U16(b, p + 6) != e.Flags ||
+                U16(b, p + 8) != e.Method || U16(b, p + 26) != e.NameLength) throw Invalid();
+            ushort extraLength = U16(b, p + 28);
+            ulong data = p + 30 + e.NameLength + extraLength;
+            Range(p, data - p, e.DirectoryOffset);
+            for (int i = 0; i < e.NameLength; i++)
+                if (b[(int)(p + 30) + i] != b[(int)e.NameOffset + i]) throw Invalid();
+            ulong length = U32(b, p + 22), packed = U32(b, p + 18), local = 0, disk = 0;
+            Extra64(b, p + 30 + e.NameLength, extraLength, ref length, ref packed, ref local, ref disk);
+            uint crc = U32(b, p + 14);
+            bool descriptor = (e.Flags & 8) != 0;
+            if (descriptor) {
+                if ((crc != 0 && crc != e.Crc) || (length != 0 && length != e.Length) ||
+                    (packed != 0 && packed != e.CompressedLength)) throw Invalid();
+            } else if (crc != e.Crc || length != e.Length || packed != e.CompressedLength) throw Invalid();
+            Range(data, e.CompressedLength, e.DirectoryOffset);
+            if (descriptor) {
+                ulong at = data + e.CompressedLength;
+                bool matches = DescriptorMatches(b, at, e.DirectoryOffset, e, false) ||
+                               DescriptorMatches(b, at, e.DirectoryOffset, e, true);
+                if (!matches && at <= e.DirectoryOffset && e.DirectoryOffset - at >= 4 &&
+                    U32(b, at) == 0x08074b50)
+                    matches = DescriptorMatches(b, at + 4, e.DirectoryOffset, e, false) ||
+                              DescriptorMatches(b, at + 4, e.DirectoryOffset, e, true);
+                if (!matches) throw Invalid();
+            }
+            return data;
+        }
+
+        static uint[] CreateCrcTable() {
+            var table = new uint[256];
+            for (uint i = 0; i < table.Length; i++) {
+                uint value = i;
+                for (int bit = 0; bit < 8; bit++)
+                    value = (value & 1) != 0 ? 0xedb88320U ^ (value >> 1) : value >> 1;
+                table[i] = value;
+            }
+            return table;
+        }
+
+        sealed class DeflateBits {
+            readonly byte[] bytes;
+            readonly int end;
+            uint bits;
+            int available;
+            public int Position;
+            public DeflateBits(byte[] bytes, int start, int count) {
+                this.bytes = bytes; Position = start; end = start + count;
+            }
+            public int Read(int count) {
+                while (available < count) {
+                    if (Position == end) throw Invalid();
+                    bits |= (uint)bytes[Position++] << available;
+                    available += 8;
+                }
+                int value = (int)(bits & ((1U << count) - 1));
+                bits >>= count; available -= count;
+                return value;
+            }
+            public void Align() { bits = 0; available = 0; }
+            public void Skip(int count) {
+                if (count > end - Position) throw Invalid();
+                Position += count;
+            }
+        }
+
+        sealed class Huffman {
+            readonly int[] counts = new int[16], symbols;
+            public Huffman(int[] lengths) {
+                symbols = new int[lengths.Length];
+                foreach (int length in lengths) counts[length]++;
+                int left = 1;
+                for (int length = 1; length <= 15; length++) {
+                    left = (left << 1) - counts[length];
+                    if (left < 0) throw Invalid();
+                }
+                var offsets = new int[16];
+                for (int length = 1; length < 15; length++) offsets[length + 1] = offsets[length] + counts[length];
+                for (int symbol = 0; symbol < lengths.Length; symbol++)
+                    if (lengths[symbol] != 0) symbols[offsets[lengths[symbol]]++] = symbol;
+            }
+            public int Decode(DeflateBits bits) {
+                int code = 0, first = 0, index = 0;
+                for (int length = 1; length <= 15; length++) {
+                    code |= bits.Read(1);
+                    if (code < first + counts[length]) return symbols[index + code - first];
+                    index += counts[length];
+                    first = (first + counts[length]) << 1;
+                    code <<= 1;
+                }
+                throw Invalid();
+            }
+        }
+
+        static readonly int[] CodeOrder = { 16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15 };
+        static readonly int[] LengthBase = { 3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258 };
+        static readonly int[] LengthExtra = { 0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0 };
+        static readonly int[] DistanceBase = { 1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577 };
+        static readonly int[] DistanceExtra = { 0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13 };
+        static readonly Huffman FixedLiteral = FixedTree(false), FixedDistance = FixedTree(true);
+        static Huffman FixedTree(bool distance) {
+            var lengths = new int[distance ? 32 : 288];
+            for (int i = 0; i < lengths.Length; i++)
+                lengths[i] = distance ? 5 : i < 144 ? 8 : i < 256 ? 9 : i < 280 ? 7 : 8;
+            return new Huffman(lengths);
+        }
+
+        static void DynamicTrees(DeflateBits bits, out Huffman literal, out Huffman distance) {
+            int literalCount = bits.Read(5) + 257, distanceCount = bits.Read(5) + 1, codeCount = bits.Read(4) + 4;
+            if (literalCount > 286) throw Invalid();
+            var codeLengths = new int[19];
+            for (int i = 0; i < codeCount; i++) codeLengths[CodeOrder[i]] = bits.Read(3);
+            var codeTree = new Huffman(codeLengths);
+            var lengths = new int[literalCount + distanceCount];
+            for (int i = 0; i < lengths.Length;) {
+                int symbol = codeTree.Decode(bits);
+                if (symbol < 16) { lengths[i++] = symbol; continue; }
+                if (symbol == 16 && i == 0) throw Invalid();
+                int repeat = symbol == 16 ? bits.Read(2) + 3 : symbol == 17 ? bits.Read(3) + 3 : bits.Read(7) + 11;
+                int value = symbol == 16 ? lengths[i - 1] : 0;
+                if (repeat > lengths.Length - i) throw Invalid();
+                while (repeat-- > 0) lengths[i++] = value;
+            }
+            if (lengths[256] == 0) throw Invalid();
+            var literalLengths = new int[literalCount];
+            var distanceLengths = new int[distanceCount];
+            Array.Copy(lengths, literalLengths, literalCount);
+            Array.Copy(lengths, literalCount, distanceLengths, 0, distanceCount);
+            literal = new Huffman(literalLengths); distance = new Huffman(distanceLengths);
+        }
+
+        static void ValidateDeflate(byte[] b, int start, int count, long expected) {
+            // DeflateStream also tolerates premature compressed EOF. Validate
+            // RFC 1951 framing without producing a second copy of the output.
+            // Both the bit reader and decoded-length counter are bounded.
+            var bits = new DeflateBits(b, start, count);
+            long produced = 0;
+            bool final;
+            do {
+                final = bits.Read(1) != 0;
+                int kind = bits.Read(2);
+                if (kind == 0) {
+                    bits.Align();
+                    int length = bits.Read(16);
+                    if ((length ^ bits.Read(16)) != 65535) throw Invalid();
+                    bits.Skip(length); produced += length;
+                } else {
+                    Huffman literal, distance;
+                    if (kind == 1) { literal = FixedLiteral; distance = FixedDistance; }
+                    else if (kind == 2) DynamicTrees(bits, out literal, out distance);
+                    else throw Invalid();
+                    while (true) {
+                        int symbol = literal.Decode(bits);
+                        if (symbol == 256) break;
+                        if (symbol < 256) produced++;
+                        else {
+                            if (symbol > 285) throw Invalid();
+                            int length = LengthBase[symbol - 257] + bits.Read(LengthExtra[symbol - 257]);
+                            int dist = distance.Decode(bits);
+                            if (dist >= 30 || DistanceBase[dist] + bits.Read(DistanceExtra[dist]) > produced) throw Invalid();
+                            produced += length;
+                        }
+                        if (produced > expected) throw Invalid();
+                    }
+                }
+                if (produced > expected) throw Invalid();
+            } while (!final);
+            if (produced != expected || bits.Position != start + count) throw Invalid();
+        }
+
+        public static byte[] ReadEntry(byte[] b, BaselineZipEntry entry, System.Collections.IDictionary budget) {
+            ulong data = DataOffset(b, entry);
+            long read = Convert.ToInt64(budget["read"]);
+            using (var raw = new MemoryStream(b, (int)data, (int)entry.CompressedLength, false))
+            using (Stream source = entry.Method == 8
+                ? (Stream)new DeflateStream(raw, CompressionMode.Decompress, true) : raw)
+            using (var content = new MemoryStream()) {
+                var buffer = new byte[81920];
+                uint crc = uint.MaxValue;
+                while (content.Length <= EntryLimit && read <= ArchiveLimit) {
+                    int remaining = (int)Math.Min(buffer.Length,
+                        Math.Min(EntryLimit + 1 - content.Length, ArchiveLimit + 1 - read));
+                    int count = source.Read(buffer, 0, remaining);
+                    if (count == 0) {
+                        if ((ulong)content.Length != entry.Length || (crc ^ uint.MaxValue) != entry.Crc)
+                            throw Invalid();
+                        if (entry.Method == 8) ValidateDeflate(b, (int)data, (int)entry.CompressedLength, content.Length);
+                        break;
+                    }
+                    read += count;
+                    // PowerShell does not copy ref arguments back on a thrown
+                    // invocation. Mutate the shared budget before any validation.
+                    budget["read"] = read;
+                    for (int i = 0; i < count; i++) crc = CrcTable[(crc ^ buffer[i]) & 255] ^ (crc >> 8);
+                    content.Write(buffer, 0, count);
+                }
+                // Oversize output is returned for the caller's limit classification,
+                // not accepted as a pack. Its bytes always remain in the budget.
+                return content.ToArray();
+            }
+        }
+    }
+}
+'@
+}
+
+function Read-IdsBaselineArchiveEntry {
+    param([byte[]]$Bytes, $Entry, $Budget)
+    return ,([Ids.BaselineZipReader]::ReadEntry($Bytes, $Entry, $Budget))
 }
 
 function ConvertFrom-IdsBaselineArchiveText {
@@ -441,8 +775,13 @@ function ConvertFrom-IdsBaselineArchive {
             if ($name.EndsWith('.json', [StringComparison]::OrdinalIgnoreCase)) { $jsonCount++ }
         }
         if ($jsonCount -gt 500) { throw [ArgumentException]::new('Archive JSON entry limit exceeded (500 entries).') }
+        Initialize-IdsBaselineArchiveReader
+        try { $metadata = @([Ids.BaselineZipReader]::ReadDirectory($Bytes, $entries.Count)) }
+        catch [IO.InvalidDataException] { throw [ArgumentException]::new('The file is not a valid ZIP archive.') }
 
-        foreach ($entry in $entries) {
+        for ($entryIndex = 0; $entryIndex -lt $entries.Count; $entryIndex++) {
+            $entry = $entries[$entryIndex]
+            $info = $metadata[$entryIndex]
             $name = $entry.FullName
             if ($name.EndsWith('/') -or $name.EndsWith('\')) { continue }
             if ($name.EndsWith('.zip', [StringComparison]::OrdinalIgnoreCase)) {
@@ -451,7 +790,8 @@ function ConvertFrom-IdsBaselineArchive {
             }
             if (-not $name.EndsWith('.json', [StringComparison]::OrdinalIgnoreCase)) { $ignored++; continue }
             $encrypted = $entry.PSObject.Properties['IsEncrypted']
-            if ($encrypted -and $encrypted.Value) {
+            if (($encrypted -and $encrypted.Value) -or ($info.Flags -band 0x41) -or -not $info.Valid -or
+                $info.Length -ne $entry.Length -or $info.CompressedLength -ne $entry.CompressedLength) {
                 $skipped.Add([pscustomobject]@{ entry = $name; reason = $unreadable })
                 continue
             }
@@ -460,7 +800,7 @@ function ConvertFrom-IdsBaselineArchive {
                 continue
             }
             $content = $null
-            try { $content = Read-IdsBaselineArchiveEntry $entry $budget }
+            try { $content = Read-IdsBaselineArchiveEntry $Bytes $info $budget }
             catch [IO.InvalidDataException], [IO.IOException], [NotSupportedException], [InvalidOperationException] { $content = $null }
             # Outside the entry catch: the budget fails the whole request.
             if ($budget.read -gt 64MB) { throw [IO.InvalidDataException]::new('Archive JSON read limit exceeded (64 MiB).') }
