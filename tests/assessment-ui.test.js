@@ -852,6 +852,78 @@ test('wizard Next and Back validate the current step, mark the stepper and focus
   expectStep(d, 3);
 });
 
+test('step buttons navigate back without losing choices, never skip forward and block during active work', async () => {
+  const d = assessmentDashboard((url) => (url === '/api/state' ? connectedState() : {}));
+  await selectAll(d);
+  boxes(d, 'assessmentPlatforms').forEach((box, i) => { box.checked = i === 0; });
+  boxes(d, 'assessmentPlatforms')[0].handlers.change();
+  d.element('assessmentProfile').value = boxes(d, 'assessmentPacks')[0].value;
+  d.element('assessmentProfile').handlers.change();
+  d.element('assessmentOsWindows11').value = '10.0.26100';
+  d.run('assessmentImportQueue.push({id: 1, name: "Synthetic reference", status: "completed", result: {added: 1}})');
+  d.element('assessmentImportSummary').innerHTML = 'Synthetic imported result';
+  click(d, 'btnAssessPlatformsNext');
+  click(d, 'btnAssessImportNext');
+  click(d, 'btnAssessBaselinesNext');
+  click(d, 'btnAssessContextNext');
+  expectStep(d, 5);
+  const profile = d.element('assessmentProfile').value;
+  const selected = boxes(d, 'assessmentPacks').map((b) => b.checked);
+  const queue = d.run('JSON.stringify(assessmentImportQueue)');
+  click(d, 'btnAssessStepImport');
+  expectStep(d, 2, 'assessImportTitle');
+  assert.equal(d.element('btnAssessStepReview').disabled, true);
+  click(d, 'btnAssessStepReview');
+  expectStep(d, 2);
+  assert.equal(d.element('assessmentImportSummary').innerHTML, 'Synthetic imported result');
+  click(d, 'btnAssessImportNext');
+  click(d, 'btnAssessBaselinesNext');
+  click(d, 'btnAssessContextNext');
+  expectStep(d, 5);
+  assert.equal(d.element('assessmentProfile').value, profile);
+  assert.deepEqual(boxes(d, 'assessmentPacks').map((b) => b.checked), selected);
+  assert.equal(d.element('assessmentOsWindows11').value, '10.0.26100');
+  assert.equal(d.element('assessmentOutputPath').value, ' C:\\SyntheticReports ');
+  assert.equal(d.run('JSON.stringify(assessmentImportQueue)'), queue);
+  for (const flag of ['assessmentImporting', 'assessmentBusy', 'exportBusy', 'sourceTransferBusy']) {
+    d.run(`${flag} = true; syncJobAdmission()`);
+    assert.equal(d.element('btnAssessStepPlatforms').disabled, true);
+    click(d, 'btnAssessStepPlatforms');
+    expectStep(d, 5);
+    d.run(`${flag} = false; syncJobAdmission()`);
+  }
+});
+
+test('refreshing completed results does not undo explicit backward wizard navigation', async () => {
+  const d = assessmentDashboard((url) => {
+    if (url === '/api/state') return connectedState();
+    if (url === '/api/assessment') return { done: true, percent: 100 };
+    if (url === '/api/assessment/results') return { summaries: [], controls: [] };
+    return {};
+  });
+  await new Promise(setImmediate);
+  expectStep(d, 6);
+  click(d, 'btnAssessStepContext');
+  expectStep(d, 4);
+  await d.run('refreshAssessment()');
+  expectStep(d, 4);
+});
+
+test('report path rejection shows actionable Dutch guidance without a raw HTTP prefix or losing selections', async () => {
+  const message = 'Deze map bevat een junction of reparse point. Kies via Choose report folder een gewone lokale map.';
+  const d = assessmentDashboard((url, r) => {
+    if (url === '/api/state') return connectedState();
+    if (url === '/api/assessment' && r.method === 'POST') return { httpStatus: 400, body: { error: message } };
+    return {};
+  });
+  await selectAll(d);
+  const selected = boxes(d, 'assessmentPacks').map((b) => b.checked);
+  await click(d, 'btnAssessmentRun');
+  assert.equal(d.element('assessmentError').textContent, message);
+  assert.equal(d.element('assessmentOutputPath').value, ' C:\\SyntheticReports ');
+  assert.deepEqual(boxes(d, 'assessmentPacks').map((b) => b.checked), selected);
+});
+
 test('background refresh shows a running or completed assessment without moving focus; errors keep the step', async () => {
   for (const progress of [{ running: true, percent: 20, phase: 'Collecting' }, { done: true, percent: 100 }]) {
     const d = assessmentDashboard((url) => {

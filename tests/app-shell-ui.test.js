@@ -134,6 +134,9 @@ test('an explicit offline source enables both workflows without authentication o
   d.navigate('#/');
   assert.deepEqual(d.visibleViews(), ['viewHome']);
   assert.equal(d.run('state.policies.count'), 1);
+  assert.equal(d.element('btnShowPolicyExport').disabled, false);
+  d.element('btnShowPolicyExport').handlers.click();
+  assert.equal(d.element('policyExportPanel').open, true);
   assert.equal(d.requests.some((r) => /\/api\/(probe|signin)/.test(r.url)), false);
 });
 
@@ -406,7 +409,7 @@ test('the assessment stepper has six numbered steps and wraps at 900 px; the doc
   const wizard = html.match(/<ol class="stepper wide" aria-label="Assessment steps">([\s\S]*?)<\/ol>/);
   assert.ok(wizard, 'assessment stepper');
   const items = [...wizard[1].matchAll(
-    /<li id="(\w+)"(?: class="active")?><span class="step-num" aria-hidden="true">(\d)<\/span>([^<]+)<\/li>/g
+    /<li id="(\w+)"(?: class="active")?><button type="button" id="\w+" disabled aria-label="[^"]+"><span class="step-num" aria-hidden="true">(\d)<\/span>([^<]+)<\/button><\/li>/g
   )].map((m) => [m[1], m[2], m[3]]);
   assert.deepEqual(items, [
     ['assessStepPlatforms', '1', 'Platforms'], ['assessStepImport', '2', 'Import packs'], ['assessStepBaselines', '3', 'Baselines'],

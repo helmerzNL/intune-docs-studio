@@ -42,7 +42,11 @@ chosen output folder. It is not a hosted service.
   report files and imported packs are not deleted by that reset.
 - Assessment reports go only to the operator's chosen absolute report root.
   Keep installation, documentation export, and report roots mutually disjoint:
-  no equal, ancestor, or descendant paths and no reparse-point roots/ancestors.
+  no equal, ancestor, or descendant paths and no symlink/junction roots/ancestors.
+  Known non-redirecting Windows cloud-placeholder tags (including OneDrive) are
+  allowed; unknown reparse tags remain blocked. A rejected path identifies the
+  problematic ancestor and explains in Dutch how to choose an ordinary local
+  folder or move the application/documentation out of a linked directory.
   A new `assessment-<generated-id>` directory contains `assessment.md` and
   `assessment.json` for each successful run. Reports do not change exporter
   pages/manifests, prune previous runs, or automatically upload, commit, or push.
@@ -122,7 +126,10 @@ imports retain it; confirmed successful replacement clears dependent in-memory
 results but not report files. Home exports to a fresh `policy-set-<time>-<id>`
 subfolder with `policyset.json`, five family JSON files and `references.json`.
 SHA-256 hashes, settings/definitions/templates, assignment/reference metadata,
-capture time and completeness support a readable round-trip.
+capture time and completeness support a readable round-trip. **Export policy set...**
+is available directly on Home for imported sources too, without sign-in.
+Re-export/re-import preserves original source provenance and collection time;
+the new import time describes the current import rather than replacing that evidence.
 
 Offline documentation and Assessment make no Graph/auth requests, including
 lazy group-name lookups. Only the five policy families can be documented;
@@ -140,7 +147,8 @@ redact recognized policy secrets; still protect and back up the remaining files
 as customer-owned configuration, separately from application files.
 
 **Choose folder** opens a single native Windows dialog on the app host in a
-separate STA runspace; the localhost listener remains responsive. Same-origin
+separate STA runspace with a temporary topmost owner, so the dialog is visible
+above the browser and disposed on completion; the localhost listener remains responsive. Same-origin
 JSON requests protect import/export/picker mutations. Cancel keeps the old
 editable path; a dialog error gives manual-path guidance. It is not a browser
 directory upload. Report destinations retain server-side root validation.

@@ -123,7 +123,9 @@ stopped at that point, so either answer is fine.
 
 The assessment is a six-step wizard: **Platforms**, **Import packs**, **Baselines**, **Context**,
 **Review & run** and **Results**. **Next** checks each step; errors appear below
-the stepper.
+the stepper. Click an earlier step button (or focus it and press Enter/Space)
+to return without losing selections, imports, context or destination. Future
+steps cannot be skipped; step navigation is disabled while work is running.
 
 1. Sign in, confirm the tenant on Home, and open **Assess policies**. On
    **Platforms**, select at least one platform.
