@@ -291,6 +291,70 @@ test('the page has unique IDs, no external resources and honors reduced motion',
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
 });
 
+test('landing blocks share top and bottom edges and centre their content', () => {
+  const rule = (selector) => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = css.match(new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`));
+    assert.ok(match, `top-level ${selector} rule`);
+    return match[1];
+  };
+  const landing = rule('.landing');
+  assert.match(landing, /align-items:\s*stretch/);
+  assert.doesNotMatch(landing, /align-items:\s*center/);
+  assert.match(landing, /align-content:\s*center/);
+  for (const block of ['.hero', '.signin-card']) {
+    const body = rule(block);
+    assert.match(body, /display:\s*flex/, block);
+    assert.match(body, /flex-direction:\s*column/, block);
+    assert.match(body, /justify-content:\s*center/, block);
+  }
+});
+
+test('the assessment stepper has five numbered steps and wraps at 900 px; the documentation stepper is unchanged', () => {
+  const narrow = css.match(/@media \(max-width: 900px\) \{([\s\S]*?)\n\}/);
+  assert.ok(narrow, '900 px media query');
+  assert.match(narrow[1], /\.stepper\.wide \{ flex-wrap: wrap; \}/);
+  assert.match(narrow[1], /\.stepper\.wide li \{ flex: 1 1 140px; \}/);
+  assert.match(html, /<ol class="stepper" aria-label="Export steps">/);
+  const wizard = html.match(/<ol class="stepper wide" aria-label="Assessment steps">([\s\S]*?)<\/ol>/);
+  assert.ok(wizard, 'assessment stepper');
+  const items = [...wizard[1].matchAll(
+    /<li id="(\w+)"(?: class="active")?><span class="step-num" aria-hidden="true">(\d)<\/span>([^<]+)<\/li>/g
+  )].map((m) => [m[1], m[2], m[3]]);
+  assert.deepEqual(items, [
+    ['assessStepPlatforms', '1', 'Platforms'], ['assessStepBaselines', '2', 'Baselines'],
+    ['assessStepContext', '3', 'Context'], ['assessStepReview', '4', 'Review &amp; run'],
+    ['assessStepResults', '5', 'Results']
+  ]);
+  assert.match(wizard[1], /<li id="assessStepPlatforms" class="active">/);
+});
+
+test('the assessment wizard opens on step 1 with the import card, and every wizard element exists once', async () => {
+  const d = shell({ hash: '#/assess', respond: stateOnly(signedIn()) });
+  await d.settle();
+  assert.deepEqual(d.visibleViews(), ['viewAssess']);
+  const steps = ['assessStepPlatforms', 'assessStepBaselines', 'assessStepContext', 'assessStepReview',
+    'assessStepResults'];
+  assert.deepEqual(steps.map((id) => [d.element(id).className, d.element(id).getAttribute('aria-current')]),
+    [['active', 'step'], ['', null], ['', null], ['', null], ['', null]]);
+  const panels = ['assessPanelPlatforms', 'assessPanelBaselines', 'assessPanelContext', 'assessPanelReview',
+    'assessPanelResults', 'assessImportPanel'];
+  assert.deepEqual(panels.filter((id) => d.visible(id)), ['assessPanelPlatforms', 'assessImportPanel']);
+  assert.equal(d.focused(), null);
+  d.run("updateAssessmentContext(); renderAssessmentReview(); setAssessmentStep('results', true)");
+  assert.equal(d.focused(), 'resultsTitle');
+  assert.equal(d.visible('assessImportPanel'), false);
+  const headings = ['platformsTitle', 'baselinesTitle', 'contextTitle', 'runAssessmentTitle', 'resultsTitle'];
+  for (const id of headings) assert.match(html, new RegExp(`<h3 id="${id}" class="card-title" tabindex="-1">`), id);
+  const added = [...steps, ...panels, ...headings, 'assessImportTitle', 'btnAssessPlatformsNext',
+    'btnAssessBaselinesBack', 'btnAssessBaselinesNext', 'btnAssessContextBack', 'btnAssessContextNext',
+    'btnAssessReviewBack', 'btnAssessNew', 'btnAssessmentSelectAll', 'btnAssessmentSelectNone',
+    'assessmentPacksEmpty', 'assessmentContextWarning', 'assessmentReview', 'assessmentImportSummary',
+    'assessmentContextWindows11', 'assessmentContextMacos', 'assessmentContextIosIpados',
+    'assessmentContextAndroidEnterprise', 'assessmentContextEnrollment', 'assessmentContextIosOwnership'];
+  for (const id of added) assert.equal(html.split(` id="${id}"`).length - 1, 1, id);
+});
+
 test('every element the script uses exists exactly once in the page', () => {
   const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
   const literal = [...script.matchAll(/\$\('([A-Za-z][\w-]*)'\)/g)].map((m) => m[1]);

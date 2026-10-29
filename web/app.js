@@ -572,6 +572,7 @@ let assessmentStarting = false;
 let assessmentTimer = null;
 let assessmentPolling = false;
 let assessmentCatalogRequest = 0;
+let assessmentCatalogIssues = [];
 const assessmentPlatforms = {
   windows11: 'Windows 11', macos: 'macOS', iosIpados: 'iOS/iPadOS', androidEnterprise: 'Android Enterprise'
 };
@@ -585,15 +586,18 @@ function renderAssessmentPacks(catalog) {
   const selected = new Set(assessmentPackBoxes().filter((b) => b.checked).map((b) => b.value));
   const platforms = new Set(assessmentPlatformBoxes().filter((b) => b.checked).map((b) => b.value));
   assessmentPacks = catalog.packs || [];
+  assessmentCatalogIssues = catalog.errors || [];
   $('assessmentCatalogNote').textContent =
-    'Unavailable platform/profile combinations are disabled; CIS requires your own licensed JSON pack, not a PDF or Intune export. ' +
+    'CIS content is never bundled or downloaded. Import your own licensed CIS Intune build-kit ZIP or a ' +
+    'schema-1 JSON rule pack below; PDF and Excel benchmarks are not supported. ' +
+    'Unavailable platform/profile combinations are disabled. ' +
     'The Microsoft catalog contains five bundled checks total, all partial inventories: ' +
     'Windows 26H2 has two shell SmartScreen atomic checks, legacy Endpoint Protection only (Graph beta), not modern baseline/Settings Catalog coverage. ' +
     'macOS has one FileVault enablement check, legacy Endpoint Protection on Graph beta; the template is deprecated, not current-template, recovery-key or encryption compliance coverage. ' +
     'iOS/iPadOS has one personal level 1 passcode check, legacy device restrictions only, not organization-owned coverage. ' +
     'Android has one personally-owned work profile level 2 encryption compliance requirement check, not organization-owned profiles or discovered device encryption. ' +
     'Unknown OS/enrollment applicability is not assessed; no full-baseline or device-compliance claim.';
-  $('assessmentCatalogErrors').textContent = (catalog.errors || []).map((e) => `${e.origin}: ${e.reason}`).join('\n');
+  $('assessmentCatalogErrors').textContent = assessmentCatalogIssues.map((e) => `${e.origin}: ${e.reason}`).join('\n');
   $('assessmentPlatforms').innerHTML = '';
   Object.entries(assessmentPlatforms).forEach(([key, name]) => {
     const available = assessmentPacks.some((p) => p.platform === key);
@@ -655,15 +659,158 @@ function renderAssessmentPacks(catalog) {
 function updateAssessmentSelection() {
   const platforms = assessmentPlatformBoxes().filter((b) => b.checked).map((b) => b.value);
   const profile = $('assessmentProfile').value;
-  assessmentPackBoxes().forEach((b, i) => {
+  let enabled = 0;
+  // Row i is pack i; the empty state sits outside #assessmentPacks to keep that mapping.
+  Array.from($('assessmentPacks').children).forEach((label, i) => {
+    const box = label.children[0];
     const pack = assessmentPacks[i];
-    b.disabled = !platforms.includes(pack.platform) || (!!profile && profile !== pack.profile);
-    if (b.disabled) b.checked = false;
+    box.disabled = !platforms.includes(pack.platform) || (!!profile && profile !== pack.profile);
+    if (box.disabled) {
+      box.checked = false;
+      label.classList.add('hidden');
+    } else {
+      enabled++;
+      label.classList.remove('hidden');
+    }
   });
+  $('assessmentPacksEmpty').textContent = enabled ? '' : 'No rule pack matches the selected platforms and profile. ' +
+    'Choose other platforms or a different profile, or import a pack below.';
+  setHidden('assessmentPacksEmpty', enabled > 0);
   syncJobAdmission();
 }
 
 $('assessmentProfile').addEventListener('change', updateAssessmentSelection);
+
+// Wizard steps are client state, not routes, so the current step survives navigating Home and back.
+const assessmentSteps = {
+  platforms: ['assessStepPlatforms', 'assessPanelPlatforms', 'platformsTitle'],
+  baselines: ['assessStepBaselines', 'assessPanelBaselines', 'baselinesTitle'],
+  context: ['assessStepContext', 'assessPanelContext', 'contextTitle'],
+  review: ['assessStepReview', 'assessPanelReview', 'runAssessmentTitle'],
+  results: ['assessStepResults', 'assessPanelResults', 'resultsTitle']
+};
+const assessmentContextFields = {
+  windows11: ['assessmentContextWindows11'],
+  macos: ['assessmentContextMacos'],
+  iosIpados: ['assessmentContextIosIpados', 'assessmentContextIosOwnership'],
+  androidEnterprise: ['assessmentContextAndroidEnterprise', 'assessmentContextEnrollment']
+};
+// These mirror the <option> labels in index.html; the review must not depend on selectedIndex.
+const assessmentEnrollmentLabels = {
+  workProfile: 'Personally-owned work profile', fullyManaged: 'Fully managed', dedicated: 'Dedicated',
+  corporateOwnedWorkProfile: 'Corporate-owned work profile'
+};
+const assessmentOwnershipLabels = {
+  personallyOwned: 'Personally owned', corporateOwned: 'Corporate owned (excluded by personal-only guidance)'
+};
+const assessmentWindowsWarning = 'Windows policies targeting Windows 10 and later, such as the Settings Catalog ' +
+  'policies that CIS build-kit packs map to, are assessed only when a Windows 11 build is entered ' +
+  '(for example 10.0.22631 or 10.0.26100); otherwise their controls are reported as not assessed.';
+
+function setAssessmentStep(step, focus) {
+  const order = Object.keys(assessmentSteps);
+  const current = order.indexOf(step);
+  order.forEach((name, i) => {
+    const [item, panel] = assessmentSteps[name];
+    $(item).className = i < current ? 'done' : i === current ? 'active' : '';
+    if (i === current) $(item).setAttribute('aria-current', 'step');
+    else $(item).removeAttribute('aria-current');
+    setHidden(panel, i !== current);
+  });
+  setHidden('assessImportPanel', current > 1);
+  if (!focus) return;
+  window.scrollTo(0, 0);
+  $(assessmentSteps[step][2]).focus({ preventScroll: true });
+}
+
+function assessmentSelection() {
+  const platforms = assessmentPlatformBoxes().filter((b) => b.checked && !b.disabled).map((b) => b.value);
+  const identities = new Set(assessmentPackBoxes().filter((b) => b.checked && !b.disabled).map((b) => b.value));
+  return { platforms, packs: assessmentPacks.filter((p) => identities.has(assessmentIdentity(p))) };
+}
+
+function assessmentSelectionError() {
+  const { platforms, packs } = assessmentSelection();
+  if (!platforms.length || platforms.some((p) => !packs.some((pack) => pack.platform === p))) {
+    return 'Every selected platform requires a selected applicable pack; choose at least one platform.';
+  }
+  return !packs.length || packs.length > 64 ? 'Select 1–64 packs.' : null;
+}
+
+function selectAssessmentPacks(checked) {
+  assessmentPackBoxes().forEach((b) => { if (!b.disabled) b.checked = checked; });
+  updateAssessmentSelection();
+}
+
+function updateAssessmentContext() {
+  const { platforms } = assessmentSelection();
+  Object.entries(assessmentContextFields).forEach(([platform, ids]) => {
+    ids.forEach((id) => setHidden(id, !platforms.includes(platform)));
+  });
+  const warn = platforms.includes('windows11') && !$('assessmentOsWindows11').value.trim();
+  $('assessmentContextWarning').textContent = warn ? assessmentWindowsWarning : '';
+  setHidden('assessmentContextWarning', !warn);
+}
+
+function renderAssessmentReview() {
+  const { platforms, packs } = assessmentSelection();
+  const context = platforms.map((p) => {
+    let line = `${assessmentPlatforms[p]} — OS version: ${$(assessmentOsId(p)).value.trim() || 'Unknown'}`;
+    if (p === 'iosIpados') {
+      line += '; ownership scope: ' + (assessmentOwnershipLabels[$('assessmentIosOwnership').value] || 'Unknown');
+    }
+    if (p === 'androidEnterprise') {
+      line += '; enrollment mode: ' + (assessmentEnrollmentLabels[$('assessmentEnrollment').value] || 'Unknown');
+    }
+    return line;
+  });
+  const lines = [
+    'Platforms: ' + (platforms.map((p) => assessmentPlatforms[p]).join(', ') || 'none'),
+    '',
+    'Rule packs:',
+    ...(packs.length ? packs.map((p) => `${p.id} @ ${p.version} — ${assessmentPlatforms[p.platform]} · ${p.profile}`)
+      : ['none']),
+    '',
+    'Context (user-selected, not discovered device inventory):',
+    ...context
+  ];
+  if (platforms.includes('windows11') && !$('assessmentOsWindows11').value.trim()) {
+    lines.push('', assessmentWindowsWarning);
+  }
+  $('assessmentReview').textContent = lines.join('\n');
+}
+
+function blockAssessmentStep(message) {
+  showAssessmentError(message);
+  $('assessmentError').scrollIntoView({ block: 'nearest' });
+}
+
+function moveAssessmentStep(step) {
+  showAssessmentError(null);
+  if (step === 'context') updateAssessmentContext();
+  if (step === 'review') renderAssessmentReview();
+  setAssessmentStep(step, true);
+}
+
+$('btnAssessmentSelectAll').addEventListener('click', () => selectAssessmentPacks(true));
+$('btnAssessmentSelectNone').addEventListener('click', () => selectAssessmentPacks(false));
+$('assessmentOsWindows11').addEventListener('input', updateAssessmentContext);
+$('btnAssessPlatformsNext').addEventListener('click', () => {
+  if (!assessmentSelection().platforms.length) blockAssessmentStep('Choose at least one platform to assess.');
+  else moveAssessmentStep('baselines');
+});
+$('btnAssessBaselinesBack').addEventListener('click', () => moveAssessmentStep('platforms'));
+$('btnAssessBaselinesNext').addEventListener('click', () => {
+  const error = assessmentSelectionError();
+  if (error) blockAssessmentStep(error);
+  else moveAssessmentStep('context');
+});
+$('btnAssessContextBack').addEventListener('click', () => moveAssessmentStep('baselines'));
+$('btnAssessContextNext').addEventListener('click', () => moveAssessmentStep('review'));
+$('btnAssessReviewBack').addEventListener('click', () => moveAssessmentStep('context'));
+$('btnAssessNew').addEventListener('click', () => {
+  if (!assessmentBusy) moveAssessmentStep('platforms');
+});
 
 function showAssessmentError(message) {
   $('assessmentError').textContent = message || '';
@@ -676,6 +823,7 @@ function syncJobAdmission() {
   $('btnExport').disabled = busy || !!(state?.auth && !state.auth.connected);
   $('btnAssessmentRun').disabled = busy || assessmentImporting || !state?.auth?.connected;
   $('btnAssessmentImport').disabled = busy || assessmentImporting;
+  $('btnAssessNew').disabled = assessmentBusy;
   ['navDocumentBusy', 'homeDocumentBusy'].forEach((id) => setHidden(id, !exportBusy));
   ['navAssessBusy', 'homeAssessBusy'].forEach((id) => setHidden(id, !assessmentBusy));
 }
@@ -704,7 +852,10 @@ function clearAssessment() {
   Object.keys(assessmentPlatforms).forEach((p) => { $(assessmentOsId(p)).value = ''; });
   $('assessmentEnrollment').value = '';
   $('assessmentIosOwnership').value = '';
+  ['assessmentImportSummary', 'assessmentReview', 'assessmentContextWarning'].forEach((id) => { $(id).textContent = ''; });
+  setHidden('assessmentContextWarning', true);
   showAssessmentError(null);
+  setAssessmentStep('platforms');
   syncJobAdmission();
 }
 
@@ -767,6 +918,7 @@ async function refreshAssessment() {
       clearAssessmentEvidence();
       throw new Error(progress.error);
     }
+    if (progress.running) setAssessmentStep('results');
     if (progress.done) {
       clearAssessmentEvidence();
       const results = await api('/api/assessment/results');
@@ -779,6 +931,7 @@ async function refreshAssessment() {
       }
       if (!results.ok || !results.body) throw new Error(`${results.status}: ${results.body?.error || 'Results unavailable.'}`);
       renderAssessmentResult(results.body);
+      setAssessmentStep('results');
       $('assessmentBar').style.width = percent + '%';
       $('assessmentProgress').textContent = `${percent}% · ${progress.phase || 'Complete'}` +
         (progress.partial ? ' · Partial evidence — review collection limitations' : '');
@@ -800,9 +953,7 @@ $('btnAssessmentRun').addEventListener('click', async () => {
   if (assessmentImporting) { showAssessmentError('Wait for the pack import to finish.'); return; }
   if (assessmentBusy || exportBusy) { showAssessmentError('An export or assessment is already running.'); return; }
   if (!state?.auth?.connected) { showAssessmentError('Sign in before assessing policies.'); return; }
-  const platforms = assessmentPlatformBoxes().filter((b) => b.checked && !b.disabled).map((b) => b.value);
-  const identities = new Set(assessmentPackBoxes().filter((b) => b.checked && !b.disabled).map((b) => b.value));
-  const selectedPacks = assessmentPacks.filter((p) => identities.has(assessmentIdentity(p)));
+  const { platforms, packs: selectedPacks } = assessmentSelection();
   if (!platforms.length || platforms.some((p) => !selectedPacks.some((pack) => pack.platform === p))) {
     showAssessmentError('Every selected platform requires a selected applicable pack; choose at least one platform.');
     return;
@@ -840,6 +991,7 @@ $('btnAssessmentRun').addEventListener('click', async () => {
     if (r.status !== 202 || !r.body?.started) throw new Error(`${r.status}: ${r.body?.error || 'Assessment did not start.'}`);
     clearAssessmentEvidence();
     $('assessmentProgress').textContent = 'Assessment admitted. Collecting policy evidence…';
+    setAssessmentStep('results', true);
     startAssessmentPolling();
     await refreshAssessment();
   } catch (e) {
@@ -858,6 +1010,47 @@ $('btnAssessmentRefresh').addEventListener('click', async () => {
   await refreshAssessment();
 });
 
+function assessmentArchiveBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  // Chunking keeps fromCharCode within argument limits; btoa runs once because 0x8000 is not a multiple of 3.
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function assessmentSkippedLines(body) {
+  const skipped = Array.isArray(body?.skipped) ? body.skipped : [];
+  const total = Number.isInteger(body?.skippedCount) ? body.skippedCount : skipped.length;
+  const lines = [];
+  if (total > 0) {
+    lines.push(`Skipped ${total} archive ${total === 1 ? 'entry' : 'entries'}:`);
+    skipped.slice(0, 10).forEach((s) => lines.push(`${s.entry}: ${s.reason}`));
+    const shown = Math.min(skipped.length, 10);
+    if (total > shown) lines.push(`…and ${total - shown} more.`);
+  }
+  if (body?.ignored > 0) {
+    lines.push(`${body.ignored} other ${body.ignored === 1 ? 'file was' : 'files were'} ignored (not JSON).`);
+  }
+  return lines;
+}
+
+function assessmentImportReport(body, packs) {
+  const lines = [`Imported ${packs.length} rule ${packs.length === 1 ? 'pack' : 'packs'} locally. ` +
+    'Select the platforms and packs to assess; imports are never selected automatically.'];
+  if (typeof body.added === 'number') lines.push(`${body.added} new, ${packs.length - body.added} already present.`);
+  packs.forEach((p) => {
+    let line = `${p.id} @ ${p.version} — ${assessmentPlatforms[p.platform]} · ${p.profile}`;
+    if (typeof p.controlCount === 'number') {
+      line += ` · ${p.controlCount} ${p.controlCount === 1 ? 'control' : 'controls'}`;
+    }
+    if (typeof p.added === 'boolean') line += p.added ? ' · new' : ' · already present';
+    lines.push(line);
+  });
+  return [...lines, ...assessmentSkippedLines(body)].join('\n');
+}
+
 $('btnAssessmentImport').addEventListener('click', async () => {
   if (assessmentImporting || assessmentBusy || exportBusy) return;
   const generation = assessmentGeneration;
@@ -865,25 +1058,42 @@ $('btnAssessmentImport').addEventListener('click', async () => {
   assessmentImporting = true;
   syncJobAdmission();
   showAssessmentError(null);
+  $('assessmentImportSummary').textContent = '';
   try {
     const file = $('assessmentImportFile').files[0];
-    if (!file || !/\.json$/i.test(file.name) || !file.size || file.size > 10 * 1024 * 1024) {
-      throw new Error('Choose a nonempty JSON rule pack, at most 10 MiB.');
+    let payload;
+    if (file && /\.zip$/i.test(file.name)) {
+      if (!file.size || file.size > 32 * 1024 * 1024) throw new Error('Choose a nonempty ZIP archive, at most 32 MiB.');
+      const buffer = await file.arrayBuffer();
+      if (generation !== assessmentGeneration) return;
+      payload = { archive: assessmentArchiveBase64(buffer) };
+    } else if (file && /\.json$/i.test(file.name)) {
+      if (!file.size || file.size > 10 * 1024 * 1024) throw new Error('Choose a nonempty JSON rule pack, at most 10 MiB.');
+      const content = await file.text();
+      if (generation !== assessmentGeneration) return;
+      if (new TextEncoder().encode(content).length > 10 * 1024 * 1024) {
+        throw new Error('Decoded UTF-8 pack exceeds 10 MiB.');
+      }
+      payload = { content };
+    } else {
+      throw new Error('Choose a JSON rule pack (at most 10 MiB) or a ZIP archive (at most 32 MiB).');
     }
-    const content = await file.text();
-    if (generation !== assessmentGeneration) return;
-    if (new TextEncoder().encode(content).length > 10 * 1024 * 1024) {
-      throw new Error('Decoded UTF-8 pack exceeds 10 MiB.');
-    }
-    const r = await post('/api/assessment/packs', { content });
+    const r = await post('/api/assessment/packs', payload);
     if (generation !== assessmentGeneration) return;
     if (assessmentSessionFailure(r)) return;
-    if (!r.ok || !r.body?.pack) throw new Error(`${r.status}: ${r.body?.error || 'Pack import failed.'}`);
+    const imported = Array.isArray(r.body?.packs) ? r.body.packs : r.body?.pack ? [r.body.pack] : null;
+    if (!r.ok || !imported) {
+      if (Array.isArray(r.body?.skipped)) {
+        $('assessmentImportSummary').textContent =
+          ['Nothing was imported.', ...assessmentSkippedLines(r.body)].join('\n');
+      }
+      throw new Error(`${r.status}: ${r.body?.error || 'Pack import failed.'}`);
+    }
     assessmentCatalogRequest++;
-    const identity = assessmentIdentity(r.body.pack);
-    const packs = assessmentPacks.filter((p) => assessmentIdentity(p) !== identity);
-    renderAssessmentPacks({ packs: [...packs, r.body.pack], errors: [] });
-    $('assessmentProgress').textContent = 'Pack validated and imported locally. Select its platform/profile to assess.';
+    const identities = new Set(imported.map(assessmentIdentity));
+    const packs = assessmentPacks.filter((p) => !identities.has(assessmentIdentity(p)));
+    renderAssessmentPacks({ packs: [...packs, ...imported], errors: assessmentCatalogIssues });
+    $('assessmentImportSummary').textContent = assessmentImportReport(r.body, imported);
   } catch (e) {
     if (generation === assessmentGeneration) showAssessmentError(e.message);
   } finally {
@@ -994,5 +1204,6 @@ $('btnRetryState').addEventListener('click', start);
     }
   }
   setDocumentStep('configure');
+  setAssessmentStep('platforms');
   start();
 })();

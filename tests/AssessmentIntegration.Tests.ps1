@@ -1,6 +1,6 @@
 BeforeAll {
     $repo = Split-Path -Parent $PSScriptRoot
-    foreach ($module in 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'AssessmentRules', 'AssessmentReports', 'Assessment', 'AssessmentApi') {
+    foreach ($module in 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'BaselineArchive', 'AssessmentRules', 'AssessmentReports', 'Assessment', 'AssessmentApi') {
         . (Join-Path $repo "lib\$module.ps1")
     }
     . (Join-Path $PSScriptRoot 'TestHelpers\Assessment.ps1')

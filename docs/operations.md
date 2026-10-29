@@ -33,10 +33,13 @@ chosen output folder. It is not a hosted service.
   If collection is incomplete, it skips stale-file pruning rather than
   fabricating deletions.
 - Imported assessment packs persist outside the installation at
-  `%LOCALAPPDATA%\IntuneDocsStudio\AssessmentPacks`. Bundled packs are reviewed
-  application resources, not customer imports. Active tenant assessment results
-  live in memory and clear on session reset/identity replacement; saved report
-  files and imported packs are not deleted by that reset.
+  `%LOCALAPPDATA%\IntuneDocsStudio\AssessmentPacks`, one `<sha256>.json` file
+  per pack. Packs generated from a CIS build-kit ZIP live in the same folder as
+  JSON imports. The build-kit ZIP itself is read in memory and never kept; keep
+  your licensed download under your own access controls. Bundled packs are
+  reviewed application resources, not customer imports. Active tenant assessment
+  results live in memory and clear on session reset/identity replacement; saved
+  report files and imported packs are not deleted by that reset.
 - Assessment reports go only to the operator's chosen absolute report root.
   Keep installation, documentation export, and report roots mutually disjoint:
   no equal, ancestor, or descendant paths and no reparse-point roots/ancestors.
@@ -57,19 +60,31 @@ chosen output folder. It is not a hosted service.
 > device compliance/encryption. **Missing** is scoped to the rule's completely
 > read mapped families/policy types, not tenant-wide absence.
 
-Sign in and verify tenant identity on Home, then open **Assess policies**. Select
-platforms and exact pack versions/profiles; inspect source revisions, SHA-256,
-baseline versus recommendations classification, and partial inventory. Import
-only reviewed customer-licensed schema-1 JSON via **Import pack**; validation
-does not attest to source correctness or rights. CIS benchmark PDFs and arbitrary
-Intune exports are not supported. The [import reference](assessment-rule-packs.md)
-documents fields, type/operator support, platform/enrollment context, and limits.
+Sign in and verify tenant identity on Home, then open **Assess policies**. The
+wizard runs through **Platforms**, **Baselines**, **Context**, **Review & run**
+and **Results**. Select platforms, then exact pack versions/profiles; inspect
+source revisions, SHA-256, baseline versus recommendations classification, and
+partial inventory. The **Import rule packs** card on **Platforms** and
+**Baselines** accepts reviewed customer-licensed schema-1 JSON or the licensed
+CIS Intune build-kit ZIP downloaded from CIS; click **Import pack**. Validation
+and conversion do not attest to source correctness or rights. Packs converted
+from a build-kit ZIP are labeled CIS without verifying the source. The
+build-kit layout is unverified and the converter is defensive, so read the import
+summary: skipped entries with reasons and the number of ignored files. Imported
+packs are never selected automatically. CIS benchmark PDFs, Excel, XCCDF/OVAL,
+Group Policy and OMA-URI content are not supported. The
+[import reference](assessment-rule-packs.md) documents fields, type/operator
+support, build-kit ZIP conversion, platform/enrollment context, and limits.
 No framework content is downloaded automatically.
 
-Supply known OS versions, Android enrollment mode and optional iOS/iPadOS ownership
-comparison scope, select the separate
-report destination, and click **Assess selected policies**. Windows 11 uses a
-numeric build version such as `10.0.22000`; macOS FileVault needs at least 10.13.
+On **Context**, supply known OS versions, Android enrollment mode and optional
+iOS/iPadOS ownership comparison scope; only the selected platforms' fields are
+shown. On **Review & run**, check the summary, select the separate report
+destination, and click **Assess selected policies**. Windows 11 uses a numeric
+build version such as `10.0.22000`; macOS FileVault needs at least 10.13. A
+blank Windows 11 build shows a non-blocking warning: Windows policies targeting
+Windows 10 and later, including the Settings Catalog policies that CIS
+build-kit packs map to, are then reported as not assessed.
 Selected context is not discovered device inventory. Do not invent unknown
 values to obtain a pass. iOS ownership defaults to **Unknown**; affirmatively
 select **Personally owned** only for that target comparison. Neither scope nor
@@ -107,7 +122,11 @@ do not establish whole-benchmark coverage.
 
 Validation errors do not replace a valid pack; fix the JSON/limit or review the
 immutable ID/version/hash collision and use a new version for revised bytes.
-Do not delete a valid pack blindly to silence a collision. Source access failures
+Do not delete a valid pack blindly to silence a collision. A build-kit ZIP
+import checks every candidate pack before writing; one collision rejects the
+whole archive and writes nothing. A storage failure (`500`) during a build-kit
+ZIP import can leave some complete packs imported; import the same archive
+again, and those packs are reported as already present. Source access failures
 (including 403), truncated pagination, and unsupported evidence are not complete
 empty reads. Recheck access/source support before rerunning. Authentication
 failures fail the run without reports; sign in again. Report-path/write failures
@@ -205,6 +224,9 @@ backup-integrity check or a guarantee that a restored Git remote is correct.
 
 Back up imported rule-pack files and chosen report roots separately as
 customer-owned data, with access controls and any CIS licensing restrictions.
+The imported-pack folder holds packs imported as JSON and packs generated from
+a CIS build-kit ZIP alike, each as `<sha256>.json`. The application does not
+keep the build-kit ZIP; keep your licensed download under your own access controls.
 Preserve original bytes for hash provenance. Restore packs outside the app,
 review identity/version collisions, and reimport through the dashboard where
 needed. Restore reports to a separate data folder, not into exported

@@ -84,28 +84,50 @@ stopped at that point, so either answer is fine.
 > configured in the completely read **mapped families/policy types only**, not
 > tenant-wide absence.
 
-1. Sign in, confirm the tenant on Home, and open **Assess policies**.
-   Select platforms and exact pack versions/profiles. Read their
-   source revision, hash, classification, and coverage before running.
-2. For CIS, choose a customer-licensed, reviewed JSON rule pack and click
-   **Import pack**. No CIS content is bundled or downloaded. PDFs and raw Intune
-   exports are not rule packs; see [the import reference](docs/assessment-rule-packs.md)
-   for schema, supported operators, and limits (10 MiB UTF-8, 32 levels,
-   20,000 controls, 32,768 characters per string).
-3. Enter known OS versions and Android enrollment mode. Windows expects a build
-   version such as `10.0.22000`. Unknown applicability remains **not assessed**.
-   Select iOS/iPadOS **Personally owned** only for that explicit comparison scope;
-   its default is **Unknown**, not assumed ownership. This is selected comparison
-   context, not discovered inventory or effective assignment. Windows-family
-   policies can use the supplied Windows 11 target build; policy include/exclude
-   rules remain authoritative and unsupported conditions remain not assessed.
-4. Choose an absolute **assessment report destination** outside both the app and
-   documentation output trees, then click **Assess selected policies**. Wait for
-   completion before another export/assessment, sign-out, reset, or shutdown.
-5. Inspect summary counts and filter the evidence table by status. Read expected
-   and configured values, policy/assignment evidence, reasons, and collection
-   limitations. Open the displayed paths: each new run folder contains
-   `assessment.md` and `assessment.json`; existing exports/manifests are unchanged.
+The assessment is a five-step wizard: **Platforms**, **Baselines**, **Context**,
+**Review & run** and **Results**. **Next** checks each step; errors appear below
+the stepper.
+
+1. Sign in, confirm the tenant on Home, and open **Assess policies**. On
+   **Platforms**, select at least one platform.
+2. To import packs, use the **Import rule packs** card on **Platforms** or
+   **Baselines**. Choose the licensed CIS Intune build-kit ZIP you downloaded from
+   CIS (at most 32 MiB) or one customer-licensed, reviewed schema-1 JSON rule pack
+   (at most 10 MiB), and click **Import pack**. The build-kit ZIP is read in memory.
+   Its Settings Catalog policies become rule packs labeled CIS without verifying
+   the source, so import only your licensed download. The build-kit layout is
+   unverified; review the defensive converter's summary of packs, skipped entries
+   with reasons and ignored-file counts. Imported packs are never selected
+   automatically. A single JSON file must be a schema-1 rule pack; Settings
+   Catalog JSON is converted only from a build-kit ZIP. No CIS content is bundled
+   or downloaded. PDFs, Excel, XCCDF/OVAL, Group Policy and OMA-URI content are not
+   supported; see [the import reference](docs/assessment-rule-packs.md) for
+   schema, supported operators, build-kit ZIP conversion, and pack limits
+   (10 MiB UTF-8, 32 levels, 20,000 controls, 32,768 characters per string).
+3. On **Baselines**, select 1–64 exact pack versions/profiles, with an applicable
+   pack for every selected platform. Read their source revision, hash,
+   classification, and coverage before running.
+4. On **Context**, enter known OS versions and Android enrollment mode for the
+   selected platforms. Windows expects a build version such as `10.0.22000`.
+   Unknown applicability remains **not assessed**. Select iOS/iPadOS
+   **Personally owned** only for that explicit comparison scope; its default is
+   **Unknown**, not assumed ownership. This is selected comparison context, not
+   discovered inventory or effective assignment. Windows-family policies can use
+   the supplied Windows 11 target build; policy include/exclude rules remain
+   authoritative and unsupported conditions remain not assessed. A blank
+   Windows 11 build shows a non-blocking warning: Windows policies targeting
+   Windows 10 and later, such as those that CIS build-kit packs check, then stay
+   not assessed.
+5. On **Review & run**, check the summary. Choose an absolute
+   **assessment report destination** outside both the app and documentation
+   output trees, then click **Assess selected policies**. Wait for completion
+   before another export/assessment, sign-out, reset, or shutdown.
+6. On **Results**, inspect summary counts and filter the evidence table by
+   status. Read expected and configured values, policy/assignment evidence,
+   reasons, and collection limitations. Open the displayed paths: each new run
+   folder contains `assessment.md` and `assessment.json`; existing
+   exports/manifests are unchanged. **New assessment** returns to **Platforms**
+   with your choices kept; it is disabled while an assessment runs.
 
 Coverage and alignment percentages concern listed configuration checks, **not
 device compliance or certification**. Incomplete/unsupported/manual evidence is
@@ -114,10 +136,12 @@ without reaching devices. Potential conflicts mean differing configured values,
 not proven overlapping assignments; groups/filters are not resolved to devices.
 
 Imports persist at `%LOCALAPPDATA%\IntuneDocsStudio\AssessmentPacks` through app
-updates; active tenant results clear on session reset. Reports are written only
-to the report root you choose, never automatically uploaded, committed, or pushed.
-Back up packs/reports only as customer-owned files; do not back up tokens or
-portal browser profiles. See [operator procedures](docs/operations.md).
+updates, including packs generated from a build-kit ZIP. The build-kit ZIP itself
+is not kept, so keep your licensed download. Active tenant results clear on
+session reset. Reports are written only to the report root you choose, never
+automatically uploaded, committed, or pushed. Back up packs/reports only as
+customer-owned files; do not back up tokens or portal browser profiles. See
+[operator procedures](docs/operations.md).
 
 ---
 
