@@ -58,6 +58,7 @@ test('flags are exactly the ten packaged, local SVG files and both scripts load 
   assert.ok(html.indexOf('src="/i18n.js"') < html.indexOf('src="/app.js"'));
   assert.match(html, /id="localeSelect"[\s\S]*?role="combobox"/);
   assert.match(html, /aria-labelledby="localeLabel localeCurrent"/);
+  assert.match(html, /id="localeLabel" class="sr-only"/);
   assert.match(html, /id="localeOptions"[^>]+role="listbox"/);
   assert.ok(html.indexOf('id="localePicker"') < html.indexOf('<main'));
   assert.doesNotMatch(app, /MutationObserver|location\.reload/);
@@ -66,7 +67,7 @@ test('flags are exactly the ten packaged, local SVG files and both scripts load 
 test('every static app-owned text node, placeholder, title and accessible label is explicitly tagged', () => {
   const stack = [];
   const voidTags = new Set(['meta', 'link', 'input', 'img', 'br', 'hr', 'path', 'rect']);
-  const technicalText = new Set(['Intune Docs Studio', 'United Kingdom / English']);
+  const technicalText = new Set(['Intune Docs Studio', 'English']);
   const codeText = new Set(['_raw', 'organizations', '.order']);
   for (const token of html.split(/(<!--[\s\S]*?-->|<[^>]*>)/g)) {
     if (token.startsWith('<!--') || token.startsWith('<!')) continue;
@@ -255,7 +256,10 @@ test('keyboard dropdown shows all local flags/native names, commits language and
     assert.equal(row.children[1].getAttribute('lang'), ids[index]);
     assert.equal(row.getAttribute('role'), 'option');
   }
-  assert.equal(rows[1].children[1].textContent, 'Nederland / Nederlands');
+  const nativeNames = ['English', 'Nederlands', 'Français', 'Deutsch', 'Svenska', 'Español',
+    'Norsk bokmål', 'Português', 'Italiano', 'Dansk'];
+  assert.deepEqual(rows.map(row => row.children[1].textContent), nativeNames);
+  assert.equal(h.element('localeCurrent').textContent, 'English');
   const key = value => control.handlers.keydown({ key: value, preventDefault() {} });
   key('ArrowDown');
   assert.equal(control.getAttribute('aria-expanded'), 'true');
@@ -265,6 +269,7 @@ test('keyboard dropdown shows all local flags/native names, commits language and
   assert.equal(h.attributes.get('lang'), 'nl-NL');
   assert.equal(h.storage.get('ids.locale'), 'nl-NL');
   assert.equal(h.element('localeFlag').src, '/flags/nl-NL.svg');
+  assert.equal(h.element('localeCurrent').textContent, 'Nederlands');
   assert.equal(h.element('syntheticHeading').textContent, catalog('nl-NL')['text.home']);
   assert.equal(h.element('syntheticInput').getAttribute('placeholder'), catalog('nl-NL')['text.absolute_path_on_the_application_host']);
   assert.equal(h.element('syntheticInput').getAttribute('title'), catalog('nl-NL')['text.choose_host_folder']);

@@ -22,6 +22,10 @@ function Write-IdsBuildKitJsonValue {
     if ($null -eq $Value) { $Writer.WriteNullValue(); return }
     if ($Value -is [bool]) { $Writer.WriteBooleanValue($Value); return }
     if ($Value -is [string]) { $Writer.WriteStringValue([string]$Value); return }
+    if ($Value -is [datetime] -or $Value -is [datetimeoffset]) {
+        $Writer.WriteStringValue($Value.ToString('o', [Globalization.CultureInfo]::InvariantCulture))
+        return
+    }
     if ($Value -is [decimal]) { $Writer.WriteNumberValue([decimal]$Value); return }
     if ($Value -is [double] -or $Value -is [single]) { $Writer.WriteNumberValue([double]$Value); return }
     if ($Value -is [uint64]) { $Writer.WriteNumberValue([uint64]$Value); return }

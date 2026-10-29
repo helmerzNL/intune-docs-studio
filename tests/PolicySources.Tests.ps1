@@ -95,6 +95,29 @@ Describe 'Explicit policy sources and portable snapshots' {
         { Get-IdsLoadedPolicies $state } | Should -Throw '*import a policy set*'
     }
 
+    It 'exports live policy timestamps without mutating evidence or losing date information' {
+        $snapshot = New-TestPolicySource
+        $utc = [datetime]::new(2026, 10, 29, 10, 20, 30, [DateTimeKind]::Utc)
+        $offset = [datetimeoffset]::new(2026, 10, 29, 12, 20, 30, [timespan]::FromHours(2))
+        $policy = $snapshot.collection.documentation.deviceConfiguration[0].policy
+        $policy | Add-Member NoteProperty createdDateTime $utc
+        $policy | Add-Member NoteProperty lastModifiedDateTime $offset
+        $snapshot.collection.policies[0].rawSettings[0].createdDateTime = $utc
+        $snapshot.collection.policies[0].rawSettings[0].lastModifiedDateTime = $offset
+        $snapshot.references.groups['synthetic-group'] = @{ name = 'Synthetic operators'; createdDateTime = $utc }
+        $output = Export-IdsPolicySnapshot $snapshot (Join-Path $TestDrive 'dated') $script:root
+        $imported = Import-IdsPolicySnapshot -Path $output.path
+        $raw = $imported.collection.policies[0].rawSettings[0]
+        $raw.createdDateTime | Should -BeExactly '2026-10-29T10:20:30.0000000Z'
+        $raw.lastModifiedDateTime | Should -BeExactly '2026-10-29T12:20:30.0000000+02:00'
+        $documented = $imported.collection.documentation.deviceConfiguration[0].policy
+        $documented.createdDateTime | Should -BeExactly $raw.createdDateTime
+        $documented.lastModifiedDateTime | Should -BeExactly $raw.lastModifiedDateTime
+        $imported.references.groups['synthetic-group'].createdDateTime | Should -BeExactly $raw.createdDateTime
+        $policy.createdDateTime | Should -BeOfType datetime
+        $policy.lastModifiedDateTime | Should -BeOfType datetimeoffset
+    }
+
     It 'does not export authentication or secret policy values' {
         $snapshot = New-TestPolicySource
         $snapshot.Auth = @{ access_token = 'SYNTHETIC-CREDENTIAL-MUST-NOT-EXPORT' }

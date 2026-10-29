@@ -55,7 +55,8 @@ chosen output folder. It is not a hosted service.
 
 The application supports `en-GB`, `nl-NL`, `fr-FR`, `de-DE`, `sv-SE`, `es-ES`,
 `nb-NO` (Norwegian Bokmål), `pt-PT` (European Portuguese), `it-IT` and `da-DK`.
-The header selector uses bundled flags, native names and keyboard navigation.
+The header selector shows bundled flags and native language names, without country
+names or a visible label, and supports keyboard navigation.
 The first visit matches the browser language with English fallback. The selected
 locale is stored only in this browser's local storage, not in tenant exports or
 authentication objects; clearing the browser's site data resets that preference.

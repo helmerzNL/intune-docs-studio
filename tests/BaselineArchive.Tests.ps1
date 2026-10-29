@@ -11,6 +11,33 @@ BeforeAll {
     }
 }
 
+Describe 'Generated JSON date values' {
+    It 'writes nested DateTime and DateTimeOffset values as invariant round-trip strings' {
+        $utc = [datetime]::new(2026, 10, 29, 10, 20, 30, [DateTimeKind]::Utc)
+        $unspecified = [datetime]::new(2026, 10, 29, 10, 20, 30, [DateTimeKind]::Unspecified)
+        $offset = [datetimeoffset]::new(2026, 10, 29, 12, 20, 30, [timespan]::FromHours(2))
+        $value = [ordered]@{
+            createdDateTime = $utc
+            nested = @([ordered]@{ modified = $offset; unspecified = $unspecified })
+            literal = '2026-10-29'; enabled = $false; count = 2L; empty = $null
+        }
+        $bytes = ConvertTo-IdsBuildKitJsonBytes $value
+        $document = [Text.Json.JsonDocument]::Parse([Text.Encoding]::UTF8.GetString($bytes))
+        try { $result = ConvertFrom-IdsPackJsonElement $document.RootElement }
+        finally { $document.Dispose() }
+        $result.createdDateTime | Should -BeExactly '2026-10-29T10:20:30.0000000Z'
+        $result.nested[0].modified | Should -BeExactly '2026-10-29T12:20:30.0000000+02:00'
+        $result.nested[0].unspecified | Should -BeExactly '2026-10-29T10:20:30.0000000'
+        $result.literal | Should -BeExactly '2026-10-29'
+        $result.enabled | Should -BeFalse
+        $result.count | Should -Be 2
+        $result.empty | Should -BeNullOrEmpty
+        $value.createdDateTime | Should -BeOfType datetime
+        { ConvertTo-IdsBuildKitJsonBytes @{ unsupported = [uri]'https://example.invalid' } } |
+            Should -Throw '*System.Uri*'
+    }
+}
+
 Describe 'Build-kit Settings Catalog conversion' {
     It 'converts choice, child, collection, integer and string settings into validated controls' {
         $child = New-IdsTestSettingInstance -Id 'syn.choice.child' -Value @{ value = 7 }

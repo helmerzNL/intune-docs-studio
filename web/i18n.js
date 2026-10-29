@@ -2,17 +2,17 @@
 
 (() => {
   const locales = Object.freeze([
-    ['en-GB', 'United Kingdom', 'English'],
-    ['nl-NL', 'Nederland', 'Nederlands'],
-    ['fr-FR', 'France', 'Français'],
-    ['de-DE', 'Deutschland', 'Deutsch'],
-    ['sv-SE', 'Sverige', 'Svenska'],
-    ['es-ES', 'España', 'Español'],
-    ['nb-NO', 'Norge', 'Norsk bokmål'],
-    ['pt-PT', 'Portugal', 'Português'],
-    ['it-IT', 'Italia', 'Italiano'],
-    ['da-DK', 'Danmark', 'Dansk']
-  ].map(([id, country, language]) => Object.freeze({ id, country, language })));
+    ['en-GB', 'English'],
+    ['nl-NL', 'Nederlands'],
+    ['fr-FR', 'Français'],
+    ['de-DE', 'Deutsch'],
+    ['sv-SE', 'Svenska'],
+    ['es-ES', 'Español'],
+    ['nb-NO', 'Norsk bokmål'],
+    ['pt-PT', 'Português'],
+    ['it-IT', 'Italiano'],
+    ['da-DK', 'Dansk']
+  ].map(([id, language]) => Object.freeze({ id, language })));
   const storageKey = 'ids.locale';
   const catalogs = new Map();
   const subscribers = new Set();
@@ -99,11 +99,11 @@
     select.value = locale;
     const current = document.getElementById('localeCurrent');
     const selected = locales.find(item => item.id === locale);
-    current.textContent = `${selected.country} / ${selected.language}`;
+    current.textContent = selected.language;
     current.setAttribute('lang', locale);
     const flag = document.getElementById('localeFlag');
     flag.src = `/flags/${locale}.svg`;
-    flag.alt = ''; // The adjacent native label already names the country and language.
+    flag.alt = ''; // The adjacent native label already names the language.
     for (const [index, item] of locales.entries()) {
       const option = document.getElementById(`localeOption-${item.id}`);
       if (option) {
@@ -141,7 +141,7 @@
     const select = document.getElementById('localeSelect');
     if (!select) return;
     const list = document.getElementById('localeOptions');
-    for (const { id, country, language } of locales) {
+    for (const { id, language } of locales) {
       const option = document.createElement('li');
       option.id = `localeOption-${id}`;
       option.setAttribute('role', 'option');
@@ -152,7 +152,7 @@
       flag.width = 24;
       flag.height = 16;
       const label = document.createElement('span');
-      label.textContent = `${country} / ${language}`;
+      label.textContent = language;
       label.setAttribute('lang', id);
       option.appendChild(flag);
       option.appendChild(label);
@@ -193,8 +193,8 @@
         if (!wasOpen) open();
         typeAhead = Date.now() - typedAt > 700 ? event.key : typeAhead + event.key;
         typedAt = Date.now();
-        const index = locales.findIndex(item => [item.country, item.language].some(name =>
-          name.toLocaleLowerCase(locale).startsWith(typeAhead.toLocaleLowerCase(locale))));
+        const index = locales.findIndex(item =>
+          item.language.toLocaleLowerCase(locale).startsWith(typeAhead.toLocaleLowerCase(locale)));
         if (index >= 0) activate(index);
       }
     });

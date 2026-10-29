@@ -240,6 +240,45 @@ const boxes = (d, root) => d.element(root).children.map((label) => label.childre
 const renderCatalog = (d, packs = syntheticPacks()) =>
   d.run(`renderAssessmentPacks(${JSON.stringify({ packs, errors: [] })})`);
 
+test('platforms are selectable before the catalog arrives and its arrival preserves the selection', async () => {
+  let release;
+  const d = await assessmentDashboard(url => {
+    if (url === '/api/state') return connectedState();
+    if (url === '/api/assessment/packs') return new Promise(resolve => { release = resolve; });
+    return {};
+  });
+  await new Promise(setImmediate);
+  const platforms = boxes(d, 'assessmentPlatforms');
+  assert.deepEqual(platforms.map(box => box.value), ['windows11', 'macos', 'iosIpados', 'androidEnterprise']);
+  assert.ok(platforms.every(box => !box.disabled && !box.checked));
+  platforms[0].checked = true;
+  platforms[0].handlers.change();
+  await d.element('btnAssessPlatformsNext').handlers.click();
+  assert.equal(d.run('assessmentCurrentStep'), 'import');
+  release({ packs: syntheticPacks(), errors: [] });
+  await new Promise(setImmediate);
+  assert.equal(boxes(d, 'assessmentPlatforms')[0].checked, true);
+  assert.equal(boxes(d, 'assessmentPacks')[0].disabled, false);
+});
+
+test('failed or malformed catalogs leave all platforms selectable and report the failure', async () => {
+  for (const response of [{ httpStatus: 500, body: { error: 'Synthetic catalog failure' } }, {}]) {
+    const d = await assessmentDashboard(url => {
+      if (url === '/api/state') return connectedState();
+      if (url === '/api/assessment/packs') return response;
+      return {};
+    });
+    await new Promise(setImmediate);
+    assert.equal(boxes(d, 'assessmentPlatforms').length, 4);
+    assert.ok(boxes(d, 'assessmentPlatforms').every(box => !box.disabled));
+    assert.ok(d.element('assessmentError').textContent);
+    boxes(d, 'assessmentPlatforms')[1].checked = true;
+    await d.context.window.IdsI18n.setLocale('nl-NL');
+    assert.equal(boxes(d, 'assessmentPlatforms')[1].checked, true);
+    assert.match(d.element('assessmentPlatforms').children[0].children[1].textContent, /importeer/i);
+  }
+});
+
 test('imported Microsoft authority is author-declared, never an official reviewed baseline', async () => {
   const d = await assessmentDashboard();
   renderCatalog(d, [{ ...syntheticPacks()[0], origin: 'imported' }]);
