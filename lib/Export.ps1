@@ -99,6 +99,15 @@ function Save-IdsDoc {
 
     $rel = Resolve-IdsDocPath -Ctx $Ctx -Folder $Folder -Name $Title -Id $Id
     $full = Join-Path $Ctx.Root ($rel -replace '/', '\')
+    if ($Ctx.PreservePolicyPages) {
+        if ([IO.File]::Exists($full)) {
+            $Markdown = [IO.File]::ReadAllText($full)
+            $RawObject = $null
+        } else {
+            $Markdown = '> Offline evidence is incomplete. Missing settings, assignments and reference names are unknown, not an empty or compliant configuration.' + "`n`n" +
+                ($Markdown -replace '_No (?:ADMX )?settings configured\._', '_Settings are unavailable in this export; completeness is unknown._')
+        }
+    }
     $result = Write-IdsFile -Path $full -Content $Markdown
     $Ctx.Stats[$result]++
     [void]$Ctx.Written.Add($rel)
@@ -143,6 +152,13 @@ function Save-IdsDoc {
 
 function Initialize-IdsLookups {
     param($Ctx)
+    if ($Ctx.PolicySnapshot.source.kind -eq 'offline') {
+        $refs = $Ctx.PolicySnapshot.references
+        Set-IdsLookupMaps -Groups $refs.groups -Filters $refs.filters -ScopeTags $refs.scopeTags -Categories $refs.categories
+        Set-IdsGroupResolver { param($Id) return "(reference name unavailable in offline set: $Id)" }
+        $Ctx.Filters = @{}; $Ctx.Categories = @{}; $Ctx.GroupObjects = @{}; $Ctx.GroupErrors = @{}
+        return
+    }
     Set-IdsProgress -State $Ctx.State -Percent 3 -Phase 'Loading reference data'
 
     $categories = @{}
@@ -230,9 +246,18 @@ function Resolve-IdsGroupNames {
 
 function Get-IdsExportPolicyDocuments {
     param($Ctx, [string]$Family)
+    $Ctx.PreservePolicyPages = $false
     $collection = $Ctx.PolicySnapshot.collection
     if (-not $collection.documentation.ContainsKey($Family)) { throw 'Loaded policy family is unavailable. Reload policies.' }
-    if (@($collection.issues + $collection.documentationIssues | Where-Object family -EQ $Family).Count) {
+    if (@($collection.issues + $collection.documentationIssues | Where-Object family -EQ $Family).Count -or
+        @($collection.sources | Where-Object { $_.family -eq $Family -and -not $_.complete }).Count -or
+        @($collection.policies | Where-Object { $_.family -eq $Family -and -not $_.settingsComplete }).Count) {
+        if ($Ctx.PolicySnapshot.source.kind -eq 'offline') {
+            $Ctx.OfflineIncomplete = $true
+            $Ctx.PreservePolicyPages = $true
+            Add-IdsWarning $Ctx "$Family has incomplete offline evidence. Existing policy pages are preserved; new pages explicitly show the limitation."
+            return $collection.documentation[$Family]
+        }
         # A partial inventory must never erase previously generated policy pages.
         throw 'Loaded policy evidence is incomplete for this family. Reload policies after resolving the collection warnings.'
     }
@@ -1411,6 +1436,9 @@ function Start-IdsExport {
 
     try {
         Assert-IdsGitOptions -Options $Options
+        if ($PolicySnapshot.source.kind -eq 'offline' -and @($Options.Sections | Where-Object {
+            $_ -notin @('settingsCatalog', 'deviceConfigs', 'admx', 'compliance', 'endpointSecurity')
+        }).Count) { throw 'Offline documentation cannot collect apps, scripts or other live sections.' }
         $root = $Options.OutputPath
         if (-not (Test-Path -LiteralPath $root)) { New-Item -ItemType Directory -Force -Path $root | Out-Null }
         $root = (Resolve-Path -LiteralPath $root).Path
@@ -1431,10 +1459,11 @@ function Start-IdsExport {
         }
 
         $conn = if ($PolicySnapshot) {
-            if (-not $State.Auth -or ($State.Auth.tenant_id -and $State.Auth.tenant_id -ne $PolicySnapshot.tenant.id)) {
+            if ($PolicySnapshot.source.kind -ne 'offline' -and
+                (-not $State.Auth -or ($State.Auth.tenant_id -and $State.Auth.tenant_id -ne $PolicySnapshot.tenant.id))) {
                 throw 'Loaded policies do not belong to the current tenant.'
             }
-            Write-IdsLog -State $State -Message "Using policies loaded at $($PolicySnapshot.capturedAt). Other selected data is collected now."
+            Write-IdsLog -State $State -Message "Using $($PolicySnapshot.source.kind) policies collected at $($PolicySnapshot.capturedAt)."
             @{ tenantId = $PolicySnapshot.tenant.id; organization = $PolicySnapshot.tenant.name }
         } else { Test-IdsGraphConnection }
         $ctx.TenantId = $conn.tenantId
@@ -1514,7 +1543,7 @@ function Start-IdsExport {
         Write-IdsNavigation -Ctx $ctx
 
         Set-IdsProgress -State $State -Percent 96 -Phase 'Pruning removed objects'
-        Remove-IdsStaleFiles -Ctx $ctx -Complete ($failedSections.Count -eq 0)
+        Remove-IdsStaleFiles -Ctx $ctx -Complete ($failedSections.Count -eq 0 -and -not $ctx.OfflineIncomplete)
 
         $git = $null
         if ($Options.GitCommit) {
@@ -1529,9 +1558,9 @@ function Start-IdsExport {
             stats     = $ctx.Stats
             warnings  = @($ctx.Warnings)
             failed    = @($failedSections)
-            complete  = ($failedSections.Count -eq 0)
+            complete  = ($failedSections.Count -eq 0 -and -not $ctx.OfflineIncomplete)
             git       = $git
-            graph     = (Get-IdsGraphStats)
+            graph     = $(if ($PolicySnapshot.source.kind -eq 'offline') { @{ requests = 0 } } else { Get-IdsGraphStats })
             files     = @($ctx.Written).Count
         }
         Set-IdsProgress -State $State -Percent 100 -Phase 'Complete'

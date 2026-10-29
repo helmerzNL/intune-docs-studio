@@ -101,7 +101,7 @@ function Invoke-IdsAssessmentRoute {
     param([string]$Method, [string]$Path, [object]$Request, [hashtable]$State, [string]$Root)
     $response = [pscustomobject]@{ handled = $true; status = 200; body = $null }
     if ("$Method $Path" -cnotin @('GET /api/assessment/packs', 'POST /api/assessment/packs',
-        'POST /api/assessment', 'GET /api/assessment', 'GET /api/assessment/results')) {
+        'POST /api/assessment/packs/remove', 'POST /api/assessment', 'GET /api/assessment', 'GET /api/assessment/results')) {
         $response.handled = $false
         return $response
     }
@@ -121,8 +121,8 @@ function Invoke-IdsAssessmentRoute {
                 return $response
             }
         }
-        if ($Path -cne '/api/assessment/packs') {
-            if (-not $State.Auth) {
+        if ($Path -cnotin @('/api/assessment/packs', '/api/assessment/packs/remove')) {
+            if (-not $State.Auth -and -not $State.Policies.snapshot) {
                 $response.status = 401; $response.body = @{ error = 'Not signed in.' }; return $response
             }
             if ($Method -ceq 'POST' -and ((Test-IdsWorkActive $State) -or $State.Browser.running)) {
@@ -134,7 +134,14 @@ function Invoke-IdsAssessmentRoute {
                 }
             }
         }
+        if ($Method -eq 'POST' -and (Test-IdsWorkActive $State)) {
+            $response.status = 409; $response.body = @{ error = 'Wait for policy loading, imports and active runs before changing the library.' }; return $response
+        }
         switch -CaseSensitive ("$Method $Path") {
+            'POST /api/assessment/packs/remove' {
+                $body = Read-IdsAssessmentRequestJson $Request 4KB
+                $response.body = Remove-IdsImportedPack $State $Root ([string]$body.selectionId) ($body.confirm -eq $true)
+            }
             'GET /api/assessment/packs' {
                 $catalog = Get-IdsAssessmentCatalog $State $Root
                 $response.body = @{
@@ -146,8 +153,51 @@ function Invoke-IdsAssessmentRoute {
                 $body = Read-IdsAssessmentRequestJson $Request 64MB
                 $fields = @{}
                 foreach ($property in $body.PSObject.Properties) { $fields[$property.Name] = $property.Value }
-                Assert-IdsAssessmentFields $fields @('content', 'archive') @()
-                if ($fields.Count -ne 1) { throw 'Provide exactly one of content or archive.' }
+                Assert-IdsAssessmentFields $fields @('content', 'archive', 'path', 'kind') @()
+                if (@($fields.Keys | Where-Object { $_ -cin @('content', 'archive', 'path') }).Count -ne 1) {
+                    throw 'Provide exactly one of content or archive, or a host folder path.'
+                }
+                if ($body.kind -and $body.kind -cnotin @('reference', 'packs')) { throw 'Unknown import kind.' }
+                if ($fields.ContainsKey('path') -and ($body.path -isnot [string] -or [string]::IsNullOrWhiteSpace($body.path))) {
+                    throw 'Provide an absolute host folder path.'
+                }
+                if ($body.kind -ceq 'reference' -and $fields.ContainsKey('content')) {
+                    throw 'A custom reference requires a policy-set folder or ZIP, not rule-pack content.'
+                }
+                if ($body.kind -eq 'reference' -or $fields.ContainsKey('path')) {
+                    $result = if ($body.kind -eq 'reference') {
+                        $snapshot = if ($body.archive) {
+                            Import-IdsPolicySnapshot -Archive (ConvertFrom-IdsPolicyArchiveBase64 $body.archive)
+                        } else { Import-IdsPolicySnapshot -Path ([string]$body.path) }
+                        ConvertTo-IdsReferencePacks $snapshot
+                    } else {
+                        $entries = Read-IdsPolicyEntries -Path ([string]$body.path)
+                        $bytes = @(foreach ($name in $entries.Keys | Sort-Object) { ,$entries[$name] })
+                        foreach ($entryBytes in $bytes) { [void](Read-IdsBaselinePack $entryBytes) }
+                        @{ packs = $bytes; skipped = @(); skippedCount = 0; ignored = 0 }
+                    }
+                    if ($result.packs.Count -eq 0) {
+                        $response.status = 400; $response.body = @{ error = 'No safe reference checks or schema-1 rule packs found.'; skipped = $result.skipped; skippedCount = $result.skippedCount }; break
+                    }
+                    $catalog = Get-IdsAssessmentCatalog $State $Root
+                    foreach ($entryBytes in $result.packs) {
+                        $candidate = Read-IdsBaselinePack $entryBytes
+                        if (@($catalog.packs | Where-Object { $_.id -ceq $candidate.id -and $_.version -ceq $candidate.version -and $_.sha256 -cne $candidate.sha256 }).Count) {
+                            throw 'Pack ID/version conflicts with the library; this item was not imported.'
+                        }
+                    }
+                    $imported = @(Import-IdsBaselinePackSet -Packs $result.packs -ImportedRoot $State.Config.ImportedPackRoot)
+                    $response.status = 201
+                    $response.body = @{ packs = @(foreach ($item in $imported) {
+                        $item.pack | Add-Member NoteProperty origin 'imported' -Force
+                        $metadata = Get-IdsAssessmentPackMetadata $item.pack
+                        $metadata | Add-Member NoteProperty added $item.added
+                        $metadata | Add-Member NoteProperty controlCount @($item.pack.controls).Count
+                        $metadata
+                    }); added = @($imported | Where-Object added).Count; skipped = $result.skipped; skippedCount = $result.skippedCount; ignored = $result.ignored }
+                    break
+                }
+                if (@($fields.Keys | Where-Object { $_ -in @('content', 'archive') }).Count -ne 1) { throw 'Provide exactly one of content or archive.' }
                 if ($fields.ContainsKey('archive')) {
                     $imported = Import-IdsAssessmentArchive $fields['archive'] $State $Root
                     $response.status = $imported.status; $response.body = $imported.body
@@ -164,10 +214,14 @@ function Invoke-IdsAssessmentRoute {
                         throw 'Pack ID/version already exists with different bytes.'
                     }
                 }
-                $pack = Import-IdsBaselinePack -Bytes $bytes -ImportedRoot $State.Config.ImportedPackRoot
+                $item = @(Import-IdsBaselinePackSet -Packs @(,$bytes) -ImportedRoot $State.Config.ImportedPackRoot)[0]
+                $pack = $item.pack
                 $pack | Add-Member -NotePropertyName origin -NotePropertyValue 'imported' -Force
                 $response.status = 201
-                $response.body = @{ pack = Get-IdsAssessmentPackMetadata $pack }
+                $metadata = Get-IdsAssessmentPackMetadata $pack
+                $metadata | Add-Member NoteProperty added $item.added
+                $metadata | Add-Member NoteProperty controlCount @($pack.controls).Count
+                $response.body = @{ pack = $metadata; added = $(if ($item.added) { 1 } else { 0 }) }
             }
             'POST /api/assessment' {
                 $body = Read-IdsAssessmentRequestJson $Request 64KB

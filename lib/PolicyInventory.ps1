@@ -18,16 +18,17 @@ function Get-IdsPolicyIdentity {
 
 function Test-IdsPolicyOwner {
     param([hashtable]$State, [hashtable]$Inventory)
-    return [bool]($State.Auth -and [object]::ReferenceEquals($State.Policies, $Inventory) -and
-        $Inventory.epoch -eq $State.Assessment.epoch -and
-        $Inventory.identity -ceq (Get-IdsPolicyIdentity $State))
+    if (-not [object]::ReferenceEquals($State.Policies, $Inventory) -or
+        $Inventory.epoch -ne $State.Assessment.epoch) { return $false }
+    if ($Inventory.sourceKind -eq 'offline') { return [bool]$Inventory.snapshot }
+    return [bool]($State.Auth -and $Inventory.identity -ceq (Get-IdsPolicyIdentity $State))
 }
 
 function Get-IdsLoadedPolicies {
     param([hashtable]$State)
     if (-not $State.Policies -or -not (Test-IdsPolicyOwner $State $State.Policies) -or
         $State.Policies.status -notin @('ready', 'partial') -or -not $State.Policies.snapshot) {
-        throw 'Load policies for the current sign-in before documenting or assessing.'
+        throw 'Load policies or import a policy set before documenting or assessing.'
     }
     return $State.Policies.snapshot
 }
@@ -47,13 +48,20 @@ function Get-IdsPolicySummary {
         phase = $(if ($owned) { $inventory.phase } else { '' })
         error = $(if ($owned) { $inventory.error } else { $null })
         capturedAt = $snapshot.capturedAt
+        source = $snapshot.source
+        tenant = $snapshot.tenant
+        consentRequired = [bool]($State.Auth -and
+            ($State.PolicyConsent.identity -cne (Get-IdsPolicyIdentity $State) -or
+                $State.PolicyConsent.decision -eq 'pending'))
         count = @($snapshot.collection.policies | Where-Object { $null -ne $_ }).Count
         families = @(if ($snapshot) { foreach ($family in $families.Keys) {
             @{
                 label = $families[$family]
                 count = @($snapshot.collection.policies | Where-Object family -EQ $family).Count
                 complete = @($snapshot.collection.issues + $snapshot.collection.documentationIssues |
-                    Where-Object family -EQ $family).Count -eq 0
+                    Where-Object family -EQ $family).Count -eq 0 -and
+                    @($snapshot.collection.sources | Where-Object { $_.family -eq $family -and -not $_.complete }).Count -eq 0 -and
+                    @($snapshot.collection.policies | Where-Object { $_.family -eq $family -and -not $_.settingsComplete }).Count -eq 0
             }
         } })
         issues = @(if ($snapshot) {
@@ -103,6 +111,8 @@ function Start-IdsPolicyLoad {
     $inventory = $State.Policies
     $inventory.epoch = $State.Assessment.epoch
     $inventory.identity = Get-IdsPolicyIdentity $State
+    $inventory.sourceKind = 'live'
+    $State.PolicyConsent = @{ identity = $inventory.identity; decision = 'accepted' }
     $inventory.snapshot = $null
     $inventory.error = $null
     $inventory.percent = 0
@@ -138,6 +148,7 @@ function Start-IdsPolicyLoad {
             if (Test-IdsPolicyOwner $State $Inventory) {
                 $Inventory.snapshot = @{
                     tenant = $tenant; capturedAt = [datetime]::UtcNow.ToString('o'); collection = $collection
+                    source = @{ kind = 'live'; name = $tenant.name; importedAt = $null }
                 }
                 # Only this session can receive tokens refreshed by its own worker.
                 $State.Auth = $holder.Auth
@@ -206,8 +217,5 @@ function Sync-IdsPolicyLoad {
     Clear-IdsPolicyLoadJob $State
     if ($State.Policies.status -ne 'idle' -and -not (Test-IdsPolicyOwner $State $State.Policies)) {
         Stop-IdsPolicyLoad $State
-    }
-    if ($State.Auth -and $State.Policies.status -eq 'idle' -and -not (Test-IdsWorkActive $State)) {
-        [void](Start-IdsPolicyLoad $State $Root)
     }
 }

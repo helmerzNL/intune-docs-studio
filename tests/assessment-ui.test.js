@@ -212,10 +212,10 @@ test('catalog uses exact metadata, platform and profile selections and disables 
   assert.equal(packs[1].disabled, true);
   assert.equal(packs[0].value, 'synthetic-windows11@1.0.0#' + '0'.repeat(64));
   packs[0].checked = true;
-  d.element('assessmentProfile').value = 'Imported test profile';
+  d.element('assessmentProfile').value = packs[3].value;
   d.element('assessmentProfile').handlers.change();
-  assert.equal(packs[0].disabled, true);
-  assert.equal(packs[0].checked, false);
+  assert.equal(packs[0].disabled, false);
+  assert.equal(packs[0].checked, true, 'filtering must not silently discard a selected pack');
   platforms[3].checked = true;
   platforms[3].handlers.change();
   assert.equal(packs[3].disabled, false);
@@ -226,7 +226,7 @@ test('catalog uses exact metadata, platform and profile selections and disables 
   assert.match(text, /partial/);
   assert.match(text, /fixed synthetic revision/);
   renderCatalog(d, syntheticPacks().slice(0, 1));
-  assert.equal(boxes(d, 'assessmentPlatforms')[1].disabled, true);
+  assert.equal(boxes(d, 'assessmentPlatforms')[1].disabled, false);
   assert.match(d.element('assessmentCatalogNote').textContent, /unavailable/i);
   assert.match(d.element('assessmentCatalogNote').textContent, /five bundled checks/i);
   for (const word of ['legacy', 'personal', 'beta', 'deprecated', 'modern']) {
@@ -257,9 +257,10 @@ test('import sends original JSON text and preserves selected pack and export opt
   await d.element('btnAssessmentImport').handlers.click();
   assert.equal(d.requests.find((r) => r.method === 'POST').payload.content, original);
   assert.equal(boxes(d, 'assessmentPacks')[0].checked, true);
-  assert.match(d.element('assessmentImportSummary').textContent, /locally/);
+  assert.match(d.element('assessmentImportSummary').innerHTML, /Added/);
   assert.equal(d.element('assessmentProgress').textContent, '');
   reject = true;
+  d.element('btnQueueAssessmentFiles').handlers.click();
   await d.element('btnAssessmentImport').handlers.click();
   assert.match(d.element('assessmentError').textContent, /400.*<Invalid pack>/);
   assert.equal(boxes(d, 'assessmentPacks')[0].checked, true);
@@ -276,12 +277,14 @@ test('import bounds files before reading and checks decoded UTF-8 bytes before s
     { name: 'pack.json', size: 10 * 1024 * 1024 + 1 },
     { name: 'empty.json', size: 0 }
   ]) {
+    d.run('assessmentImportQueue = []');
     d.element('assessmentImportFile').files = [{ ...file, text: async () => { reads++; return '{}'; } }];
     await d.element('btnAssessmentImport').handlers.click();
   }
   assert.equal(reads, 0);
   d.element('assessmentImportFile').files = [{ name: 'pack.json', size: 1,
     text: async () => 'é'.repeat(6 * 1024 * 1024) }];
+  d.run('assessmentImportQueue = []');
   await d.element('btnAssessmentImport').handlers.click();
   assert.match(d.element('assessmentError').textContent, /10 MiB/);
   assert.equal(d.requests.filter((r) => r.method === 'POST').length, 0);
@@ -780,9 +783,9 @@ test('shutdown honors server 409 and permits stopping after a previously observe
 
 // --- Assessment wizard -------------------------------------------------------
 
-const stepIds = ['assessStepPlatforms', 'assessStepBaselines', 'assessStepContext', 'assessStepReview',
+const stepIds = ['assessStepPlatforms', 'assessStepImport', 'assessStepBaselines', 'assessStepContext', 'assessStepReview',
   'assessStepResults'];
-const panelIds = ['assessPanelPlatforms', 'assessPanelBaselines', 'assessPanelContext', 'assessPanelReview',
+const panelIds = ['assessPanelPlatforms', 'assessImportPanel', 'assessPanelBaselines', 'assessPanelContext', 'assessPanelReview',
   'assessPanelResults'];
 const isHidden = (d, id) => d.element(id).classList.contains('hidden');
 const click = (d, id) => d.element(id).handlers.click();
@@ -796,7 +799,7 @@ function expectStep(d, number, focusedHeading) {
     stepIds.map((_, i) => (i + 1 < number ? 'done' : i + 1 === number ? 'active' : '')));
   assert.deepEqual(stepIds.map((id) => d.element(id).getAttribute('aria-current')),
     stepIds.map((_, i) => (i + 1 === number ? 'step' : null)));
-  assert.equal(isHidden(d, 'assessImportPanel'), number > 2);
+  assert.equal(isHidden(d, 'assessImportPanel'), number !== 2);
   if (focusedHeading !== undefined) assert.equal(d.focused(), focusedHeading);
 }
 
@@ -815,31 +818,38 @@ test('wizard Next and Back validate the current step, mark the stepper and focus
   platforms[0].handlers.change();
   click(d, 'btnAssessPlatformsNext');
   assert.equal(isHidden(d, 'assessmentError'), true);
-  expectStep(d, 2, 'baselinesTitle');
+  expectStep(d, 2, 'assessImportTitle');
+  click(d, 'btnAssessImportNext');
+  expectStep(d, 3, 'baselinesTitle');
   boxes(d, 'assessmentPacks')[0].checked = true;
   click(d, 'btnAssessBaselinesNext');
   assert.equal(d.element('assessmentError').textContent,
     'Every selected platform requires a selected applicable pack; choose at least one platform.');
-  expectStep(d, 2, 'baselinesTitle');
+  expectStep(d, 3, 'baselinesTitle');
   boxes(d, 'assessmentPacks')[1].checked = true;
   click(d, 'btnAssessBaselinesNext');
   assert.equal(isHidden(d, 'assessmentError'), true);
-  expectStep(d, 3, 'contextTitle');
+  expectStep(d, 4, 'contextTitle');
   click(d, 'btnAssessContextNext');
-  expectStep(d, 4, 'runAssessmentTitle');
+  expectStep(d, 5, 'runAssessmentTitle');
   click(d, 'btnAssessReviewBack');
-  expectStep(d, 3, 'contextTitle');
+  expectStep(d, 4, 'contextTitle');
   click(d, 'btnAssessContextBack');
-  expectStep(d, 2, 'baselinesTitle');
+  expectStep(d, 3, 'baselinesTitle');
   click(d, 'btnAssessBaselinesBack');
+  expectStep(d, 2, 'assessImportTitle');
+  click(d, 'btnAssessImportBack');
   expectStep(d, 1, 'platformsTitle');
   assert.deepEqual(boxes(d, 'assessmentPacks').map((b) => b.checked), [true, true, false, false]);
   renderCatalog(d, Array.from({ length: 65 }, (_, i) => ({ ...syntheticPacks()[0], id: `synthetic-bulk-${i}` })));
+  boxes(d, 'assessmentPlatforms')[1].checked = false;
+  boxes(d, 'assessmentPlatforms')[0].handlers.change();
   click(d, 'btnAssessPlatformsNext');
+  click(d, 'btnAssessImportNext');
   click(d, 'btnAssessmentSelectAll');
   click(d, 'btnAssessBaselinesNext');
   assert.equal(d.element('assessmentError').textContent, 'Select 1–64 packs.');
-  expectStep(d, 2);
+  expectStep(d, 3);
 });
 
 test('background refresh shows a running or completed assessment without moving focus; errors keep the step', async () => {
@@ -851,7 +861,7 @@ test('background refresh shows a running or completed assessment without moving 
       return {};
     });
     await new Promise(setImmediate);
-    expectStep(d, 5, null);
+    expectStep(d, 6, null);
   }
   let failing = false;
   const d = assessmentDashboard((url) => {
@@ -864,7 +874,7 @@ test('background refresh shows a running or completed assessment without moving 
   d.run("setAssessmentStep('context')");
   failing = true;
   await d.run('refreshAssessment()');
-  expectStep(d, 3, null);
+  expectStep(d, 4, null);
   assert.match(d.element('assessmentError').textContent, /Synthetic report failure/);
 });
 
@@ -892,21 +902,21 @@ test('admission moves to results with focus and New assessment waits for the run
   click(d, 'btnAssessPlatformsNext');
   click(d, 'btnAssessBaselinesNext');
   click(d, 'btnAssessContextNext');
-  expectStep(d, 4, 'runAssessmentTitle');
+  expectStep(d, 5, 'runAssessmentTitle');
   await click(d, 'btnAssessmentRun');
   assert.match(d.element('assessmentError').textContent, /409.*already running/);
-  expectStep(d, 4, 'runAssessmentTitle');
+  expectStep(d, 5, 'runAssessmentTitle');
   status = 202;
   await click(d, 'btnAssessmentRun');
-  expectStep(d, 5, 'resultsTitle');
+  expectStep(d, 6, 'resultsTitle');
   assert.equal(d.element('btnAssessNew').disabled, true);
   click(d, 'btnAssessNew');
-  expectStep(d, 5, 'resultsTitle');
+  expectStep(d, 6, 'resultsTitle');
   running = false;
   await Array.from(d.timers.values())[0]();
   assert.match(d.element('assessmentResults').innerHTML, /SYN-NEW/);
   assert.equal(d.element('btnAssessNew').disabled, false);
-  expectStep(d, 5, 'resultsTitle');
+  expectStep(d, 6, 'resultsTitle');
   click(d, 'btnAssessNew');
   expectStep(d, 1, 'platformsTitle');
   assert.equal(boxes(d, 'assessmentPlatforms').every((b) => b.checked), true);
@@ -924,7 +934,7 @@ test('clearing the workspace returns to step 1 and clears the import summary, re
   click(d, 'btnAssessBaselinesNext');
   click(d, 'btnAssessContextNext');
   d.element('assessmentImportSummary').textContent = 'Synthetic import summary';
-  assert.notEqual(d.element('assessmentReview').textContent, '');
+  assert.notEqual(d.element('assessmentReview').innerHTML, '');
   assert.equal(isHidden(d, 'assessmentContextWarning'), false);
   const focused = d.focused();
   d.run('clearWorkspace()');
@@ -956,7 +966,7 @@ test('pack rows outside the selected platforms or profile are hidden, with an em
   assert.deepEqual(checked(), [true, false, false, true]);
   click(d, 'btnAssessmentSelectNone');
   assert.deepEqual(checked(), [false, false, false, false]);
-  d.element('assessmentProfile').value = 'Imported test profile';
+  d.element('assessmentProfile').value = boxes(d, 'assessmentPacks')[3].value;
   d.element('assessmentProfile').handlers.change();
   assert.deepEqual(rowsHidden(), [true, true, true, false]);
   click(d, 'btnAssessmentSelectAll');
@@ -987,7 +997,7 @@ test('context shows only the selected platforms\' fields and warns while the Win
     click(d, 'btnAssessPlatformsNext');
     boxes(d, 'assessmentPacks')[i].checked = true;
     click(d, 'btnAssessBaselinesNext');
-    expectStep(d, 3, 'contextTitle');
+    expectStep(d, 4, 'contextTitle');
     for (const [platform, ids] of Object.entries(fields)) {
       for (const id of ids) assert.equal(isHidden(d, id), platform !== key, `${key}: ${id}`);
     }
@@ -1000,7 +1010,7 @@ test('context shows only the selected platforms\' fields and warns while the Win
   click(d, 'btnAssessPlatformsNext');
   click(d, 'btnAssessmentSelectAll');
   click(d, 'btnAssessBaselinesNext');
-  expectStep(d, 3, 'contextTitle');
+  expectStep(d, 4, 'contextTitle');
   for (const id of Object.values(fields).flat()) assert.equal(isHidden(d, id), false, id);
   assert.equal(d.element('assessmentContextWarning').textContent, windowsWarning);
   d.element('assessmentOsWindows11').value = '10.0.26100';
@@ -1011,10 +1021,10 @@ test('context shows only the selected platforms\' fields and warns while the Win
   d.element('assessmentOsWindows11').handlers.input();
   assert.equal(isHidden(d, 'assessmentContextWarning'), false);
   click(d, 'btnAssessContextNext');
-  expectStep(d, 4, 'runAssessmentTitle');
+  expectStep(d, 5, 'runAssessmentTitle');
 });
 
-test('the review lists platforms, packs and every context value as plain text', async () => {
+test('the structured review connects each platform pack set with its exact context and source', async () => {
   const d = assessmentDashboard((url) => (url === '/api/state' ? connectedState() : {}));
   await selectAll(d);
   d.element('assessmentOsMacos').value = ' 14.0 ';
@@ -1022,30 +1032,23 @@ test('the review lists platforms, packs and every context value as plain text', 
   click(d, 'btnAssessPlatformsNext');
   click(d, 'btnAssessBaselinesNext');
   click(d, 'btnAssessContextNext');
-  expectStep(d, 4, 'runAssessmentTitle');
-  assert.equal(d.element('assessmentReview').textContent, [
-    'Platforms: Windows 11, macOS, iOS/iPadOS, Android Enterprise',
-    '',
-    'Rule packs:',
-    'synthetic-windows11 @ 1.0.0 — Windows 11 · Test profile',
-    'synthetic-macos @ 1.0.0 — macOS · Test profile',
-    'synthetic-iosipados @ 1.0.0 — iOS/iPadOS · Test profile',
-    'synthetic-androidenterprise @ 1.0.0 — Android Enterprise · Imported test profile',
-    '',
-    'Context (user-selected, not discovered device inventory):',
+  expectStep(d, 5, 'runAssessmentTitle');
+  const review = d.element('assessmentReview').innerHTML;
+  for (const text of [
+    'Target policy source', 'Live snapshot', 'not discovered device inventory',
+    'synthetic-windows11', 'synthetic-macos', 'synthetic-iosipados', 'synthetic-androidenterprise',
     'Windows 11 — OS version: Unknown',
     'macOS — OS version: 14.0',
     'iOS/iPadOS — OS version: Unknown; ownership scope: Unknown',
     'Android Enterprise — OS version: Unknown; enrollment mode: Corporate-owned work profile',
-    '',
     windowsWarning
-  ].join('\n'));
-  assert.equal(d.element('assessmentReview').innerHTML, '');
+  ]) assert.ok(review.includes(text), text);
+  assert.equal((review.match(/class="review-platform"/g) || []).length, 4);
   d.element('assessmentOsWindows11').value = '10.0.22631';
   click(d, 'btnAssessReviewBack');
   click(d, 'btnAssessContextNext');
-  assert.match(d.element('assessmentReview').textContent, /Windows 11 — OS version: 10\.0\.22631/);
-  assert.equal(d.element('assessmentReview').textContent.includes('Windows policies targeting'), false);
+  assert.match(d.element('assessmentReview').innerHTML, /Windows 11 — OS version: 10\.0\.22631/);
+  assert.equal(d.element('assessmentReview').innerHTML.includes('Windows policies targeting'), false);
   const html = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
   for (const select of ['assessmentEnrollment', 'assessmentIosOwnership']) {
     const options = html.match(new RegExp(`id="${select}">([\\s\\S]*?)</select>`))[1];
@@ -1054,7 +1057,7 @@ test('the review lists platforms, packs and every context value as plain text', 
     for (const [, value, label] of labelled) {
       d.element(select).value = value;
       d.run('renderAssessmentReview()');
-      assert.ok(d.element('assessmentReview').textContent.includes(label), `${select}: ${value}`);
+      assert.ok(d.element('assessmentReview').innerHTML.includes(label), `${select}: ${value}`);
     }
   }
 });
@@ -1067,7 +1070,7 @@ const importedNotice = 'Select the platforms and packs to assess; imports are ne
 test('the import card accepts JSON and ZIP files and the catalog note names the supported formats', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
   assert.match(html,
-    /id="assessmentImportFile" accept="\.json,\.zip,application\/json,application\/zip,application\/x-zip-compressed"/);
+    /id="assessmentImportFile" multiple accept="\.json,\.zip,application\/json,application\/zip,application\/x-zip-compressed"/);
   const d = assessmentDashboard();
   renderCatalog(d);
   const note = d.element('assessmentCatalogNote').textContent;
@@ -1102,17 +1105,12 @@ test('ZIP import posts base64, lists the result and merges packs without selecti
   assert.equal(reads, 1);
   assert.deepEqual(d.requests.find((r) => r.method === 'POST').payload,
     { archive: Buffer.from(bytes).toString('base64') });
-  assert.equal(d.element('assessmentImportSummary').textContent, [
-    `Imported 2 rule packs locally. ${importedNotice}`,
-    '1 new, 1 already present.',
-    'synthetic-windows11 @ 1.0.0 — Windows 11 · Test profile · 2 controls · already present',
-    'synthetic-kit-level-1 @ 1.0.0+abc123 — Windows 11 · Level 1 · 1 control · new',
-    'Skipped 14 archive entries:',
-    ...skipped.slice(0, 10).map((s) => `${s.entry}: ${s.reason}`),
-    '…and 4 more.',
-    '3 other files were ignored (not JSON).'
-  ].join('\n'));
-  assert.equal(d.element('assessmentImportSummary').innerHTML, '');
+  const summary = d.element('assessmentImportSummary').innerHTML;
+  for (const text of ['<b>1</b> Added', '<b>1</b> Already present', '<b>14</b> Skipped',
+    '<b>3</b> Ignored files', 'synthetic-kit-level-1', '1 checks', '2 checks',
+    '2 additional reasons not returned', 'imports are never selected automatically',
+    'kit/&lt;extra-11&gt;.json']) assert.ok(summary.toLowerCase().includes(text.toLowerCase()), text);
+  assert.doesNotMatch(summary, /kit\/<extra-/);
   assert.equal(d.element('assessmentProgress').textContent, '');
   const rows = Object.fromEntries(boxes(d, 'assessmentPacks').map((b) => [b.value, b]));
   assert.equal(Object.keys(rows).length, 5);
@@ -1137,20 +1135,23 @@ test('import checks the file type and size before reading, and a reset during a 
     [{ name: 'kit.ZIP', size: 32 * 1024 * 1024 + 1 }, zipMessage],
     [{ name: 'pack.JSON', size: 10 * 1024 * 1024 + 1 }, 'Choose a nonempty JSON rule pack, at most 10 MiB.']
   ]) {
+    d.run('assessmentImportQueue = []');
     d.element('assessmentImportFile').files = file ? [{ ...file, arrayBuffer: read, text: read }] : [];
     await click(d, 'btnAssessmentImport');
-    assert.equal(d.element('assessmentError').textContent, message, file?.name || 'no file');
+    assert.equal(d.element('assessmentError').textContent, file ? message : 'Add files or a host folder to the queue first.', file?.name || 'no file');
   }
   assert.equal(reads, 0);
   assert.equal(d.requests.filter((r) => r.method === 'POST').length, 0);
   d.element('assessmentImportFile').files = [{ name: 'kit.Zip', size: 32 * 1024 * 1024,
     arrayBuffer: async () => Uint8Array.from([0, 127, 128, 255]).buffer }];
+  d.run('assessmentImportQueue = []');
   await click(d, 'btnAssessmentImport');
   assert.deepEqual(d.requests.find((r) => r.method === 'POST').payload,
     { archive: Buffer.from([0, 127, 128, 255]).toString('base64') });
   let release;
   d.element('assessmentImportFile').files = [{ name: 'kit.zip', size: 1,
     arrayBuffer: () => new Promise((resolve) => { release = resolve; }) }];
+  d.run('assessmentImportQueue = []');
   const pending = click(d, 'btnAssessmentImport');
   d.run('clearAssessment()');
   release(Uint8Array.from([1]).buffer);
@@ -1172,24 +1173,84 @@ test('an archive with nothing importable shows the error and the skipped and ign
     arrayBuffer: async () => Uint8Array.from([1, 2, 3]).buffer }];
   await click(d, 'btnAssessmentImport');
   assert.match(d.element('assessmentError').textContent, /^400: The archive contains no importable rule packs/);
-  assert.equal(d.element('assessmentImportSummary').textContent, [
-    'Nothing was imported.',
-    'Skipped 1 archive entry:',
-    'kit/<notes>.json: Not a Settings Catalog policy or rule pack.',
-    '1 other file was ignored (not JSON).'
-  ].join('\n'));
+  assert.match(d.element('assessmentImportSummary').innerHTML, /<b>1<\/b> Failed items/);
+  assert.match(d.element('assessmentImportSummary').innerHTML, /kit\/&lt;notes&gt;\.json/);
+  assert.match(d.element('assessmentImportSummary').innerHTML, /<b>1<\/b> Ignored files/);
   assert.equal(boxes(d, 'assessmentPacks').length, 4);
   response = { httpStatus: 413, body: { error: 'Synthetic archive limit exceeded.' } };
   await click(d, 'btnAssessmentImport');
   assert.equal(d.element('assessmentError').textContent, '413: Synthetic archive limit exceeded.');
-  assert.equal(d.element('assessmentImportSummary').textContent, '');
+  assert.match(d.element('assessmentImportSummary').innerHTML, /Synthetic archive limit exceeded/);
   response = { httpStatus: 201, body: { pack: { ...syntheticPacks()[1], id: 'synthetic-json',
     sha256: 'e'.repeat(64), origin: 'imported' } } };
   d.element('assessmentImportFile').files = [{ name: 'pack.json', size: 2, text: async () => '{}' }];
+  d.run('assessmentImportQueue = []');
   await click(d, 'btnAssessmentImport');
   assert.deepEqual(d.requests.filter((r) => r.method === 'POST').at(-1).payload, { content: '{}' });
   assert.equal(d.element('assessmentError').textContent, '');
-  assert.equal(d.element('assessmentImportSummary').textContent,
-    `Imported 1 rule pack locally. ${importedNotice}\nsynthetic-json @ 1.0.0 — macOS · Test profile`);
+  assert.match(d.element('assessmentImportSummary').innerHTML, /synthetic-json/);
+  assert.match(d.element('assessmentImportSummary').innerHTML, /<b>1<\/b> Added/);
   assert.equal(boxes(d, 'assessmentPacks').length, 5);
+});
+
+test('a multi-file queue removes pending rows, retains partial successes and escapes every failure reason', async () => {
+  const d = assessmentDashboard((url, r) => {
+    if (url === '/api/assessment/packs' && r.method === 'POST') {
+      if (r.payload.content === 'bad') return { httpStatus: 400, body: { error: '<script>invalid</script>' } };
+      return { httpStatus: 201, body: { pack: { ...syntheticPacks()[0], id: 'synthetic-queued',
+        sha256: 'f'.repeat(64), origin: 'imported', added: true, controlCount: 2 }, added: 1 } };
+    }
+    return {};
+  });
+  renderCatalog(d);
+  let removedReads = 0;
+  d.element('assessmentImportFile').files = [
+    { name: 'ok.json', size: 2, text: async () => '{}' },
+    { name: 'bad.json', size: 3, text: async () => 'bad' },
+    { name: 'remove.json', size: 2, text: async () => { removedReads++; return '{}'; } }
+  ];
+  click(d, 'btnQueueAssessmentFiles');
+  assert.equal(d.element('assessmentImportQueue').children.length, 3);
+  d.element('assessmentImportQueue').children[2].children[1].handlers.click();
+  assert.equal(d.element('assessmentImportQueue').children.length, 2);
+  await click(d, 'btnAssessmentImport');
+  assert.equal(removedReads, 0);
+  assert.equal(d.requests.filter((r) => r.method === 'POST').length, 2);
+  const summary = d.element('assessmentImportSummary').innerHTML;
+  assert.match(summary, /<b>1<\/b> Added/);
+  assert.match(summary, /<b>1<\/b> Failed items/);
+  assert.match(summary, /&lt;script&gt;invalid/);
+  assert.doesNotMatch(summary, /<script>/);
+  assert.ok(boxes(d, 'assessmentPacks').some((box) => box.value.startsWith('synthetic-queued@') && !box.checked));
+});
+
+test('native folder cancellation keeps the report path and selected folders update it through the protected route', async () => {
+  let selected = false;
+  const d = assessmentDashboard((url) => {
+    if (url === '/api/folders/picker') return { status: selected ? 'selected' : 'cancelled', path: 'C:\\SyntheticChosen' };
+    return {};
+  });
+  d.element('assessmentOutputPath').value = 'C:\\SyntheticOriginal';
+  await click(d, 'btnBrowseAssessmentReports');
+  assert.equal(d.element('assessmentOutputPath').value, 'C:\\SyntheticOriginal');
+  selected = true;
+  await click(d, 'btnBrowseAssessmentReports');
+  assert.equal(d.element('assessmentOutputPath').value, 'C:\\SyntheticChosen');
+  assert.equal(d.requests.filter((r) => r.url === '/api/folders/picker' && r.method === 'POST').length, 2);
+});
+
+test('offline Assessment admission posts the selected reference and context without authentication', async () => {
+  const d = assessmentDashboard((url, r) => {
+    if (url === '/api/state') return { auth: { connected: false }, export: { running: false },
+      policies: { status: 'ready', source: { kind: 'offline' }, families: [], issues: [] } };
+    if (url === '/api/assessment' && r.method === 'POST') return { httpStatus: 202, body: { started: true } };
+    return {};
+  });
+  await selectAll(d);
+  await click(d, 'btnAssessmentRun');
+  const admission = d.requests.find((r) => r.url === '/api/assessment' && r.method === 'POST');
+  assert.ok(admission);
+  assert.equal(admission.payload.packIds.length, 4);
+  assert.equal(d.requests.some((r) => /\/api\/(signin|probe)/.test(r.url)), false);
+  assert.equal(d.element('assessmentError').textContent, '');
 });

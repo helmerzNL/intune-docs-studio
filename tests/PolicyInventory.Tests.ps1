@@ -84,10 +84,12 @@ BeforeAll {
             }
         }
 
-        It 'automatically loads once per sign-in and retains a private reusable snapshot' {
+        It 'loads only after explicit admission and retains a private reusable snapshot' {
             $fixture = New-PolicyWorkerFixture
             try {
                 Sync-IdsPolicyLoad $fixture.state $fixture.root
+                $fixture.state.Policies.status | Should -Be 'idle'
+                Start-IdsPolicyLoad $fixture.state $fixture.root | Should -BeTrue
                 Wait-PolicyWorker $fixture.state
                 $snapshot = Get-IdsLoadedPolicies $fixture.state
                 $fixture.state.Policies.status | Should -Be 'ready'
@@ -189,12 +191,15 @@ function Invoke-IdsGraphRaw {
             } finally { Stop-IdsPolicyLoad $fixture.state }
         }
 
-        It 'starts a fresh load after a stale tenant worker is discarded' {
+        It 'discards a stale tenant worker and requires fresh explicit admission' {
             $fixture = New-PolicyWorkerFixture 'slow'
             try {
                 Start-IdsPolicyLoad $fixture.state $fixture.root | Should -BeTrue
                 $fixture.state.Auth.tenant_id = 'another-synthetic-tenant'
                 Sync-IdsPolicyLoad $fixture.state $fixture.root
+                $fixture.state.Policies.status | Should -Be 'idle'
+                $fixture.state.Policies.snapshot | Should -BeNullOrEmpty
+                Start-IdsPolicyLoad $fixture.state $fixture.root | Should -BeTrue
                 $fixture.state.Policies.identity | Should -Be (Get-IdsPolicyIdentity $fixture.state)
                 $fixture.state.Policies.snapshot | Should -BeNullOrEmpty
                 Wait-PolicyWorker $fixture.state

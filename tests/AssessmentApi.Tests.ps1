@@ -193,14 +193,14 @@ Describe 'Assessment pack archive imports' {
         foreach ($fields in @(@{}, @{ content = '{}'; archive = 'AAAA' })) {
             $response = Invoke-TestPackImport $state $fields
             $response.status | Should -Be 400
-            $response.body.error | Should -BeExactly 'Provide exactly one of content or archive.'
+            $response.body.error | Should -BeExactly 'Provide exactly one of content or archive, or a host folder path.'
         }
     }
 
     It 'keeps rejecting unknown or incorrectly cased import fields' {
         foreach ($fields in @(
-            @{ path = 'synthetic.zip' },
-            @{ archive = 'AAAA'; path = 'synthetic.zip' },
+            @{ Path = 'synthetic.zip' },
+            @{ archive = 'AAAA'; unexpectedPath = 'synthetic.zip' },
             @{ content = '{}'; unexpected = $true },
             @{ Archive = 'AAAA' }
         )) {

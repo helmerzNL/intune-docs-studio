@@ -54,7 +54,7 @@ $Build = Get-IdsBuildInfo -Root $Root
 . (Join-Path $Root 'lib\Render.ps1')
 . (Join-Path $Root 'lib\Export.ps1')
 . (Join-Path $Root 'lib\Http.ps1')
-foreach ($module in 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'BaselineArchive', 'AssessmentRules', 'AssessmentReports', 'Assessment', 'AssessmentApi', 'PolicyInventory') {
+foreach ($module in 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'BaselineArchive', 'AssessmentRules', 'AssessmentReports', 'Assessment', 'AssessmentApi', 'PolicyInventory', 'PolicySnapshots', 'LocalFolders', 'PolicyApi', 'ReferencePacks') {
     . (Join-Path $Root "lib\$module.ps1")
 }
 
@@ -87,7 +87,9 @@ Initialize-IdsGraph -StateHolder $State
 function Get-IdsDefaultOptions {
     return @{
         OutputPath           = $State.Config.OutputPath
-        Sections             = @((Get-IdsSectionCatalog).Keys)
+        Sections             = @(if ($State.Policies.snapshot.source.kind -eq 'offline') {
+            'settingsCatalog', 'deviceConfigs', 'admx', 'compliance', 'endpointSecurity'
+        } else { (Get-IdsSectionCatalog).Keys })
         IncludeRaw           = $true
         IncludeRawFiles      = $true
         IncludeScriptContent = $true
@@ -138,11 +140,13 @@ function Start-IdsExportJob {
             . (Join-Path $Root 'lib\Graph.ps1')
             . (Join-Path $Root 'lib\Render.ps1')
             . (Join-Path $Root 'lib\Export.ps1')
-            if ($State.Auth -and $State.Auth.transport -eq 'mggraph') {
-                Import-Module Microsoft.Graph.Authentication -ErrorAction SilentlyContinue
+            if ($PolicySnapshot.source.kind -ne 'offline') {
+                if ($State.Auth -and $State.Auth.transport -eq 'mggraph') {
+                    Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
+                }
+                Initialize-IdsGraph -StateHolder $State
+                Reset-IdsGraphStats
             }
-            Initialize-IdsGraph -StateHolder $State
-            Reset-IdsGraphStats
             Start-IdsExport -State $State -Options $Options -PolicySnapshot $PolicySnapshot
         } catch {
             $State.Export.error = $_.Exception.Message
@@ -209,6 +213,8 @@ function Start-IdsBrowserSignIn {
 }
 
 function Clear-IdsFinishedJob {
+    Sync-IdsPolicyTransfer $State
+    Sync-IdsFolderPicker $State
     Clear-IdsAssessmentJob $State
     Clear-IdsPolicyLoadJob $State
     if ($State.Browser.job -and $State.Browser.job.handle.IsCompleted) {
@@ -231,10 +237,18 @@ function Reset-IdsSessionState {
         worst. The stale folder is also actively dangerous now that the exporter refuses to
         overwrite a different tenant's documentation. #>
     if ((Test-IdsWorkActive $State) -or $State.Browser.running) { throw 'An export, assessment or sign-in is still running.' }
+    $offline = if ($State.Policies.sourceKind -eq 'offline') { $State.Policies.snapshot } else { $null }
     Reset-IdsAssessment $State
     Stop-IdsPolicyLoad $State
     $State.Auth = $null
     $State.Pending = $null
+    $State.PolicyConsent = $null
+    if ($offline) {
+        $State.Policies.sourceKind = 'offline'; $State.Policies.snapshot = $offline
+        $State.Policies.epoch = $State.Assessment.epoch
+        $State.Policies.status = if (@($offline.collection.issues).Count -or @($offline.collection.documentationIssues).Count) { 'partial' } else { 'ready' }
+        $State.Policies.percent = 100
+    }
 
     $State.Export.log.Clear()
     $State.Export.summary = $null
@@ -435,6 +449,11 @@ while ($running -and $listener.IsListening) {
             else { Send-IdsJson -Response $res -Object @{ error = 'An export, assessment or sign-in is still running.' } -Status 409 }
             continue
         }
+        $policyRoute = Invoke-IdsPolicyRoute -Method $req.HttpMethod -Path $path -Request $req -State $State -Root $Root
+        if ($policyRoute.handled) {
+            Send-IdsJson -Response $res -Object $policyRoute.body -Status $policyRoute.status -Depth 64
+            continue
+        }
         $assessmentRoute = Invoke-IdsAssessmentRoute -Method $req.HttpMethod -Path $path -Request $req -State $State -Root $Root
         if ($assessmentRoute.handled) {
             Send-IdsJson -Response $res -Object $assessmentRoute.body -Status $assessmentRoute.status -Depth 64
@@ -496,13 +515,17 @@ while ($running -and $listener.IsListening) {
                     build      = $Build
                     auth       = (Get-IdsAuthSummary)
                     policies   = (Get-IdsPolicySummary $State)
+                    transfer   = @{ running = [bool]$State.PolicyTransfer.running
+                        operation = $State.PolicyTransfer.operation; phase = $State.PolicyTransfer.phase }
                     outputPath = $State.Config.OutputPath
                     tenant     = $State.Config.Tenant
                     clients    = @(foreach ($k in (Get-IdsClientCatalog).Keys) {
                             @{ key = $k; name = (Get-IdsClientCatalog)[$k].name; note = (Get-IdsClientCatalog)[$k].note }
                         })
                     sections   = @(foreach ($k in (Get-IdsSectionCatalog).Keys) {
-                            @{ key = $k; label = (Get-IdsSectionCatalog)[$k].label }
+                            @{ key = $k; label = (Get-IdsSectionCatalog)[$k].label
+                                available = ($State.Policies.snapshot.source.kind -ne 'offline' -or
+                                    $k -in @('settingsCatalog', 'deviceConfigs', 'admx', 'compliance', 'endpointSecurity')) }
                         })
                     export     = @{
                         running = $exp.running; done = $exp.done; error = $exp.error
@@ -524,6 +547,10 @@ while ($running -and $listener.IsListening) {
                 }
                 if (Test-IdsWorkActive $State) {
                     Send-IdsJson -Response $res -Object @{ error = 'Policy loading, export, assessment or sign-in is already running.' } -Status 409; break
+                }
+                $body = Read-IdsAssessmentRequestJson $req 4KB
+                if ($State.Policies.snapshot -and $body.replace -ne $true) {
+                    Send-IdsJson -Response $res -Object @{ error = 'Confirm replacement of the active policy source before loading live policies.' } -Status 409; break
                 }
                 Reset-IdsAssessment $State
                 if (Start-IdsPolicyLoad $State $Root) {
@@ -675,7 +702,7 @@ while ($running -and $listener.IsListening) {
                 $path = $query['path']
                 if (-not $path) { $path = $State.Config.OutputPath }
                 $result = @{ conflict = $null; suggestion = $null }
-                if ($State.Auth) {
+                if ($State.Policies.snapshot) {
                     try {
                         $snapshot = Get-IdsLoadedPolicies $State
                         $conn = @{ tenantId = $snapshot.tenant.id; organization = $snapshot.tenant.name }
@@ -691,7 +718,10 @@ while ($running -and $listener.IsListening) {
             }
 
             '^POST /api/export$' {
-                if (-not $State.Auth) { Send-IdsJson -Response $res -Object @{ error = 'Not signed in' } -Status 401; break }
+                try { Assert-IdsLocalJsonRequest $req $State }
+                catch [UnauthorizedAccessException] { Send-IdsJson -Response $res -Object @{ error = $_.Exception.Message } -Status 403; break }
+                catch [NotSupportedException] { Send-IdsJson -Response $res -Object @{ error = $_.Exception.Message } -Status 415; break }
+                if (-not $State.Auth -and -not $State.Policies.snapshot) { Send-IdsJson -Response $res -Object @{ error = 'Load or import policies first.' } -Status 401; break }
                 if ((Test-IdsWorkActive $State) -or $State.Browser.running) { Send-IdsJson -Response $res -Object @{ error = 'An export, assessment or sign-in is already running' } -Status 409; break }
                 try { $null = Get-IdsLoadedPolicies $State } catch {
                     Send-IdsJson -Response $res -Object @{ error = $_.Exception.Message } -Status 409; break
@@ -701,6 +731,11 @@ while ($running -and $listener.IsListening) {
                 $options = Get-IdsDefaultOptions
                 if ($body.outputPath) { $options.OutputPath = [string]$body.outputPath; $State.Config.OutputPath = $options.OutputPath }
                 if ($body.sections) { $options.Sections = @($body.sections) }
+                if ($State.Policies.snapshot.source.kind -eq 'offline' -and @($options.Sections | Where-Object {
+                    $_ -notin @('settingsCatalog', 'deviceConfigs', 'admx', 'compliance', 'endpointSecurity')
+                }).Count) {
+                    Send-IdsJson -Response $res -Object @{ error = 'Offline documentation supports only the five policy families; apps, scripts and other live sections are unavailable.' } -Status 400; break
+                }
                 foreach ($pair in @(
                         @('includeRaw', 'IncludeRaw'), @('includeRaw', 'IncludeRawFiles'),
                         @('includeScriptContent', 'IncludeScriptContent'), @('frontMatter', 'FrontMatter'),
@@ -792,6 +827,8 @@ while ($running -and $listener.IsListening) {
     Stop-IdsHttpListener -Listener $listener
     try { Stop-IdsAssessmentJob $State } catch { }
     try { Stop-IdsPolicyLoad $State } catch { }
+    try { Stop-IdsPolicyTransfer $State } catch { }
+    try { Stop-IdsFolderPicker $State } catch { }
     if ($State.Browser.job) {
         try { $State.Browser.job.ps.Stop() } catch { }
         try { $State.Browser.job.ps.Dispose(); $State.Browser.job.runspace.Dispose() } catch { }

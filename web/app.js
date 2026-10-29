@@ -28,6 +28,9 @@ let booting = false;
 let policyTimer = null;
 let policyPolling = false;
 let policyReloading = false;
+let sourceImportOpen = false;
+let sourceTransferBusy = false;
+let folderPickerBusy = false;
 
 const setHidden = (id, hidden) => {
   if (hidden) $(id).classList.add('hidden');
@@ -36,20 +39,25 @@ const setHidden = (id, hidden) => {
 
 // --- Navigation ------------------------------------------------------------
 
-const views = { loading: 'viewLoading', landing: 'viewLanding', policies: 'viewPolicies', home: 'viewHome', document: 'viewDocument', assess: 'viewAssess' };
-const viewHeadings = { landing: 'landingTitle', policies: 'policyLoadTitle', home: 'homeTitle', document: 'documentTitle', assess: 'assessTitle' };
+const views = { loading: 'viewLoading', landing: 'viewLanding', import: 'viewImport', policies: 'viewPolicies', home: 'viewHome', document: 'viewDocument', assess: 'viewAssess' };
+const viewHeadings = { landing: 'landingTitle', import: 'policyImportTitle', policies: 'policyLoadTitle', home: 'homeTitle', document: 'documentTitle', assess: 'assessTitle' };
 const navLinks = { home: 'navHome', document: 'navDocument', assess: 'navAssess' };
 const routes = { '#/document': 'document', '#/assess': 'assess' };
 let lastRoute = 'home';
 
 // In-page anchors such as the skip link (#main) keep the current route.
 const isRouteHash = (hash) => !hash || hash.startsWith('#/');
-const policiesReady = () => !!state?.auth?.connected && !policyReloading && ['ready', 'partial'].includes(state?.policies?.status);
+const policiesReady = () => !policyReloading && !sourceTransferBusy &&
+  (!!state?.auth?.connected || state?.policies?.source?.kind === 'offline') &&
+  ['ready', 'partial'].includes(state?.policies?.status);
 
 function routeView() {
   if (!state) return 'loading';
-  if (!state.auth?.connected) return 'landing';
-  if (!policiesReady()) return 'policies';
+  if (sourceImportOpen) return 'import';
+  if (!state.auth?.connected && window.location.hash === '#/signin') return 'landing';
+  if (!state.auth?.connected && state.policies?.source?.kind !== 'offline') return 'landing';
+  if (state.policies?.status === 'loading' || state.policies?.consentRequired || state.policies?.status === 'failed') return 'policies';
+  if (!policiesReady()) return 'home';
   const hash = window.location.hash || '';
   if (isRouteHash(hash)) lastRoute = routes[hash] || 'home';
   return lastRoute;
@@ -57,6 +65,9 @@ function routeView() {
 
 function renderRoute() {
   const view = routeView();
+  const offlineSignedOut = !state?.auth?.connected && state?.policies?.source?.kind === 'offline';
+  setHidden('offlineSignIn', !offlineSignedOut);
+  setHidden('returnOfflineWorkspace', !offlineSignedOut);
   Object.entries(views).forEach(([key, id]) => setHidden(id, key !== view));
   const signedIn = !!navLinks[view];
   setHidden('appNav', !signedIn);
@@ -114,7 +125,15 @@ async function refreshState() {
   const awaitingPolicies = !!state && !policiesReady();
   const identity = (s) => JSON.stringify(s?.auth || {}, ['connected', 'tenantId', 'account', 'client', 'method']);
   if (state && identity(state) !== identity(body)) clearWorkspace();
+  const sourceKey = (s) => JSON.stringify([s?.policies?.source, s?.policies?.capturedAt]);
+  if (state && sourceKey(state) !== sourceKey(body) && policiesReady()) clearWorkspace();
   state = body;
+  if (body.transfer?.running && !sourceTransferBusy) {
+    const operation = body.transfer.operation;
+    if (operation === 'import') sourceImportOpen = true;
+    const statusId = operation === 'import' ? 'policyImportStatus' : 'policyExportStatus';
+    void transferPolicySource(operation, null, statusId, true).catch((e) => { $(statusId).textContent = e.message; });
+  }
   const policiesArrived = awaitingPolicies && policiesReady();
   if (policiesArrived) {
     lastRoute = 'home';
@@ -130,19 +149,34 @@ async function refreshState() {
 
 function renderPolicyState() {
   const policies = state?.policies || {};
-  const waiting = !!state?.auth?.connected && !policiesReady();
+  const waiting = policies.status === 'loading';
+  const consent = !!policies.consentRequired;
   const failed = policies.status === 'failed';
   const percent = Math.max(0, Math.min(100, Number(policies.percent) || 0));
   $('policyLoadBar').style.width = percent + '%';
   $('policyLoadProgress').setAttribute('aria-valuenow', percent);
-  $('policyLoadPhase').textContent = policies.phase || 'Preparing to load policies';
+  $('policyLoadPhase').textContent = policies.phase || 'No collection has started';
+  $('policyLoadTitle').textContent = consent && !waiting ? 'Load policies now?' : 'Loading your Intune policies';
+  setHidden('policyConsentActions', !consent && !failed);
+  setHidden('policyLoadProgress', !waiting);
   $('policyLoadTenant').textContent = state?.auth?.tenantId ? 'Tenant ' + state.auth.tenantId : '';
   $('policyLoadError').textContent = policies.error || '';
   setHidden('policyLoadError', !policies.error);
-  setHidden('policyLoadSpinner', failed);
+  setHidden('policyLoadSpinner', !waiting);
   setHidden('btnRetryPolicies', !failed);
-  $('policySummary').textContent = `${Number(policies.count) || 0} policies loaded` +
-    (policies.capturedAt ? ` · ${policies.capturedAt}` : '');
+  const offline = policies.source?.kind === 'offline';
+  const ready = ['ready', 'partial'].includes(policies.status);
+  $('policySummary').textContent = ready ? `${Number(policies.count) || 0} policies · ${offline ? 'Offline import' : 'Live snapshot'}` +
+    ` · Collected: ${policies.capturedAt || 'Unknown'}` +
+    (policies.source?.importedAt ? ` · Imported: ${policies.source.importedAt}` : '') : 'No policies loaded yet';
+  $('policySourceDescription').textContent = offline
+    ? 'Both workflows use this offline source. No Graph or authentication calls are made. Only the five policy families are available; missing evidence and reference names remain explicit.'
+    : ready ? 'Both workflows use this snapshot. Refresh explicitly to read changes from Intune. Other documentation categories are collected during export.'
+      : 'You can stay signed in without loading data. Load live policies or import an existing source to enable documentation and Assessment.';
+  $('btnRefreshPolicies').textContent = offline ? 'Replace with live policies' : ready ? 'Refresh live policies' : 'Load live policies';
+  ['homeDocument', 'homeAssess', 'navDocument', 'navAssess'].forEach((id) => {
+    $(id).setAttribute('aria-disabled', ready ? 'false' : 'true');
+  });
   $('policyFamilies').innerHTML = (policies.families || []).map((family) =>
     `<div class="stat"><b>${Number(family.count) || 0}</b><span>${escapeHtml(family.label)}</span>` +
     (family.complete ? '' : '<p class="muted">Incomplete evidence</p>') + '</div>').join('');
@@ -171,11 +205,13 @@ async function pollPolicyState() {
 
 async function reloadPolicies() {
   if (policyReloading || exportBusy || assessmentBusy || !state?.auth?.connected) return;
+  const replace = ['ready', 'partial'].includes(state?.policies?.status);
+  if (replace && !confirm('Replace the active policy source with a new live collection? Assessment results will be cleared.')) return;
   const generation = workspaceGeneration;
   policyReloading = true;
   syncJobAdmission();
   try {
-    const r = await post('/api/policies/reload');
+    const r = await post('/api/policies/reload', { replace });
     if (generation !== workspaceGeneration) return;
     if (assessmentSessionFailure(r)) return;
     if (!r.ok) throw new Error(r.body?.error || 'Could not reload policies.');
@@ -200,6 +236,116 @@ async function reloadPolicies() {
 
 $('btnRetryPolicies').addEventListener('click', reloadPolicies);
 $('btnRefreshPolicies').addEventListener('click', reloadPolicies);
+$('btnLoadPolicies').addEventListener('click', reloadPolicies);
+$('btnPoliciesNotNow').addEventListener('click', async () => {
+  const r = await post('/api/policies/decline');
+  if (!r.ok) { $('policyLoadError').textContent = r.body?.error || 'Could not save your choice.'; setHidden('policyLoadError', false); return; }
+  await refreshState();
+  $('homeTitle').focus({ preventScroll: true });
+});
+
+const waitForLocalJob = () => new Promise((resolve) => setTimeout(resolve, 300));
+
+async function chooseHostFolder(inputId, statusId) {
+  if (folderPickerBusy) throw new Error('A folder dialog is already open on the application host.');
+  folderPickerBusy = true;
+  $(statusId).textContent = 'Choose a folder in the Windows dialog on the application host. Cancel keeps the current path.';
+  try {
+    const started = await post('/api/folders/picker', { initialPath: $(inputId).value });
+    if (!started.ok) throw new Error(started.body?.error || 'Could not open folder selection.');
+    while (true) {
+      const r = await api('/api/folders/picker');
+      if (!r.ok) throw new Error(r.body?.error || 'Folder selection is unavailable.');
+      if (r.body?.status === 'selected') {
+        $(inputId).value = r.body.path;
+        $(statusId).textContent = 'Host folder selected.';
+        return r.body.path;
+      }
+      if (r.body?.status === 'cancelled') { $(statusId).textContent = 'Folder selection cancelled; current path unchanged.'; return null; }
+      if (r.body?.status !== 'running') throw new Error(r.body?.error || 'Folder selection ended unexpectedly. Enter the host path manually.');
+      await waitForLocalJob();
+    }
+  } finally { folderPickerBusy = false; }
+}
+
+function openPolicyImport() {
+  if (exportBusy || assessmentBusy || sourceTransferBusy || assessmentImporting) return;
+  sourceImportOpen = true;
+  renderRoute();
+  $('policyImportTitle').focus({ preventScroll: true });
+}
+$('btnOpenPolicyImport').addEventListener('click', openPolicyImport);
+$('btnReplacePolicySource').addEventListener('click', openPolicyImport);
+$('btnCancelPolicyImport').addEventListener('click', () => {
+  if (sourceTransferBusy) return;
+  sourceImportOpen = false; renderRoute();
+  $(state?.auth?.connected || policiesReady() ? 'homeTitle' : 'landingTitle').focus({ preventScroll: true });
+});
+for (const [button, input, status] of [
+  ['btnBrowsePolicyImport', 'policyImportPath', 'policyImportStatus'],
+  ['btnBrowsePolicyExport', 'policyExportPath', 'policyExportStatus'],
+  ['btnBrowseAssessmentReports', 'assessmentOutputPath', 'assessmentFolderStatus']
+]) {
+  $(button).addEventListener('click', async () => {
+    try { await chooseHostFolder(input, status); }
+    catch (e) { $(status).textContent = e.message; }
+  });
+}
+
+async function transferPolicySource(operation, payload, statusId, resume = false) {
+  if (sourceTransferBusy || exportBusy || assessmentBusy || assessmentImporting) return;
+  sourceTransferBusy = true;
+  syncJobAdmission();
+  $(statusId).textContent = operation === 'import' ? 'Reading and validating policy files…' : 'Writing policy JSON files…';
+  try {
+    if (!resume) {
+      const started = await post(`/api/policies/${operation}`, payload);
+      if (!started.ok) throw new Error(started.body?.error || 'Could not start policy transfer.');
+    }
+    while (true) {
+      const r = await api('/api/policies/transfer');
+      if (!r.ok || r.body?.status === 'failed') throw new Error(r.body?.error || 'Policy transfer failed.');
+      $(statusId).textContent = r.body?.phase || 'Working…';
+      if (r.body?.status === 'completed') {
+        $(statusId).textContent = operation === 'export' ? `Policy set written to ${r.body.result?.path}` : 'Policy set imported.';
+        if (operation === 'import') {
+          sourceImportOpen = false;
+          clearWorkspace();
+          lastRoute = 'home'; window.location.hash = '#/';
+        }
+        break;
+      }
+      if (!r.body?.running) throw new Error('Policy transfer ended without a completed result.');
+      await waitForLocalJob();
+    }
+  } finally {
+    sourceTransferBusy = false; syncJobAdmission(); await refreshState();
+  }
+}
+$('btnImportPolicySource').addEventListener('click', async () => {
+  try {
+    const replace = ['ready', 'partial'].includes(state?.policies?.status);
+    if (replace && !confirm('Replace the active policy source? Existing Assessment results will be cleared; saved report files remain unchanged.')) return;
+    const file = $('policyImportZip').files[0];
+    let payload;
+    if (file) {
+      if (!file.size || file.size > 32 * 1024 * 1024 || !/\.zip$/i.test(file.name)) throw new Error('Choose a nonempty policy ZIP, at most 32 MiB.');
+      payload = { archive: assessmentArchiveBase64(await file.arrayBuffer()), replace };
+    } else {
+      const path = $('policyImportPath').value.trim();
+      if (!path) throw new Error('Choose a policy ZIP or enter a host folder path.');
+      payload = { path, replace };
+    }
+    setHidden('policyImportError', true);
+    await transferPolicySource('import', payload, 'policyImportStatus');
+  } catch (e) { $('policyImportError').textContent = e.message; setHidden('policyImportError', false); }
+});
+$('btnExportPolicySource').addEventListener('click', async () => {
+  try {
+    if (!policiesReady()) throw new Error('Load or import policies before exporting a policy set.');
+    await transferPolicySource('export', { path: $('policyExportPath').value.trim() }, 'policyExportStatus');
+  } catch (e) { $('policyExportStatus').textContent = e.message; }
+});
 
 function renderClients() {
   const sel = $('client');
@@ -218,11 +364,18 @@ function renderClients() {
 
 function renderSections() {
   const host = $('sections');
-  if (host.children.length || !state.sections) return;
+  if (!state.sections) return;
+  if (host.children.length) {
+    sectionBoxes().forEach((box) => {
+      box.disabled = state.sections.find((s) => s.key === box.value)?.available === false;
+      if (box.disabled) box.checked = false;
+    });
+    return;
+  }
   state.sections.forEach((s) => {
     const label = document.createElement('label');
     label.className = 'check';
-    label.innerHTML = `<input type="checkbox" value="${s.key}" checked><span>${s.label}</span>`;
+    label.innerHTML = `<input type="checkbox" value="${escapeHtml(s.key)}" ${s.available === false ? 'disabled' : 'checked'}><span>${escapeHtml(s.label)}${s.available === false ? ' (unavailable offline)' : ''}</span>`;
     host.appendChild(label);
   });
 }
@@ -268,7 +421,14 @@ function renderAuth() {
     badge.className = 'badge badge-off';
     $('signinPane').classList.remove('hidden');
     $('connectedPane').classList.add('hidden');
-    $('cardConfigure').classList.add('disabled');
+    if (policiesReady()) $('cardConfigure').classList.remove('disabled');
+    else $('cardConfigure').classList.add('disabled');
+  }
+  if (state.policies?.source?.kind === 'offline') {
+    $('homeGreeting').textContent = 'Offline policy workspace';
+    $('homeTenant').textContent = state.policies.tenant?.name || 'Environment name unavailable';
+  } else if (!policiesReady()) {
+    $('homeGreeting').textContent = 'Welcome';
   }
   if (state.pendingError) showSigninError(state.pendingError);
   renderRoute();
@@ -431,7 +591,7 @@ $('btnSignout').addEventListener('click', async () => {
 async function checkFolder() {
   const generation = workspaceGeneration;
   const path = $('outputPath').value.trim();
-  if (!path || !state || !state.auth || !state.auth.connected) return;
+  if (!path || !policiesReady()) return;
   const { body } = await api('/api/checkfolder?path=' + encodeURIComponent(path));
   if (generation !== workspaceGeneration || path !== $('outputPath').value.trim()) return;
   const el = $('folderWarn');
@@ -663,6 +823,8 @@ let assessmentResult = null;
 let assessmentPacks = [];
 let assessmentGeneration = 0;
 let assessmentImporting = false;
+let assessmentImportQueue = [];
+let assessmentQueueSequence = 0;
 let assessmentBusy = false;
 let assessmentStarting = false;
 let assessmentTimer = null;
@@ -686,7 +848,7 @@ function renderAssessmentPacks(catalog) {
   $('assessmentCatalogNote').textContent =
     'CIS content is never bundled or downloaded. Import your own licensed CIS Intune build-kit ZIP or a ' +
     'schema-1 JSON rule pack below; PDF and Excel benchmarks are not supported. ' +
-    'Unavailable platform/profile combinations are disabled. ' +
+    'Choose platforms first; unavailable pack combinations cannot run until a suitable pack is imported. ' +
     'The Microsoft catalog contains five bundled checks total, all partial inventories: ' +
     'Windows 26H2 has two shell SmartScreen atomic checks, legacy Endpoint Protection only (Graph beta), not modern baseline/Settings Catalog coverage. ' +
     'macOS has one FileVault enablement check, legacy Endpoint Protection on Graph beta; the template is deprecated, not current-template, recovery-key or encryption compliance coverage. ' +
@@ -702,33 +864,37 @@ function renderAssessmentPacks(catalog) {
     const box = document.createElement('input');
     box.type = 'checkbox';
     box.value = key;
-    box.disabled = !available;
-    box.checked = available && platforms.has(key);
+    box.disabled = false;
+    box.checked = platforms.has(key);
     box.addEventListener('change', updateAssessmentSelection);
     const text = document.createElement('span');
-    text.textContent = name + (available ? '' : ' — unavailable, import a pack');
+    text.textContent = name + (available ? '' : ' — no library packs yet; import after Next');
     label.appendChild(box);
     label.appendChild(text);
     $('assessmentPlatforms').appendChild(label);
   });
   const profile = $('assessmentProfile');
   const previous = profile.value;
-  const profiles = Array.from(new Set(assessmentPacks.map((p) => p.profile)));
+  const profiles = assessmentPacks.map((p) => assessmentIdentity(p));
   profile.innerHTML = '';
   ['', ...profiles].forEach((value) => {
     const option = document.createElement('option');
     option.value = value;
-    option.textContent = value || 'All available profiles (select packs below)';
+    const pack = assessmentPacks.find((p) => assessmentIdentity(p) === value);
+    option.textContent = pack
+      ? `${pack.profile} — ${pack.framework} / ${pack.frameworkVersion || pack.id} (${pack.id}) · ${pack.origin === 'imported' ? 'Imported' : 'Bundled'} · ${pack.version}`
+      : 'All available profiles (select packs below)';
     profile.appendChild(option);
   });
   profile.value = profiles.includes(previous) ? previous : '';
   $('assessmentPacks').innerHTML = '';
   assessmentPacks.forEach((p) => {
-    const label = document.createElement('label');
+    const label = document.createElement('div');
     label.className = 'check assessment-pack';
     const box = document.createElement('input');
     box.type = 'checkbox';
     box.value = assessmentIdentity(p);
+    box.setAttribute('aria-label', `Select ${p.framework} ${p.profile}, ${p.id} version ${p.version}`);
     box.checked = selected.has(box.value);
     box.addEventListener('change', updateAssessmentSelection);
     const text = document.createElement('span');
@@ -738,15 +904,24 @@ function renderAssessmentPacks(catalog) {
       : p.framework === 'Microsoft' ? (p.classification === 'baseline'
         ? 'Official Microsoft security baseline — partial mapped checks' : 'Microsoft recommendations')
         : `${p.framework} — local rule pack`;
-    text.innerHTML = `<strong>${escapeHtml(p.id)} @ ${escapeHtml(p.version)}</strong>
-      <small>${escapeHtml(classification)} · ${escapeHtml(p.frameworkVersion)}</small>
-      <small>${escapeHtml(assessmentPlatforms[p.platform])} · ${escapeHtml(p.profile)}</small>
-      <small>${escapeHtml(p.coverage?.inventory)} inventory; source total: ${escapeHtml(p.coverage?.totalSourceControls ?? 'unknown')}.
-        Source revision: ${escapeHtml(p.sourceRevision)}</small>
-      <small>Sources: ${assessmentText(p.sources || [])}</small>
-      <small>SHA-256: ${escapeHtml(p.sha256)}</small>`;
+    text.innerHTML = `<strong>${escapeHtml(p.framework)} · ${escapeHtml(p.profile)}</strong>
+      <small>${escapeHtml(assessmentPlatforms[p.platform])} · ${escapeHtml(p.frameworkVersion)} · Version ${escapeHtml(p.version)}</small>
+      <span class="badge">${p.origin === 'imported' ? 'Imported' : 'Bundled'}</span>
+      <small>${escapeHtml(classification)}</small>
+      <small>${escapeHtml(p.coverage?.inventory)} inventory · source total ${escapeHtml(p.coverage?.totalSourceControls ?? 'unknown')}</small>
+      <details class="pack-technical"><summary>Identity and source details</summary>
+        <p>${escapeHtml(p.id)}</p><p>${escapeHtml(p.sourceRevision)}</p>
+        <pre>${assessmentText(p.sources || [])}</pre><p>SHA-256: ${escapeHtml(p.sha256)}</p></details>`;
     label.appendChild(box);
     label.appendChild(text);
+    if (p.origin === 'imported') {
+      const remove = document.createElement('button');
+      remove.className = 'btn ghost small pack-remove';
+      remove.innerHTML = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>';
+      remove.setAttribute('aria-label', `Remove imported pack ${p.id} from the local library`);
+      remove.addEventListener('click', () => removeAssessmentPack(p));
+      label.appendChild(remove);
+    }
     $('assessmentPacks').appendChild(label);
   });
   updateAssessmentSelection();
@@ -760,9 +935,9 @@ function updateAssessmentSelection() {
   Array.from($('assessmentPacks').children).forEach((label, i) => {
     const box = label.children[0];
     const pack = assessmentPacks[i];
-    box.disabled = !platforms.includes(pack.platform) || (!!profile && profile !== pack.profile);
-    if (box.disabled) {
-      box.checked = false;
+    box.disabled = !platforms.includes(pack.platform);
+    if (box.disabled || (!!profile && profile !== assessmentIdentity(pack))) {
+      if (box.disabled) box.checked = false;
       label.classList.add('hidden');
     } else {
       enabled++;
@@ -780,6 +955,7 @@ $('assessmentProfile').addEventListener('change', updateAssessmentSelection);
 // Wizard steps are client state, not routes, so the current step survives navigating Home and back.
 const assessmentSteps = {
   platforms: ['assessStepPlatforms', 'assessPanelPlatforms', 'platformsTitle'],
+  import: ['assessStepImport', 'assessImportPanel', 'assessImportTitle'],
   baselines: ['assessStepBaselines', 'assessPanelBaselines', 'baselinesTitle'],
   context: ['assessStepContext', 'assessPanelContext', 'contextTitle'],
   review: ['assessStepReview', 'assessPanelReview', 'runAssessmentTitle'],
@@ -813,7 +989,6 @@ function setAssessmentStep(step, focus) {
     else $(item).removeAttribute('aria-current');
     setHidden(panel, i !== current);
   });
-  setHidden('assessImportPanel', current > 1);
   if (!focus) return;
   window.scrollTo(0, 0);
   $(assessmentSteps[step][2]).focus({ preventScroll: true });
@@ -834,7 +1009,8 @@ function assessmentSelectionError() {
 }
 
 function selectAssessmentPacks(checked) {
-  assessmentPackBoxes().forEach((b) => { if (!b.disabled) b.checked = checked; });
+  const filter = $('assessmentProfile').value;
+  assessmentPackBoxes().forEach((b) => { if (!b.disabled && (!filter || filter === b.value)) b.checked = checked; });
   updateAssessmentSelection();
 }
 
@@ -858,22 +1034,20 @@ function renderAssessmentReview() {
     if (p === 'androidEnterprise') {
       line += '; enrollment mode: ' + (assessmentEnrollmentLabels[$('assessmentEnrollment').value] || 'Unknown');
     }
-    return line;
+    const selected = packs.filter((pack) => pack.platform === p);
+    return `<article class="review-platform"><h4>${escapeHtml(assessmentPlatforms[p])}</h4>
+      <p>${escapeHtml(line)}</p><ul>${selected.map((pack) => `<li><strong>${escapeHtml(pack.framework)}${pack.frameworkVersion ? ' · ' + escapeHtml(pack.frameworkVersion) : ''} · ${escapeHtml(pack.profile)}</strong>
+        <span>${escapeHtml(pack.id)} · version ${escapeHtml(pack.version)} · ${pack.origin === 'imported' ? 'Imported' : 'Bundled'}
+        · ${escapeHtml(pack.coverage?.inventory)} inventory</span></li>`).join('')}</ul></article>`;
   });
-  const lines = [
-    'Platforms: ' + (platforms.map((p) => assessmentPlatforms[p]).join(', ') || 'none'),
-    '',
-    'Rule packs:',
-    ...(packs.length ? packs.map((p) => `${p.id} @ ${p.version} — ${assessmentPlatforms[p.platform]} · ${p.profile}`)
-      : ['none']),
-    '',
-    'Context (user-selected, not discovered device inventory):',
-    ...context
-  ];
-  if (platforms.includes('windows11') && !$('assessmentOsWindows11').value.trim()) {
-    lines.push('', assessmentWindowsWarning);
-  }
-  $('assessmentReview').textContent = lines.join('\n');
+  const source = state?.policies;
+  $('assessmentReview').innerHTML = `<div class="notice"><strong>Target policy source</strong>
+    <p>${escapeHtml(source?.source?.kind === 'offline' ? 'Offline import' : 'Live snapshot')} · ${escapeHtml(source?.tenant?.name || source?.tenant?.id || 'Environment name unavailable')}
+    · Collected ${escapeHtml(source?.capturedAt || 'Unknown')}${source?.source?.importedAt ? ' · Imported ' + escapeHtml(source.source.importedAt) : ''}</p>
+    <p>${Number(source?.count) || 0} policies · ${source?.status === 'partial' ? 'Incomplete evidence: some checks may remain not assessed.' : 'Loaded snapshot'}</p></div>
+    <p class="muted">Each platform below connects the selected packs to your comparison context. This is not discovered device inventory or effective device compliance.</p>
+    ${context.join('')}${platforms.includes('windows11') && !$('assessmentOsWindows11').value.trim()
+      ? `<p class="notice">${escapeHtml(assessmentWindowsWarning)}</p>` : ''}`;
 }
 
 function blockAssessmentStep(message) {
@@ -893,9 +1067,11 @@ $('btnAssessmentSelectNone').addEventListener('click', () => selectAssessmentPac
 $('assessmentOsWindows11').addEventListener('input', updateAssessmentContext);
 $('btnAssessPlatformsNext').addEventListener('click', () => {
   if (!assessmentSelection().platforms.length) blockAssessmentStep('Choose at least one platform to assess.');
-  else moveAssessmentStep('baselines');
+  else moveAssessmentStep('import');
 });
-$('btnAssessBaselinesBack').addEventListener('click', () => moveAssessmentStep('platforms'));
+$('btnAssessImportBack').addEventListener('click', () => { if (!assessmentImporting) moveAssessmentStep('platforms'); });
+$('btnAssessImportNext').addEventListener('click', () => { if (!assessmentImporting) moveAssessmentStep('baselines'); });
+$('btnAssessBaselinesBack').addEventListener('click', () => moveAssessmentStep('import'));
 $('btnAssessBaselinesNext').addEventListener('click', () => {
   const error = assessmentSelectionError();
   if (error) blockAssessmentStep(error);
@@ -915,13 +1091,26 @@ function showAssessmentError(message) {
 }
 
 function syncJobAdmission() {
-  const busy = exportBusy || assessmentBusy;
+  const busy = exportBusy || assessmentBusy || sourceTransferBusy || !!state?.transfer?.running;
   $('btnExport').disabled = busy || !policiesReady();
   $('btnAssessmentRun').disabled = busy || assessmentImporting || !policiesReady();
-  $('btnRefreshPolicies').disabled = busy || policyReloading || !policiesReady();
+  $('btnRefreshPolicies').disabled = busy || policyReloading || !state?.auth?.connected;
   $('btnRetryPolicies').disabled = busy || policyReloading;
   $('btnAssessmentImport').disabled = busy || assessmentImporting;
   $('btnAssessNew').disabled = assessmentBusy;
+  ['btnImportPolicySource', 'btnReplacePolicySource', 'btnOpenPolicyImport', 'btnExportPolicySource'].forEach((id) => {
+    $(id).disabled = busy || assessmentImporting || (id === 'btnExportPolicySource' && !policiesReady());
+  });
+  ['btnLoadPolicies', 'btnPoliciesNotNow'].forEach((id) => { $(id).disabled = busy || policyReloading; });
+  ['btnQueueAssessmentFiles', 'btnQueueAssessmentFolder', 'btnQueueAssessmentPath', 'btnAssessImportBack', 'btnAssessImportNext'].forEach((id) => {
+    $(id).disabled = busy || assessmentImporting;
+  });
+  Array.from($('assessmentImportQueue').children).forEach((row) => {
+    if (row.children[1]) row.children[1].disabled = busy || assessmentImporting;
+  });
+  Array.from($('assessmentPacks').children).forEach((row) => {
+    if (row.children[2]) row.children[2].disabled = busy || assessmentImporting;
+  });
   ['navDocumentBusy', 'homeDocumentBusy'].forEach((id) => setHidden(id, !exportBusy));
   ['navAssessBusy', 'homeAssessBusy'].forEach((id) => setHidden(id, !assessmentBusy));
 }
@@ -943,6 +1132,8 @@ function clearAssessment() {
   assessmentStarting = false;
   assessmentPolling = false;
   assessmentImporting = false;
+  assessmentImportQueue = [];
+  renderAssessmentImportQueue();
   clearAssessmentEvidence();
   $('assessmentOutputPath').value = '';
   $('assessmentImportFile').value = '';
@@ -951,6 +1142,7 @@ function clearAssessment() {
   $('assessmentEnrollment').value = '';
   $('assessmentIosOwnership').value = '';
   ['assessmentImportSummary', 'assessmentReview', 'assessmentContextWarning'].forEach((id) => { $(id).textContent = ''; });
+  ['assessmentImportSummary', 'assessmentReview'].forEach((id) => { $(id).innerHTML = ''; });
   setHidden('assessmentContextWarning', true);
   showAssessmentError(null);
   setAssessmentStep('platforms');
@@ -1050,7 +1242,9 @@ async function refreshAssessment() {
 $('btnAssessmentRun').addEventListener('click', async () => {
   if (assessmentImporting) { showAssessmentError('Wait for the pack import to finish.'); return; }
   if (assessmentBusy || exportBusy) { showAssessmentError('An export or assessment is already running.'); return; }
-  if (!state?.auth?.connected) { showAssessmentError('Sign in before assessing policies.'); return; }
+  if (!state?.auth?.connected && state?.policies?.source?.kind !== 'offline') {
+    showAssessmentError('Sign in or import a policy set before assessing policies.'); return;
+  }
   if (!policiesReady()) { showAssessmentError('Load policies before assessing.'); return; }
   const { platforms, packs: selectedPacks } = assessmentSelection();
   if (!platforms.length || platforms.some((p) => !selectedPacks.some((pack) => pack.platform === p))) {
@@ -1150,22 +1344,121 @@ function assessmentImportReport(body, packs) {
   return [...lines, ...assessmentSkippedLines(body)].join('\n');
 }
 
+function renderAssessmentImportQueue() {
+  const host = $('assessmentImportQueue');
+  host.innerHTML = '';
+  assessmentImportQueue.forEach((item) => {
+    const row = document.createElement('div');
+    row.className = 'import-queue-row';
+    const text = document.createElement('div');
+    text.innerHTML = `<strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.kind === 'reference'
+      ? 'Custom reference policy set' : 'Schema-1 packs / licensed CIS ZIP')} · ${item.path ? 'Host folder' : 'File'} · ${escapeHtml(item.status)}</small>
+      ${item.status === 'importing' ? '<span class="spinner" aria-hidden="true"></span>' : ''}`;
+    const remove = document.createElement('button');
+    remove.className = 'btn ghost small';
+    remove.disabled = assessmentImporting || assessmentBusy || exportBusy;
+    remove.setAttribute('aria-label', `Remove ${item.name} from the import queue only`);
+    remove.innerHTML = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>';
+    remove.addEventListener('click', () => {
+      if (assessmentImporting) return;
+      assessmentImportQueue = assessmentImportQueue.filter((candidate) => candidate.id !== item.id);
+      renderAssessmentImportQueue();
+    });
+    row.appendChild(text); row.appendChild(remove); host.appendChild(row);
+  });
+  $('assessmentQueueStatus').textContent = assessmentImporting
+    ? 'Importing the highlighted item. Completed independent items remain in your library if another item fails.'
+    : `${assessmentImportQueue.length} queued items. Removing a queue item does not remove a library pack.`;
+}
+
+function queueAssessmentFiles() {
+  if (assessmentImporting || assessmentBusy || exportBusy) return;
+  for (const file of Array.from($('assessmentImportFile').files)) {
+    assessmentImportQueue.push({ id: ++assessmentQueueSequence, file, name: file.name,
+      kind: $('assessmentImportKind').value || 'packs', status: 'queued', result: null });
+  }
+  $('assessmentImportFile').value = '';
+  renderAssessmentImportQueue();
+}
+$('btnQueueAssessmentFiles').addEventListener('click', queueAssessmentFiles);
+$('btnQueueAssessmentPath').addEventListener('click', () => {
+  if (assessmentImporting || assessmentBusy || exportBusy) return;
+  const path = $('assessmentImportHostPath').value.trim();
+  if (!path) { showAssessmentError('Enter an absolute host folder path first.'); return; }
+  assessmentImportQueue.push({ id: ++assessmentQueueSequence, path, name: path,
+    kind: $('assessmentImportKind').value || 'packs', status: 'queued', result: null });
+  renderAssessmentImportQueue();
+});
+$('btnQueueAssessmentFolder').addEventListener('click', async () => {
+  try {
+    const path = await chooseHostFolder('assessmentImportHostPath', 'assessmentQueueStatus');
+    if (!path) return;
+    assessmentImportQueue.push({ id: ++assessmentQueueSequence, path, name: path,
+      kind: $('assessmentImportKind').value || 'packs', status: 'queued', result: null });
+    renderAssessmentImportQueue();
+  } catch (e) { showAssessmentError(e.message); }
+});
+
+function renderAssessmentImportSummary() {
+  let added = 0, present = 0, skipped = 0, ignored = 0, failed = 0;
+  const items = assessmentImportQueue.filter((item) => item.result);
+  const details = items.map((item) => {
+    const result = item.result;
+    const packs = Array.isArray(result.packs) ? result.packs : result.pack ? [result.pack] : [];
+    const newCount = Number.isInteger(result.added) ? result.added : packs.length;
+    added += newCount; present += packs.length - newCount;
+    skipped += Number.isInteger(result.skippedCount) ? result.skippedCount : (result.skipped || []).length;
+    ignored += Number(result.ignored) || 0;
+    if (item.status === 'failed') failed++;
+    return `<article class="import-result ${item.status === 'failed' ? 'import-failed' : ''}">
+      <h4>${escapeHtml(item.name)} · ${escapeHtml(item.status)}</h4>
+      ${result.error ? `<p>${escapeHtml(result.error)}</p>` : ''}
+      <ul>${packs.map((pack) => `<li><strong>${escapeHtml(pack.framework)}${pack.frameworkVersion ? ' · ' + escapeHtml(pack.frameworkVersion) : ''} · ${escapeHtml(pack.profile)}</strong>
+        <span>${escapeHtml(assessmentPlatforms[pack.platform])} · ${escapeHtml(pack.id)} · ${escapeHtml(pack.version)}
+        ${pack.controlCount == null ? '' : ' · ' + Number(pack.controlCount) + ' checks'}
+        · ${pack.added === false ? 'Already present' : 'Imported'}</span></li>`).join('')}</ul>
+      ${(result.skipped || []).length ? `<details><summary>Skipped entries and reasons (${Number(result.skippedCount) || result.skipped.length})</summary>
+        <ul>${result.skipped.map((entry) => `<li>${escapeHtml(entry.entry)}: ${escapeHtml(entry.reason)}</li>`).join('')}</ul>
+        ${result.skippedCount > result.skipped.length ? `<p>${result.skippedCount - result.skipped.length} additional reasons not returned by the server.</p>` : ''}</details>` : ''}
+      ${result.ignored ? `<p>${Number(result.ignored)} non-JSON files ignored.</p>` : ''}</article>`;
+  });
+  $('assessmentImportSummary').innerHTML = items.length
+    ? `<div class="import-totals"><span><b>${added}</b> Added</span><span><b>${present}</b> Already present</span>
+      <span><b>${skipped}</b> Skipped</span><span><b>${ignored}</b> Ignored files</span><span><b>${failed}</b> Failed items</span></div>
+      <p class="muted">Select exact packs on the next step. Imports are never selected automatically.</p>${details.join('')}` : '';
+}
+
+async function removeAssessmentPack(pack) {
+  if (assessmentImporting || assessmentBusy || exportBusy || sourceTransferBusy || pack.origin !== 'imported') return;
+  if (!confirm(`Remove ${pack.id} version ${pack.version} from the local library? Saved reports remain unchanged.`)) return;
+  const r = await post('/api/assessment/packs/remove', { selectionId: assessmentIdentity(pack), confirm: true });
+  if (!r.ok) { showAssessmentError(r.body?.error || 'Could not remove the imported pack.'); return; }
+  await loadAssessmentCatalog();
+}
+
 $('btnAssessmentImport').addEventListener('click', async () => {
   if (assessmentImporting || assessmentBusy || exportBusy) return;
+  if (!assessmentImportQueue.length) queueAssessmentFiles();
+  const pending = assessmentImportQueue.filter((item) => ['queued', 'failed'].includes(item.status));
+  if (!pending.length) { showAssessmentError('Add files or a host folder to the queue first.'); return; }
   const generation = assessmentGeneration;
   assessmentCatalogRequest++;
   assessmentImporting = true;
   syncJobAdmission();
   showAssessmentError(null);
-  $('assessmentImportSummary').textContent = '';
-  try {
-    const file = $('assessmentImportFile').files[0];
+  renderAssessmentImportQueue();
+  for (const item of pending) {
+    item.status = 'importing'; item.result = null; renderAssessmentImportQueue();
+    try {
+    const file = item.file;
     let payload;
-    if (file && /\.zip$/i.test(file.name)) {
+    if (item.path) {
+      payload = { path: item.path, kind: item.kind };
+    } else if (file && /\.zip$/i.test(file.name)) {
       if (!file.size || file.size > 32 * 1024 * 1024) throw new Error('Choose a nonempty ZIP archive, at most 32 MiB.');
       const buffer = await file.arrayBuffer();
       if (generation !== assessmentGeneration) return;
-      payload = { archive: assessmentArchiveBase64(buffer) };
+      payload = { archive: assessmentArchiveBase64(buffer), ...(item.kind === 'reference' ? { kind: 'reference' } : {}) };
     } else if (file && /\.json$/i.test(file.name)) {
       if (!file.size || file.size > 10 * 1024 * 1024) throw new Error('Choose a nonempty JSON rule pack, at most 10 MiB.');
       const content = await file.text();
@@ -1173,6 +1466,7 @@ $('btnAssessmentImport').addEventListener('click', async () => {
       if (new TextEncoder().encode(content).length > 10 * 1024 * 1024) {
         throw new Error('Decoded UTF-8 pack exceeds 10 MiB.');
       }
+      if (item.kind === 'reference') throw new Error('A reference policy set must be a complete policy folder or ZIP, not a single JSON file.');
       payload = { content };
     } else {
       throw new Error('Choose a JSON rule pack (at most 10 MiB) or a ZIP archive (at most 32 MiB).');
@@ -1181,25 +1475,24 @@ $('btnAssessmentImport').addEventListener('click', async () => {
     if (generation !== assessmentGeneration) return;
     if (assessmentSessionFailure(r)) return;
     const imported = Array.isArray(r.body?.packs) ? r.body.packs : r.body?.pack ? [r.body.pack] : null;
+    item.result = r.body || {};
     if (!r.ok || !imported) {
-      if (Array.isArray(r.body?.skipped)) {
-        $('assessmentImportSummary').textContent =
-          ['Nothing was imported.', ...assessmentSkippedLines(r.body)].join('\n');
-      }
       throw new Error(`${r.status}: ${r.body?.error || 'Pack import failed.'}`);
     }
     assessmentCatalogRequest++;
     const identities = new Set(imported.map(assessmentIdentity));
     const packs = assessmentPacks.filter((p) => !identities.has(assessmentIdentity(p)));
     renderAssessmentPacks({ packs: [...packs, ...imported], errors: assessmentCatalogIssues });
-    $('assessmentImportSummary').textContent = assessmentImportReport(r.body, imported);
+    item.status = 'completed';
   } catch (e) {
-    if (generation === assessmentGeneration) showAssessmentError(e.message);
-  } finally {
-    if (generation === assessmentGeneration) {
-      assessmentImporting = false;
-      syncJobAdmission();
-    }
+    if (generation !== assessmentGeneration) return;
+    item.status = 'failed'; item.result = { ...(item.result || {}), error: e.message };
+    showAssessmentError(e.message);
+  }
+  renderAssessmentImportQueue(); renderAssessmentImportSummary();
+  }
+  if (generation === assessmentGeneration) {
+    assessmentImporting = false; renderAssessmentImportQueue(); syncJobAdmission();
   }
 });
 
