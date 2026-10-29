@@ -60,6 +60,7 @@ BeforeAll {
         'lib\AssessmentRules.ps1'
         'lib\AssessmentSettings.ps1'
         'lib\Auth.ps1'
+        'lib\BaselineArchive.ps1'
         'lib\BaselinePacks.ps1'
         'lib\BrowserSession.ps1'
         'lib\Export.ps1'

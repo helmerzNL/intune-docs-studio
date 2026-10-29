@@ -54,7 +54,7 @@ $Build = Get-IdsBuildInfo -Root $Root
 . (Join-Path $Root 'lib\Render.ps1')
 . (Join-Path $Root 'lib\Export.ps1')
 . (Join-Path $Root 'lib\Http.ps1')
-foreach ($module in 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'AssessmentRules', 'AssessmentReports', 'Assessment', 'AssessmentApi') {
+foreach ($module in 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'BaselineArchive', 'AssessmentRules', 'AssessmentReports', 'Assessment', 'AssessmentApi') {
     . (Join-Path $Root "lib\$module.ps1")
 }
 

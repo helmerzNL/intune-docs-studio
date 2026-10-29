@@ -58,3 +58,35 @@ function Assert-IdsTestMarkdownObservations {
     ConvertTo-Json -InputObject $records -Depth 20 -Compress |
         Should -Be (ConvertTo-Json -InputObject $Control.observed -Depth 20 -Compress)
 }
+
+function ConvertTo-IdsTestJsonValue {
+    param($Value)
+    $document = [Text.Json.JsonDocument]::Parse((ConvertTo-Json -InputObject $Value -Depth 64))
+    try { $converted = ConvertFrom-IdsPackJsonElement $document.RootElement } finally { $document.Dispose() }
+    return ,$converted
+}
+
+function New-IdsTestSettingCollectionInstance {
+    param([string]$Kind = 'simple', [string]$Id = 'synthetic.collection', [object[]]$Values = @())
+    $typeKind = $Kind.Substring(0, 1).ToUpperInvariant() + $Kind.Substring(1)
+    $instance = @{ '@odata.type' = "#microsoft.graph.deviceManagementConfiguration${typeKind}SettingCollectionInstance"; settingDefinitionId = $Id }
+    $instance["${Kind}SettingCollectionValue"] = $Values
+    return $instance
+}
+
+function New-IdsTestBuildKitPolicy {
+    param([string]$Name = 'Synthetic L1 policy', [string]$Platforms = 'windows10',
+        [object[]]$Instances = @(), [object[]]$Definitions = @())
+    $settings = @(for ($index = 0; $index -lt $Instances.Count; $index++) {
+        $setting = @{ settingInstance = $Instances[$index] }
+        if ($index -eq 0 -and $Definitions.Count -gt 0) { $setting.settingDefinitions = $Definitions }
+        $setting
+    })
+    return ,(ConvertTo-IdsTestJsonValue @{ name = $Name; platforms = $Platforms; technologies = 'mdm'; settings = $settings })
+}
+
+function New-IdsTestBuildKitItem {
+    param($Policy, [string]$Entry = 'kit/policy.json',
+        [DateTimeOffset]$LastWriteTime = [DateTimeOffset]::new(2026, 10, 1, 12, 0, 0, [TimeSpan]::Zero))
+    return [pscustomobject]@{ entry = $Entry; policy = $Policy; lastWriteTime = $LastWriteTime }
+}
