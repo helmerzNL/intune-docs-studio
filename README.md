@@ -95,26 +95,49 @@ Intune, determine effective targeting, certify a benchmark, or measure device co
 > **Missing** means absent/not configured only in the rule's completely read mapped
 > families/policy types, **not absent throughout the tenant**.
 
-1. Sign in, confirm the tenant on Home, and open **Assess policies**.
-2. Select target platforms, exact rule-pack versions/profiles, and read their
-   classification, partial coverage, source revisions, and SHA-256 identities.
-3. Optionally select a licensed, reviewed **schema-1 JSON** CIS pack and click
-   **Import pack**. PDFs and arbitrary Intune exports are not accepted; CIS content
-   is neither bundled nor downloaded. See the [import reference](docs/assessment-rule-packs.md)
-   for all fields, supported operators, and named limits.
-4. Enter known OS versions (Windows uses a build version such as `10.0.22000`)
-   and Android enrollment mode. Explicitly select iOS/iPadOS **Personally owned**
-   only for that comparison scope; ownership defaults to **Unknown**. Unknown
-   applicability remains **not assessed**. These are user-selected comparison
-   context, not discovered inventory, ownership, or effective assignment.
-   A Windows 11 build can scope compatible unrestricted Windows-family profiles;
-   real policy include/exclude rules still apply. Unsupported conditions block.
-5. Choose an absolute **assessment report destination**, separate from both the
-   installation and documentation export folders, then **Assess selected policies**.
-   One export or assessment can run at a time; wait before sign-out, reset, or stop.
-6. Read the summary, filter evidence by status, inspect policy/assignment evidence,
-   collection issues and reasons, then open the displayed `assessment.md` and
-   `assessment.json` paths. Each run creates a new report subdirectory.
+The assessment is a five-step wizard: **Platforms**, **Baselines**, **Context**,
+**Review & run** and **Results**. **Next** checks each step, and errors appear
+below the stepper.
+
+1. Sign in, confirm the tenant on Home, and open **Assess policies**. On
+   **Platforms**, select at least one target platform.
+2. Optionally import packs in the **Import rule packs** card on **Platforms** or
+   **Baselines**. Select the licensed CIS Intune build-kit ZIP you downloaded from
+   CIS (at most 32 MiB) or one licensed, reviewed **schema-1 JSON** rule pack (at
+   most 10 MiB), then click **Import pack**. The build-kit ZIP is read in memory,
+   and its Settings Catalog policies become local rule packs. The card lists
+   packs, skipped entries with reasons and ignored-file counts. Imported packs
+   are never selected automatically. A single JSON file must be a schema-1 rule
+   pack; Settings Catalog JSON is converted only from a build-kit ZIP. Converted
+   packs are labeled CIS without verifying the source, so import only your licensed
+   download. The build-kit layout is unverified; review the defensive converter's
+   summary. PDFs, Excel, XCCDF/OVAL, Group Policy and OMA-URI content are not
+   supported; CIS content is neither bundled nor downloaded. See the
+   [import reference](docs/assessment-rule-packs.md) for all fields, supported
+   operators, named limits, and build-kit ZIP conversion rules.
+3. On **Baselines**, select 1–64 exact rule-pack versions/profiles, with an
+   applicable pack for every selected platform. Read their classification,
+   partial coverage, source revisions, and SHA-256 identities.
+4. On **Context**, enter known OS versions (Windows uses a build version such as
+   `10.0.22000`) and Android enrollment mode; only fields for the selected
+   platforms appear. Explicitly select iOS/iPadOS **Personally owned** only for
+   that comparison scope; ownership defaults to **Unknown**. Unknown applicability
+   remains **not assessed**. These are user-selected comparison context, not
+   discovered inventory, ownership, or effective assignment. A Windows 11 build
+   can scope compatible unrestricted Windows-family profiles; real policy
+   include/exclude rules still apply. Unsupported conditions block. If the
+   Windows 11 build is blank, a non-blocking warning explains that Windows
+   policies targeting Windows 10 and later, such as those that CIS build-kit
+   packs check, stay **not assessed**.
+5. On **Review & run**, check the summary. Choose an absolute
+   **assessment report destination**, separate from both the installation and
+   documentation export folders, then **Assess selected policies**. One export or
+   assessment can run at a time; wait before sign-out, reset, or stop.
+6. On **Results**, read the summary, filter evidence by status, inspect
+   policy/assignment evidence, collection issues and reasons, then open the
+   displayed `assessment.md` and `assessment.json` paths. Each run creates a new
+   report subdirectory. **New assessment** returns to **Platforms** and keeps your
+   choices; it is disabled while an assessment runs.
 
 **Assessment coverage** concerns assessed listed controls, not the entire source
 benchmark. **Configuration alignment** concerns aligned versus assessed controls.
@@ -124,11 +147,13 @@ potential conflicts are differing configured values, not proven targeting overla
 Groups, exclusions, and filters are evidence, not effective membership resolution.
 
 Imported files persist in `%LOCALAPPDATA%\IntuneDocsStudio\AssessmentPacks` across
-application updates; active tenant results clear on session reset. Reports go
-only to your chosen report root. Treat packs and reports as customer-owned data,
-separate from exports and their Git history. Assessment does not upload data,
-commit, or push reports automatically. See [operator procedures](docs/operations.md)
-for backup, update, and failure handling; never back up tokens or browser profiles.
+application updates; packs generated from a build-kit ZIP are stored there too.
+The build-kit ZIP itself is not kept, so keep your licensed download. Active
+tenant results clear on session reset. Reports go only to your chosen report
+root. Treat packs and reports as customer-owned data, separate from exports and
+their Git history. Assessment does not upload data, commit, or push reports
+automatically. See [operator procedures](docs/operations.md) for backup, update,
+and failure handling; never back up tokens or browser profiles.
 
 ### Find your way
 
