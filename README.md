@@ -79,6 +79,34 @@ stopped, so either answer is fine.
 For a guided walkthrough, see [QUICKSTART.md](QUICKSTART.md). For safe updates, runtime
 identity checks, and output backup/restore, see [the operator guide](docs/operations.md).
 
+## Languages
+
+The header language selector is available before and after sign-in. Bundled SVG
+flags and native country/language names identify English, Dutch, French, German,
+Swedish, Spanish, Norwegian Bokmål, European Portuguese, Italian and Danish.
+On the first visit the app matches the browser language, falling back to English;
+a saved choice in this browser takes precedence. Selection works with the keyboard
+and updates the current screen in place without clearing the policy source,
+sign-in, wizard entries, import queue or active job.
+
+The selected language also applies to newly started documentation and Assessment
+jobs. Each job captures its language at admission: switching the interface later
+does not mix languages within its generated output. Existing saved files are not
+rewritten just by changing language. Technical JSON keys, identifiers, typed
+policy values, customer names, Microsoft-provided setting labels and external
+benchmark/control wording remain unchanged. The Windows folder dialog's own
+buttons and identity-provider pages follow the OS/provider language; app-owned
+titles and messages follow the selected language. Contributor documentation and
+developer logs are not translated.
+
+For command-line exports, pass an explicit locale, for example
+`.\IntuneDocsStudio.ps1 -Export -Locale fr-FR -OutputPath C:\IntuneDocs\example-fr`.
+Headless exports default to `en-GB`; the browser preference does not change them.
+
+Translations and flag artwork ship with the application; there are no runtime
+translation-service or CDN requests. See [the language operating notes](docs/operations.md#language-settings-and-output)
+for settings, output and troubleshooting boundaries.
+
 ## Assess configured policies
 
 After policy loading or import, the **Assess policies** path compares read-only policy evidence with

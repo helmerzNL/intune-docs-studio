@@ -1,3 +1,5 @@
+. (Join-Path $PSScriptRoot 'Localization.ps1')
+
 <#
     Http.ps1 — minimal HTTP plumbing for the local dashboard.
 
@@ -113,7 +115,7 @@ function Send-IdsJson {
 function Send-IdsStaticFile {
     param($Response, [string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) {
-        Send-IdsText -Response $Response -Text 'Not found' -Status 404
+        Send-IdsText -Response $Response -Text (Get-IdsText 'text.not_found') -Status 404
         return
     }
     $ext = [IO.Path]::GetExtension($Path).ToLowerInvariant()

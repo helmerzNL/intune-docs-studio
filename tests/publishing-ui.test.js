@@ -5,8 +5,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { installI18n, withoutTranslationSpans } = require('./i18n-test-helpers');
 
-function dashboard(respond = () => ({})) {
+async function dashboard(respond = () => ({})) {
   const elements = new Map();
   const requests = [];
   function element(id) {
@@ -30,19 +31,20 @@ function dashboard(respond = () => ({})) {
     window: { location: { search: '' }, addEventListener() {}, scrollTo() {} },
     URLSearchParams,
     fetch: async (url, options) => {
-      requests.push({ url, payload: options && JSON.parse(options.body) });
+      requests.push({ url, payload: options?.body && JSON.parse(options.body) });
       return { ok: true, status: 200, json: async () => url === '/api/state' ?
         { auth: { connected: true, scopes: [] }, policies: { status: 'ready' }, ...respond(url) } : respond(url) };
     },
     setInterval() {}, clearInterval() {}, setTimeout() {},
     alert(message) { throw new Error(message); }
   });
+  await installI18n(context).ready;
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'web', 'app.js'), 'utf8'), context);
   return { element, requests, context };
 }
 
 test('export sends the selected Azure DevOps repository and branch and commits when pushing', async () => {
-  const { element, requests } = dashboard();
+  const { element, requests } = await dashboard();
   await new Promise(setImmediate);
   element('gitRemoteUrl').value = ' https://dev.azure.com/org/project/_git/docs ';
   element('gitBranch').value = ' docs/update ';
@@ -55,8 +57,8 @@ test('export sends the selected Azure DevOps repository and branch and commits w
   assert.equal(request.payload.gitPush, true);
 });
 
-test('entering a repository enables publishing and pushing keeps commit selected', () => {
-  const { element } = dashboard();
+test('entering a repository enables publishing and pushing keeps commit selected', async () => {
+  const { element } = await dashboard();
   element('gitRemoteUrl').value = 'https://dev.azure.com/org/project/_git/docs';
   element('gitRemoteUrl').handlers.change();
   assert.equal(element('optPush').checked, true);
@@ -66,8 +68,8 @@ test('entering a repository enables publishing and pushing keeps commit selected
   assert.equal(element('optGit').checked, true);
 });
 
-test('sign-out clears the previous tenant publishing destination', () => {
-  const { element, context } = dashboard();
+test('sign-out clears the previous tenant publishing destination', async () => {
+  const { element, context } = await dashboard();
   element('gitRemoteUrl').value = 'https://dev.azure.com/org/project/_git/docs';
   element('gitBranch').value = 'docs';
   vm.runInContext('clearWorkspace()', context);
@@ -77,21 +79,21 @@ test('sign-out clears the previous tenant publishing destination', () => {
   assert.equal(element('optGit').checked, false);
 });
 
-test('a successful retry displays the push even without a new commit', () => {
-  const { element, context } = dashboard();
+test('a successful retry displays the push even without a new commit', async () => {
+  const { element, context } = await dashboard();
   vm.runInContext('renderSummary({ git: { committed: false, pushed: true }, stats: {} })', context);
   assert.match(element('summary').innerHTML, /pushed to remote/i);
 });
 
-test('Git warnings are displayed as text instead of executable HTML', () => {
-  const { element, context } = dashboard();
+test('Git warnings are displayed as text instead of executable HTML', async () => {
+  const { element, context } = await dashboard();
   vm.runInContext('renderSummary({ warnings: ["<script>bad()</script>"], stats: {} })', context);
   assert.doesNotMatch(element('summary').innerHTML, /<script>/);
   assert.match(element('summary').innerHTML, /&lt;script&gt;/);
 });
 
-test('build identity marks beta in the name and title and removes the marker for stable', () => {
-  const { element, context } = dashboard();
+test('build identity marks beta in the name and title and removes the marker for stable', async () => {
+  const { element, context } = await dashboard();
   const render = (build) => vm.runInContext('renderBuild(' + JSON.stringify(build) + ')', context);
   render({ version: '0.1.0', channel: 'beta', commit: 'development' });
   assert.equal(element('appName').textContent, 'Intune Docs Studio (beta)');
@@ -106,7 +108,7 @@ test('build identity marks beta in the name and title and removes the marker for
 });
 test('refreshing state displays the build identity reported by the server', async () => {
   const build = { version: '0.2.0', channel: 'beta', commit: 'development' };
-  const { element, context } = dashboard((url) => (url === '/api/state' ? { build, auth: {} } : {}));
+  const { element, context } = await dashboard((url) => (url === '/api/state' ? { build, auth: {} } : {}));
   await vm.runInContext('refreshState()', context);
   assert.equal(element('appName').textContent, 'Intune Docs Studio (beta)');
   assert.equal(context.document.title, 'Intune Docs Studio (beta)');

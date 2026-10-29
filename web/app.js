@@ -4,8 +4,62 @@ const $ = (id) => document.getElementById(id);
 const escapeHtml = (value) => String(value == null ? '' : value)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+const i18n = window.IdsI18n;
+const t = (key, args) => i18n.t(key, args);
+const h = (key, args) => escapeHtml(t(key, args));
+const number = (value) => i18n.formatNumber(Number(value) || 0);
+const countControls = (count) => t(`count.control_${i18n.plural(count)}`, { count });
+const countPolicies = (count) => t(`count.policy_${i18n.plural(count)}`, { count });
+const sectionKeys = {
+  settingsCatalog: 'section.settingsCatalog', deviceConfigs: 'section.deviceConfigs',
+  deviceConfiguration: 'section.deviceConfigs', admx: 'section.admx', groupPolicyConfigurations: 'section.admx',
+  compliance: 'section.compliance', deviceCompliance: 'section.compliance',
+  endpointSecurity: 'section.endpointSecurity', intent: 'section.endpointSecurity', intents: 'section.endpointSecurity',
+  apps: 'section.apps', appManagement: 'section.appManagement', scripts: 'section.scripts',
+  remediations: 'section.remediations', enrollment: 'section.enrollment',
+  reference: 'section.reference', groups: 'section.groups'
+};
+const sectionLabel = (key, fallback = key) => sectionKeys[key] ? t(sectionKeys[key]) : fallback;
+const inventoryLabel = (key) => ({
+  partial: t('inventory.partial'), complete: t('inventory.full'), full: t('inventory.full')
+})[key] || key || t('text.unknown');
+const classificationLabel = (key) => ({
+  baseline: t('classification.baseline'), recommendations: t('classification.recommendations'), custom: t('classification.custom')
+})[key] || key;
+const queueStatus = (key) => ({
+  queued: t('queue.queued'), importing: t('queue.importing'), completed: t('text.complete'), failed: t('text.failed')
+})[key] || key;
+const scopeKeys = {
+  'DeviceManagementConfiguration.Read.All': 'scope.configuration', 'DeviceManagementApps.Read.All': 'scope.apps',
+  'DeviceManagementServiceConfig.Read.All': 'scope.enrollment', 'DeviceManagementRBAC.Read.All': 'scope.roles',
+  'DeviceManagementManagedDevices.Read.All': 'scope.devices', 'Group.Read.All': 'scope.groups'
+};
+const authMethodLabel = (method) => {
+  const keys = { portal: 'method.portal', browser: 'method.portal', interactive: 'method.interactive', devicecode: 'method.devicecode' };
+  return keys[method] ? t(keys[method]) : method;
+};
+const textBindings = new Map();
+function writeText(element, value) {
+  textBindings.delete(element);
+  element.textContent = value;
+}
+function localizeText(element, render) {
+  const value = render();
+  writeText(element, value);
+  textBindings.set(element, { render, value });
+}
+class UiError extends Error {
+  constructor(render) { super(render()); this.render = render; }
+}
+function showMessage(element, message) {
+  if (typeof message === 'function') localizeText(element, message);
+  else if (message instanceof UiError) localizeText(element, message.render);
+  else writeText(element, typeof message?.message === 'string' ? message.message : message || '');
+}
 const api = async (path, options) => {
-  const res = await fetch(path, options);
+  const res = await fetch(path, {
+    ...options, headers: { ...options?.headers, 'X-Ids-Locale': i18n.locale }
+  });
   let body = null;
   try { body = await res.json(); } catch (e) { body = null; }
   return { ok: res.ok, status: res.status, body };
@@ -31,6 +85,7 @@ let policyReloading = false;
 let sourceImportOpen = false;
 let sourceTransferBusy = false;
 let folderPickerBusy = false;
+let documentSummary = null;
 
 const setHidden = (id, hidden) => {
   if (hidden) $(id).classList.add('hidden');
@@ -105,16 +160,16 @@ function setDocumentStep(step) {
 function showSigninError(message) {
   const el = $('signinError');
   if (!message) { el.classList.add('hidden'); return; }
-  el.textContent = message;
+  showMessage(el, message);
   el.classList.remove('hidden');
 }
 
 function renderBuild(build) {
   if (!build) return;
   const name = 'Intune Docs Studio' + (build.channel === 'stable' ? '' : ' (' + build.channel + ')');
-  $('appName').textContent = name;
+  writeText($('appName'), name);
   document.title = name;
-  $('buildInfo').textContent = 'v' + build.version + ' ' + build.channel;
+  writeText($('buildInfo'), 'v' + build.version + ' ' + build.channel);
 }
 
 async function refreshState() {
@@ -132,7 +187,7 @@ async function refreshState() {
     const operation = body.transfer.operation;
     if (operation === 'import') sourceImportOpen = true;
     const statusId = operation === 'import' ? 'policyImportStatus' : 'policyExportStatus';
-    void transferPolicySource(operation, null, statusId, true).catch((e) => { $(statusId).textContent = e.message; });
+    void transferPolicySource(operation, null, statusId, true).catch((e) => { showMessage($(statusId), e); });
   }
   const policiesArrived = awaitingPolicies && policiesReady();
   if (policiesArrived) {
@@ -147,7 +202,7 @@ async function refreshState() {
   if (policiesArrived) $('homeTitle').focus({ preventScroll: true });
 }
 
-function renderPolicyState() {
+function renderPolicyState(updateTimers = true) {
   const policies = state?.policies || {};
   const waiting = policies.status === 'loading';
   const consent = !!policies.consentRequired;
@@ -155,39 +210,45 @@ function renderPolicyState() {
   const percent = Math.max(0, Math.min(100, Number(policies.percent) || 0));
   $('policyLoadBar').style.width = percent + '%';
   $('policyLoadProgress').setAttribute('aria-valuenow', percent);
-  $('policyLoadPhase').textContent = policies.phase || 'No collection has started';
-  $('policyLoadTitle').textContent = consent && !waiting ? 'Load policies now?' : 'Loading your Intune policies';
+  localizeText($('policyLoadPhase'), () => policies.phase || t("text.no_collection_has_started"));
+  localizeText($('policyLoadTitle'), () => consent && !waiting ? t("text.load_policies_now") : t("text.loading_your_intune_policies"));
   setHidden('policyConsentActions', !consent && !failed);
   setHidden('policyLoadProgress', !waiting);
-  $('policyLoadTenant').textContent = state?.auth?.tenantId ? 'Tenant ' + state.auth.tenantId : '';
-  $('policyLoadError').textContent = policies.error || '';
-  setHidden('policyLoadError', !policies.error);
+  localizeText($('policyLoadTenant'), () => state?.auth?.tenantId ? (t("text.tenant") + " ") + state.auth.tenantId : '');
+  if (updateTimers) {
+    writeText($('policyLoadError'), policies.error || '');
+    setHidden('policyLoadError', !policies.error);
+  }
   setHidden('policyLoadSpinner', !waiting);
   setHidden('btnRetryPolicies', !failed);
   const offline = policies.source?.kind === 'offline';
   const ready = ['ready', 'partial'].includes(policies.status);
-  $('policySummary').textContent = ready ? `${Number(policies.count) || 0} policies · ${offline ? 'Offline import' : 'Live snapshot'}` +
-    ` · Collected: ${policies.capturedAt || 'Unknown'}` +
-    (policies.source?.importedAt ? ` · Imported: ${policies.source.importedAt}` : '') : 'No policies loaded yet';
-  $('policySourceDescription').textContent = offline
-    ? 'Both workflows use this offline source. No Graph or authentication calls are made. Only the five policy families are available; missing evidence and reference names remain explicit.'
-    : ready ? 'Both workflows use this snapshot. Refresh explicitly to read changes from Intune. Other documentation categories are collected during export.'
-      : 'You can stay signed in without loading data. Load live policies or import an existing source to enable documentation and Assessment.';
-  $('btnRefreshPolicies').textContent = offline ? 'Replace with live policies' : ready ? 'Refresh live policies' : 'Load live policies';
+  localizeText($('policySummary'), () => ready ? [
+    [countPolicies(Number(policies.count) || 0), offline ? t("text.offline_import") : t("text.live_snapshot")].join(' · '),
+    t("text.collected_202", { v0: i18n.formatDate(policies.capturedAt) }),
+    ...(policies.source?.importedAt ? [t("text.imported_201", { v0: i18n.formatDate(policies.source.importedAt) })] : [])
+  ].join(' ') : t("text.no_policies_loaded_yet"));
+  localizeText($('policySourceDescription'), () => offline
+    ? t("text.both_workflows_use_this_offline_source_no_graph_or")
+    : ready ? t("text.both_workflows_use_this_snapshot_refresh_explicitly_to_read")
+      : t("text.you_can_stay_signed_in_without_loading_data_load"));
+  localizeText($('btnRefreshPolicies'), () => offline ? t("text.replace_with_live_policies") : ready ? t("text.refresh_live_policies") : t("text.load_live_policies"));
   ['homeDocument', 'homeAssess', 'navDocument', 'navAssess'].forEach((id) => {
     $(id).setAttribute('aria-disabled', ready ? 'false' : 'true');
   });
   $('policyFamilies').innerHTML = (policies.families || []).map((family) =>
-    `<div class="stat"><b>${Number(family.count) || 0}</b><span>${escapeHtml(family.label)}</span>` +
-    (family.complete ? '' : '<p class="muted">Incomplete evidence</p>') + '</div>').join('');
+    `<div class="stat"><b>${number(family.count)}</b><span>${escapeHtml(sectionLabel(family.key || family.family, family.label))}</span>` +
+    (family.complete ? '' : `<p class="muted">${h("text.incomplete_evidence")}</p>`) + '</div>').join('');
   const partial = policies.status === 'partial';
   setHidden('policyLimitations', !partial);
-  $('policyLimitations').textContent = partial ?
-    'Some policies could not be fully read. Assessment keeps incomplete evidence explicit; documentation skips incomplete policy families and preserves previous files. ' +
+  localizeText($('policyLimitations'), () => partial ?
+    (t("text.some_policies_could_not_be_fully_read_assessment_keeps") + " ") +
       (policies.issues || []).map((issue) =>
-        `${issue.family}: ${issue.stage} — ${issue.reason}${issue.statusCode ? ` (HTTP ${issue.statusCode})` : ''}`).join('\n') : '';
-  if (waiting && !failed && !policyTimer) policyTimer = setInterval(pollPolicyState, 1000);
-  if (!waiting || failed) { clearInterval(policyTimer); policyTimer = null; }
+        `${issue.family}: ${issue.stage} — ${issue.reason}${issue.statusCode ? ` (HTTP ${issue.statusCode})` : ''}`).join('\n') : '');
+  if (updateTimers) {
+    if (waiting && !failed && !policyTimer) policyTimer = setInterval(pollPolicyState, 1000);
+    if (!waiting || failed) { clearInterval(policyTimer); policyTimer = null; }
+  }
 }
 
 async function pollPolicyState() {
@@ -197,7 +258,7 @@ async function pollPolicyState() {
   try { await refreshState(); }
   catch (e) {
     if (generation === workspaceGeneration) {
-      $('policyLoadError').textContent = 'Policy progress is unavailable. Checking the local server again…';
+      localizeText($('policyLoadError'), () => t("text.policy_progress_is_unavailable_checking_the_local_server_again"));
       setHidden('policyLoadError', false);
     }
   } finally { if (generation === workspaceGeneration) policyPolling = false; }
@@ -206,7 +267,7 @@ async function pollPolicyState() {
 async function reloadPolicies() {
   if (policyReloading || exportBusy || assessmentBusy || !state?.auth?.connected) return;
   const replace = ['ready', 'partial'].includes(state?.policies?.status);
-  if (replace && !confirm('Replace the active policy source with a new live collection? Assessment results will be cleared.')) return;
+  if (replace && !confirm(t("text.replace_the_active_policy_source_with_a_new_live"))) return;
   const generation = workspaceGeneration;
   policyReloading = true;
   syncJobAdmission();
@@ -214,15 +275,15 @@ async function reloadPolicies() {
     const r = await post('/api/policies/reload', { replace });
     if (generation !== workspaceGeneration) return;
     if (assessmentSessionFailure(r)) return;
-    if (!r.ok) throw new Error(r.body?.error || 'Could not reload policies.');
+    if (!r.ok) throw new UiError(() => r.body?.error || t("text.could_not_reload_policies"));
     state.policies = { status: 'loading', percent: 0 };
     clearAssessment();
-    $('policyRefreshError').textContent = '';
+    writeText($('policyRefreshError'), '');
     setHidden('policyRefreshError', true);
   } catch (e) {
     if (generation !== workspaceGeneration) return;
     ['policyLoadError', 'policyRefreshError'].forEach((id) => {
-      $(id).textContent = e.message; setHidden(id, false);
+      showMessage($(id), e); setHidden(id, false);
     });
   } finally {
     if (generation === workspaceGeneration) { policyReloading = false; syncJobAdmission(); }
@@ -239,7 +300,7 @@ $('btnRefreshPolicies').addEventListener('click', reloadPolicies);
 $('btnLoadPolicies').addEventListener('click', reloadPolicies);
 $('btnPoliciesNotNow').addEventListener('click', async () => {
   const r = await post('/api/policies/decline');
-  if (!r.ok) { $('policyLoadError').textContent = r.body?.error || 'Could not save your choice.'; setHidden('policyLoadError', false); return; }
+  if (!r.ok) { localizeText($('policyLoadError'), () => r.body?.error || t("text.could_not_save_your_choice")); setHidden('policyLoadError', false); return; }
   await refreshState();
   $('homeTitle').focus({ preventScroll: true });
 });
@@ -247,22 +308,22 @@ $('btnPoliciesNotNow').addEventListener('click', async () => {
 const waitForLocalJob = () => new Promise((resolve) => setTimeout(resolve, 300));
 
 async function chooseHostFolder(inputId, statusId) {
-  if (folderPickerBusy) throw new Error('A folder dialog is already open on the application host.');
+  if (folderPickerBusy) throw new UiError(() => t("text.a_folder_dialog_is_already_open_on_the_application"));
   folderPickerBusy = true;
-  $(statusId).textContent = 'Choose a folder in the Windows dialog on the application host. Cancel keeps the current path.';
+  localizeText($(statusId), () => t("text.choose_a_folder_in_the_windows_dialog_on_the"));
   try {
     const started = await post('/api/folders/picker', { initialPath: $(inputId).value });
-    if (!started.ok) throw new Error(started.body?.error || 'Could not open folder selection.');
+    if (!started.ok) throw new UiError(() => started.body?.error || t("text.could_not_open_folder_selection"));
     while (true) {
       const r = await api('/api/folders/picker');
-      if (!r.ok) throw new Error(r.body?.error || 'Folder selection is unavailable.');
+      if (!r.ok) throw new UiError(() => r.body?.error || t("text.folder_selection_is_unavailable"));
       if (r.body?.status === 'selected') {
         $(inputId).value = r.body.path;
-        $(statusId).textContent = 'Host folder selected.';
+        localizeText($(statusId), () => t("text.host_folder_selected"));
         return r.body.path;
       }
-      if (r.body?.status === 'cancelled') { $(statusId).textContent = 'Folder selection cancelled; current path unchanged.'; return null; }
-      if (r.body?.status !== 'running') throw new Error(r.body?.error || 'Folder selection ended unexpectedly. Enter the host path manually.');
+      if (r.body?.status === 'cancelled') { localizeText($(statusId), () => t("text.folder_selection_cancelled_current_path_unchanged")); return null; }
+      if (r.body?.status !== 'running') throw new UiError(() => r.body?.error || t("text.folder_selection_ended_unexpectedly_enter_the_host_path_manually"));
       await waitForLocalJob();
     }
   } finally { folderPickerBusy = false; }
@@ -294,7 +355,7 @@ for (const [button, input, status] of [
 ]) {
   $(button).addEventListener('click', async () => {
     try { await chooseHostFolder(input, status); }
-    catch (e) { $(status).textContent = e.message; }
+    catch (e) { showMessage($(status), e); }
   });
 }
 
@@ -302,18 +363,18 @@ async function transferPolicySource(operation, payload, statusId, resume = false
   if (sourceTransferBusy || exportBusy || assessmentBusy || assessmentImporting) return;
   sourceTransferBusy = true;
   syncJobAdmission();
-  $(statusId).textContent = operation === 'import' ? 'Reading and validating policy files…' : 'Writing policy JSON files…';
+  localizeText($(statusId), () => operation === 'import' ? t("text.reading_and_validating_policy_files") : t("text.writing_policy_json_files"));
   try {
     if (!resume) {
       const started = await post(`/api/policies/${operation}`, payload);
-      if (!started.ok) throw new Error(started.body?.error || 'Could not start policy transfer.');
+      if (!started.ok) throw new UiError(() => started.body?.error || t("text.could_not_start_policy_transfer"));
     }
     while (true) {
       const r = await api('/api/policies/transfer');
-      if (!r.ok || r.body?.status === 'failed') throw new Error(r.body?.error || 'Policy transfer failed.');
-      $(statusId).textContent = r.body?.phase || 'Working…';
+      if (!r.ok || r.body?.status === 'failed') throw new UiError(() => r.body?.error || t("text.policy_transfer_failed"));
+      writeText($(statusId), r.body?.phase || 'Working…');
       if (r.body?.status === 'completed') {
-        $(statusId).textContent = operation === 'export' ? `Policy set written to ${r.body.result?.path}` : 'Policy set imported.';
+        localizeText($(statusId), () => operation === 'export' ? t("text.policy_set_written_to", { v0: r.body.result?.path }) : t("text.policy_set_imported"));
         if (operation === 'import') {
           sourceImportOpen = false;
           clearWorkspace();
@@ -321,7 +382,7 @@ async function transferPolicySource(operation, payload, statusId, resume = false
         }
         break;
       }
-      if (!r.body?.running) throw new Error('Policy transfer ended without a completed result.');
+      if (!r.body?.running) throw new UiError(() => t("text.policy_transfer_ended_without_a_completed_result"));
       await waitForLocalJob();
     }
   } finally {
@@ -331,26 +392,26 @@ async function transferPolicySource(operation, payload, statusId, resume = false
 $('btnImportPolicySource').addEventListener('click', async () => {
   try {
     const replace = ['ready', 'partial'].includes(state?.policies?.status);
-    if (replace && !confirm('Replace the active policy source? Existing Assessment results will be cleared; saved report files remain unchanged.')) return;
+    if (replace && !confirm(t("text.replace_the_active_policy_source_existing_assessment_results_will"))) return;
     const file = $('policyImportZip').files[0];
     let payload;
     if (file) {
-      if (!file.size || file.size > 32 * 1024 * 1024 || !/\.zip$/i.test(file.name)) throw new Error('Choose a nonempty policy ZIP, at most 32 MiB.');
+      if (!file.size || file.size > 32 * 1024 * 1024 || !/\.zip$/i.test(file.name)) throw new UiError(() => t("text.choose_a_nonempty_policy_zip_at_most_32_mib"));
       payload = { archive: assessmentArchiveBase64(await file.arrayBuffer()), replace };
     } else {
       const path = $('policyImportPath').value.trim();
-      if (!path) throw new Error('Choose a policy ZIP or enter a host folder path.');
+      if (!path) throw new UiError(() => t("text.choose_a_policy_zip_or_enter_a_host_folder"));
       payload = { path, replace };
     }
     setHidden('policyImportError', true);
     await transferPolicySource('import', payload, 'policyImportStatus');
-  } catch (e) { $('policyImportError').textContent = e.message; setHidden('policyImportError', false); }
+  } catch (e) { showMessage($('policyImportError'), e); setHidden('policyImportError', false); }
 });
 $('btnExportPolicySource').addEventListener('click', async () => {
   try {
-    if (!policiesReady()) throw new Error('Load or import policies before exporting a policy set.');
+    if (!policiesReady()) throw new UiError(() => t("text.load_or_import_policies_before_exporting_a_policy_set"));
     await transferPolicySource('export', { path: $('policyExportPath').value.trim() }, 'policyExportStatus');
-  } catch (e) { $('policyExportStatus').textContent = e.message; }
+  } catch (e) { showMessage($('policyExportStatus'), e); }
 });
 
 function renderClients() {
@@ -359,11 +420,15 @@ function renderClients() {
   state.clients.forEach((c) => {
     const opt = document.createElement('option');
     opt.value = c.key;
-    opt.textContent = c.name;
+    writeText(opt, c.name);
     opt.dataset.note = c.note || '';
     sel.appendChild(opt);
   });
-  const setNote = () => { $('clientNote').textContent = sel.selectedOptions[0].dataset.note; };
+  const setNote = () => {
+    const key = sel.value || sel.selectedOptions[0]?.value;
+    localizeText($('clientNote'), () => ['graphcli', 'azurecli', 'intuneps'].includes(key)
+      ? t(`client.${key}`) : sel.selectedOptions[0]?.dataset.note || '');
+  };
   sel.addEventListener('change', setNote);
   setNote();
 }
@@ -381,8 +446,22 @@ function renderSections() {
   state.sections.forEach((s) => {
     const label = document.createElement('label');
     label.className = 'check';
-    label.innerHTML = `<input type="checkbox" value="${escapeHtml(s.key)}" ${s.available === false ? 'disabled' : 'checked'}><span>${escapeHtml(s.label)}${s.available === false ? ' (unavailable offline)' : ''}</span>`;
+    label.innerHTML = `<input type="checkbox" value="${escapeHtml(s.key)}" ${s.available === false ? 'disabled' : 'checked'}><span>${escapeHtml(sectionLabel(s.key, s.label))}${s.available === false ? ' ' + h("text.unavailable_offline") : ''}</span>`;
     host.appendChild(label);
+  });
+}
+
+function renderScopes() {
+  const host = $('scopeList');
+  host.innerHTML = '';
+  (state?.auth?.scopes || []).forEach((scope) => {
+    const row = document.createElement('div');
+    row.className = 'scope';
+    const impact = scopeKeys[scope.scope] ? t(scopeKeys[scope.scope]) : scope.impact;
+    row.innerHTML = `<span class="dot ${scope.granted ? 'on' : 'off'}"></span>
+      <span><code>${escapeHtml(scope.scope)}</code></span>
+      <span class="impact">${escapeHtml(impact)}${scope.granted ? '' : ' — ' + h("text.may_be_incomplete")}</span>`;
+    host.appendChild(row);
   });
 }
 
@@ -399,31 +478,22 @@ function renderAuth() {
   const badge = $('connBadge');
 
   if (auth.connected) {
-    badge.textContent = auth.account || 'Connected';
+    localizeText(badge, () => auth.account || t("text.connected"));
     badge.className = 'badge badge-on';
-    $('homeGreeting').textContent = 'Welcome' + (auth.account ? ', ' + auth.account : '');
-    $('homeTenant').textContent = auth.tenantId ? 'Tenant ' + auth.tenantId : '';
+    localizeText($('homeGreeting'), () => t("text.welcome") + (auth.account ? ', ' + auth.account : ''));
+    localizeText($('homeTenant'), () => auth.tenantId ? (t("text.tenant") + " ") + auth.tenantId : '');
     $('signinPane').classList.add('hidden');
     $('connectedPane').classList.remove('hidden');
     $('cardConfigure').classList.remove('disabled');
-    $('cAccount').textContent = auth.account || '—';
-    $('cTenant').textContent = auth.tenantId || '—';
-    $('cClient').textContent = auth.client || '—';
-    $('cMethod').textContent = auth.method || '—';
+    writeText($('cAccount'), auth.account || '—');
+    writeText($('cTenant'), auth.tenantId || '—');
+    writeText($('cClient'), auth.client || '—');
+    localizeText($('cMethod'), () => authMethodLabel(auth.method) || '—');
     if (policiesReady()) checkFolder();
 
-    const host = $('scopeList');
-    host.innerHTML = '';
-    (auth.scopes || []).forEach((s) => {
-      const div = document.createElement('div');
-      div.className = 'scope';
-      div.innerHTML = `<span class="dot ${s.granted ? 'on' : 'off'}"></span>
-        <span><code>${s.scope}</code></span>
-        <span class="impact">${s.granted ? s.impact : 'missing — ' + s.impact + ' may be incomplete'}</span>`;
-      host.appendChild(div);
-    });
+    renderScopes();
   } else {
-    badge.textContent = 'Not connected';
+    localizeText(badge, () => t("text.not_connected"));
     badge.className = 'badge badge-off';
     $('signinPane').classList.remove('hidden');
     $('connectedPane').classList.add('hidden');
@@ -431,10 +501,10 @@ function renderAuth() {
     else $('cardConfigure').classList.add('disabled');
   }
   if (state.policies?.source?.kind === 'offline') {
-    $('homeGreeting').textContent = 'Offline policy workspace';
-    $('homeTenant').textContent = state.policies.tenant?.name || 'Environment name unavailable';
+    localizeText($('homeGreeting'), () => t("text.offline_policy_workspace"));
+    localizeText($('homeTenant'), () => state.policies.tenant?.name || t("text.environment_name_unavailable"));
   } else if (!policiesReady()) {
-    $('homeGreeting').textContent = 'Welcome';
+    localizeText($('homeGreeting'), () => t("text.welcome"));
   }
   if (state.pendingError) showSigninError(state.pendingError);
   renderRoute();
@@ -446,7 +516,7 @@ $('btnBrowser').addEventListener('click', async () => {
   const btn = $('btnBrowser');
   btn.disabled = true;
   $('browserStatus').classList.remove('hidden');
-  $('bsText').textContent = 'Starting browser…';
+  localizeText($('bsText'), () => t("text.starting_browser"));
 
   await post('/api/signin/browser', {
     tenant: $('tenant').value.trim(),
@@ -456,7 +526,7 @@ $('btnBrowser').addEventListener('click', async () => {
   const timer = setInterval(async () => {
     const r = await api('/api/signin/browser/status');
     if (!r.body) return;
-    if (r.body.status) $('bsText').textContent = r.body.status;
+    if (r.body.status) writeText($('bsText'), r.body.status);
     if (r.body.error) {
       clearInterval(timer);
       btn.disabled = false;
@@ -477,7 +547,7 @@ $('btnForget').addEventListener('click', async () => {
   clearAssessment();
   await post('/api/signin/browser/forget');
   await refreshState();
-  $('bsText').textContent = 'Saved browser session cleared.';
+  localizeText($('bsText'), () => t("text.saved_browser_session_cleared"));
   $('browserStatus').classList.remove('hidden');
   setTimeout(() => $('browserStatus').classList.add('hidden'), 2500);
 });
@@ -490,7 +560,7 @@ $('btnInteractive').addEventListener('click', async () => {
     client: $('client').value
   });
   if (body && body.url) { window.location.href = body.url; }
-  else { showSigninError('Could not start sign-in.'); }
+  else { showSigninError(() => t("text.could_not_start_signin")); }
 });
 
 $('btnDeviceCode').addEventListener('click', async () => {
@@ -500,11 +570,11 @@ $('btnDeviceCode').addEventListener('click', async () => {
     tenant: $('tenant').value.trim() || 'organizations',
     client: $('client').value
   });
-  if (!body || body.error) { showSigninError(body ? body.error : 'Device code request failed.'); return; }
+  if (!body || body.error) { showSigninError(() => body ? body.error : t("text.device_code_request_failed")); return; }
 
-  $('dcUri').textContent = body.verificationUri;
+  writeText($('dcUri'), body.verificationUri);
   $('dcUri').href = body.verificationUri;
-  $('dcCode').textContent = body.userCode;
+  writeText($('dcCode'), body.userCode);
   $('deviceCodePane').classList.remove('hidden');
 
   clearInterval(deviceTimer);
@@ -518,7 +588,7 @@ $('btnDeviceCode').addEventListener('click', async () => {
     } else if (['declined', 'expired', 'error'].includes(r.body.status)) {
       clearInterval(deviceTimer);
       $('deviceCodePane').classList.add('hidden');
-      showSigninError(r.body.message || ('Sign-in ' + r.body.status));
+      showSigninError(() => r.body.message || (() => t(`signin.${r.body.status}`)));
     }
   }, 3000);
 });
@@ -535,10 +605,10 @@ $('btnMgGraph').addEventListener('click', async () => {
   clearAssessment();
   showSigninError(null);
   $('btnMgGraph').disabled = true;
-  $('btnMgGraph').textContent = 'Check the sign-in window…';
+  localizeText($('btnMgGraph'), () => t("text.check_the_signin_window"));
   const { body } = await post('/api/signin/mggraph', { tenant: $('tenant').value.trim() });
   $('btnMgGraph').disabled = false;
-  $('btnMgGraph').textContent = 'Use Graph PowerShell session';
+  localizeText($('btnMgGraph'), () => t("text.use_graph_powershell_session"));
   if (body && body.error) { showSigninError(body.error); return; }
   await refreshState();
 });
@@ -551,7 +621,7 @@ function clearWorkspace() {
   policyPolling = false;
   policyReloading = false;
   ['policySummary', 'policyFamilies', 'policyLimitations', 'policyRefreshError', 'policyLoadError', 'policyLoadTenant'].forEach((id) => {
-    $(id).textContent = '';
+    writeText($(id), '');
   });
   $('policyFamilies').innerHTML = '';
   setHidden('policyRefreshError', true);
@@ -560,13 +630,14 @@ function clearWorkspace() {
   clearAssessment();
   clearInterval(logTimer);
   logCursor = 0;
-  $('log').textContent = '';
+  writeText($('log'), '');
   $('summary').innerHTML = '';
+  documentSummary = null;
   $('fileList').innerHTML = '';
-  $('preview').textContent = 'Select a file to preview.';
+  localizeText($('preview'), () => t("text.select_a_file_to_preview"));
   $('bar').style.width = '0%';
-  $('phase').textContent = '';
-  $('pct').textContent = '';
+  writeText($('phase'), '');
+  writeText($('pct'), '');
   $('cardRun').classList.add('hidden');
   $('cardResult').classList.add('hidden');
   $('folderWarn').classList.add('hidden');
@@ -602,8 +673,8 @@ async function checkFolder() {
   if (generation !== workspaceGeneration || path !== $('outputPath').value.trim()) return;
   const el = $('folderWarn');
   if (body && body.conflict) {
-    el.innerHTML = body.conflict +
-      (body.suggestion ? ` <button class="linkbtn" id="btnUseSuggestion">use ${body.suggestion}</button>` : '');
+    el.innerHTML = escapeHtml(body.conflict) +
+      (body.suggestion ? ` <button class="linkbtn" id="btnUseSuggestion">${h("text.use", { v0: body.suggestion })}</button>` : '');
     el.classList.remove('hidden');
     const b = $('btnUseSuggestion');
     if (b) b.addEventListener('click', () => {
@@ -635,10 +706,10 @@ $('btnAll').addEventListener('click', () => sectionBoxes().forEach((b) => { b.ch
 $('btnNone').addEventListener('click', () => sectionBoxes().forEach((b) => { b.checked = false; }));
 
 $('btnExport').addEventListener('click', async () => {
-  if (!policiesReady()) { alert('Load policies before documenting.'); return; }
-  if (assessmentBusy || exportBusy) { alert('An export or assessment is already running.'); return; }
+  if (!policiesReady()) { alert(t("text.load_policies_before_documenting")); return; }
+  if (assessmentBusy || exportBusy) { alert(t("text.an_export_or_assessment_is_already_running")); return; }
   const sections = sectionBoxes().filter((b) => b.checked).map((b) => b.value);
-  if (!sections.length) { alert('Select at least one area to document.'); return; }
+  if (!sections.length) { alert(t("text.select_at_least_one_area_to_document")); return; }
 
   const payload = {
     outputPath: $('outputPath').value.trim(),
@@ -671,12 +742,12 @@ $('btnExport').addEventListener('click', async () => {
   if (!response.ok || (body && body.error)) {
     exportBusy = false;
     syncJobAdmission();
-    alert(body?.error || 'Export request failed.');
+    alert(body?.error || t("text.export_request_failed"));
     return;
   }
 
   logCursor = 0;
-  $('log').textContent = '';
+  writeText($('log'), '');
   $('cardRun').classList.remove('hidden');
   $('cardResult').classList.add('hidden');
   $('cardConfigure').classList.add('disabled');
@@ -701,7 +772,7 @@ async function pollLog() {
   (body.entries || []).forEach((e) => {
     const span = document.createElement('span');
     if (e.level && e.level !== 'info') span.className = e.level;
-    span.textContent = `[${e.time}] ${e.message}\n`;
+    writeText(span, `[${e.time}] ${e.message}\n`);
     $('log').appendChild(span);
   });
   if (body.entries && body.entries.length) {
@@ -710,8 +781,8 @@ async function pollLog() {
   }
 
   $('bar').style.width = (body.percent || 0) + '%';
-  $('phase').textContent = body.phase || '';
-  $('pct').textContent = body.percent ? `· ${body.percent}%` : '';
+  writeText($('phase'), body.phase || '');
+  writeText($('pct'), body.percent ? `· ${i18n.formatNumber(body.percent / 100, { style: 'percent' })}` : '');
 
   if (body.done) {
     clearInterval(logTimer);
@@ -720,7 +791,7 @@ async function pollLog() {
     $('cardConfigure').classList.remove('disabled');
     setDocumentStep('review');
     if (body.error) {
-      $('phase').textContent = 'Failed';
+      localizeText($('phase'), () => t("text.failed"));
       $('summary').innerHTML = `<div class="error">${escapeHtml(body.error)}</div>`;
       $('cardResult').classList.remove('hidden');
     } else if (body.summary) {
@@ -735,31 +806,32 @@ async function pollLog() {
 // --- Results ---------------------------------------------------------------
 
 function renderSummary(s) {
+  documentSummary = s;
   const st = s.stats || {};
   const counts = s.counts || {};
   let html = `<div class="stats">
-    <div class="stat"><b>${st.created || 0}</b><span>created</span></div>
-    <div class="stat"><b>${st.updated || 0}</b><span>updated</span></div>
-    <div class="stat"><b>${st.unchanged || 0}</b><span>unchanged</span></div>
-    <div class="stat"><b>${st.deleted || 0}</b><span>removed</span></div>
+    <div class="stat"><b>${number(st.created)}</b><span>${h("text.created")}</span></div>
+    <div class="stat"><b>${number(st.updated)}</b><span>${h("text.updated")}</span></div>
+    <div class="stat"><b>${number(st.unchanged)}</b><span>${h("text.unchanged")}</span></div>
+    <div class="stat"><b>${number(st.deleted)}</b><span>${h("text.removed")}</span></div>
   </div>`;
 
-  html += `<p class="muted">Output: <code>${escapeHtml(s.root)}</code></p>`;
+  html += `<p class="muted">${h("text.output")} <code>${escapeHtml(s.root)}</code></p>`;
 
-  html += '<table class="counts">';
+  html += `<table class="counts">`;
   Object.keys(counts).forEach((k) => {
-    html += `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(counts[k])}</td></tr>`;
+    html += `<tr><td>${escapeHtml(k)}</td><td>${typeof counts[k] === 'number' ? number(counts[k]) : escapeHtml(counts[k])}</td></tr>`;
   });
   html += '</table>';
 
   if (s.git) {
     html += s.git.committed
-      ? `<p class="muted">Committed: <code>${escapeHtml(s.git.message)}</code></p>`
-      : '<p class="muted">No configuration changes since the last export &mdash; nothing committed.</p>';
-    if (s.git.pushed) html += '<p class="muted">Successfully pushed to remote.</p>';
+      ? `<p class="muted">${h("text.committed")} <code>${escapeHtml(s.git.message)}</code></p>`
+      : `<p class="muted">${h("text.no_configuration_changes_since_the_last_export_mdash_nothing")}</p>`;
+    if (s.git.pushed) html += `<p class="muted">${h("text.successfully_pushed_to_remote")}</p>`;
   }
   if (s.warnings && s.warnings.length) {
-    html += '<h4 class="section-label">Warnings</h4><ul class="muted">' + s.warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join('') + '</ul>';
+    html += `<h4 class="section-label">${h("text.warnings")}</h4><ul class="muted">` + s.warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join('') + '</ul>';
   }
   $('summary').innerHTML = html;
 }
@@ -773,13 +845,13 @@ async function loadFiles() {
   if (!body || !body.files) return;
   body.files.forEach((f) => {
     const btn = document.createElement('button');
-    btn.textContent = f.path;
+    writeText(btn, f.path);
     btn.addEventListener('click', async () => {
       Array.from(host.children).forEach((c) => c.classList.remove('active'));
       btn.classList.add('active');
       const r = await api('/api/file?path=' + encodeURIComponent(f.path));
       if (generation !== workspaceGeneration) return;
-      $('preview').textContent = r.body && r.body.content ? r.body.content : '(unable to read file)';
+      localizeText($('preview'), () => r.body && r.body.content ? r.body.content : t("text.unable_to_read_file"));
       $('preview').scrollTop = 0;
     });
     host.appendChild(btn);
@@ -790,21 +862,21 @@ $('btnOpen').addEventListener('click', () => post('/api/open'));
 
 $('btnQuit').addEventListener('click', async () => {
   if (exportBusy || assessmentBusy) {
-    alert('An export or assessment is still running. Wait for it to finish before stopping the server.');
+    alert(t("text.an_export_or_assessment_is_still_running_wait_for"));
     return;
   }
-  if (!confirm('Stop the Intune Docs Studio server?')) return;
+  if (!confirm(t("text.stop_the_intune_docs_studio_server"))) return;
   try {
     const r = await post('/api/quit');
-    if (!r.ok || r.body?.error) { alert(r.body?.error || 'The server could not stop.'); return; }
+    if (!r.ok || r.body?.error) { alert(r.body?.error || t("text.the_server_could_not_stop")); return; }
   } catch (e) { /* the server goes away mid-request */ }
   clearInterval(logTimer);
   clearInterval(deviceTimer);
   clearAssessment();
   document.body.innerHTML =
-    '<main class="stopped"><span class="mark" aria-hidden="true"></span>' +
-    '<h2>Intune Docs Studio has stopped.</h2>' +
-    '<p>You can close this tab. Run <code>Start-IntuneDocs.cmd</code> to start it again.</p></main>';
+    `<main class="stopped"><span class="mark" aria-hidden="true"></span>` +
+    `<h2>${h("text.intune_docs_studio_has_stopped")}</h2>` +
+    `<p>${h("text.you_can_close_this_tab_run")} <code>Start-IntuneDocs.cmd</code> ${h("text.to_start_it_again")}</p></main>`;
 });
 $('btnAgain').addEventListener('click', () => {
   $('cardResult').classList.add('hidden');
@@ -816,15 +888,10 @@ $('btnAgain').addEventListener('click', () => {
 // --- Assessment ------------------------------------------------------------
 
 const assessmentStatuses = {
-  aligned: 'Aligned', misaligned: 'Misaligned', missing: 'Missing',
-  potentialConflict: 'Potential conflict', notApplicable: 'Not applicable', notAssessed: 'Not assessed'
+  get aligned() { return t("text.aligned"); }, get misaligned() { return t("text.misaligned"); }, get missing() { return t("text.missing"); },
+  get potentialConflict() { return t("text.potential_conflict"); }, get notApplicable() { return t("text.not_applicable"); }, get notAssessed() { return t("text.not_assessed"); }
 };
-const assessmentLimits = 'Configuration alignment only, not device compliance or certification. ' +
-  'Missing means absent/not configured only in the mapped families and policy types read completely for that rule, not tenant-wide absence. ' +
-  'Potential conflict means differing configured values, not proven targeting overlap or an Intune conflict. ' +
-  'Unassigned policies do not establish device coverage; groups, exclusions and filters are not resolved. ' +
-  'Partial inventories cover listed checks only, not a full baseline or benchmark. ' +
-  'User-selected context is not discovered device inventory. Unknown applicability remains not assessed.';
+const assessmentLimits = () => t("text.configuration_alignment_only_not_device_compliance_or_certification_missing");
 let assessmentResult = null;
 let assessmentPacks = [];
 let assessmentGeneration = 0;
@@ -844,24 +911,17 @@ const assessmentPackBoxes = () => Array.from(document.querySelectorAll('#assessm
 const assessmentPlatformBoxes = () => Array.from(document.querySelectorAll('#assessmentPlatforms input'));
 const assessmentIdentity = (p) => `${p.id}@${p.version}#${p.sha256}`;
 const assessmentText = (value) => escapeHtml(typeof value === 'string' ? value : JSON.stringify(value));
-const assessmentPercent = (value) => value == null ? 'not available' : escapeHtml(value) + '%';
+const assessmentValue = (value) => typeof value === 'string' ? value : JSON.stringify(value);
+const assessmentPercent = (value) => value == null ? t("text.not_available") :
+  i18n.formatNumber(Number(value) / 100, { style: 'percent', maximumFractionDigits: 2 });
 
 function renderAssessmentPacks(catalog) {
   const selected = new Set(assessmentPackBoxes().filter((b) => b.checked).map((b) => b.value));
   const platforms = new Set(assessmentPlatformBoxes().filter((b) => b.checked).map((b) => b.value));
   assessmentPacks = catalog.packs || [];
   assessmentCatalogIssues = catalog.errors || [];
-  $('assessmentCatalogNote').textContent =
-    'CIS content is never bundled or downloaded. Import your own licensed CIS Intune build-kit ZIP or a ' +
-    'schema-1 JSON rule pack below; PDF and Excel benchmarks are not supported. ' +
-    'Choose platforms first; unavailable pack combinations cannot run until a suitable pack is imported. ' +
-    'The Microsoft catalog contains five bundled checks total, all partial inventories: ' +
-    'Windows 26H2 has two shell SmartScreen atomic checks, legacy Endpoint Protection only (Graph beta), not modern baseline/Settings Catalog coverage. ' +
-    'macOS has one FileVault enablement check, legacy Endpoint Protection on Graph beta; the template is deprecated, not current-template, recovery-key or encryption compliance coverage. ' +
-    'iOS/iPadOS has one personal level 1 passcode check, legacy device restrictions only, not organization-owned coverage. ' +
-    'Android has one personally-owned work profile level 2 encryption compliance requirement check, not organization-owned profiles or discovered device encryption. ' +
-    'Unknown OS/enrollment applicability is not assessed; no full-baseline or device-compliance claim.';
-  $('assessmentCatalogErrors').textContent = assessmentCatalogIssues.map((e) => `${e.origin}: ${e.reason}`).join('\n');
+  localizeText($('assessmentCatalogNote'), () => t("text.cis_content_is_never_bundled_or_downloaded_import_your"));
+  writeText($('assessmentCatalogErrors'), assessmentCatalogIssues.map((e) => `${e.origin}: ${e.reason}`).join('\n'));
   $('assessmentPlatforms').innerHTML = '';
   Object.entries(assessmentPlatforms).forEach(([key, name]) => {
     const available = assessmentPacks.some((p) => p.platform === key);
@@ -874,7 +934,7 @@ function renderAssessmentPacks(catalog) {
     box.checked = platforms.has(key);
     box.addEventListener('change', updateAssessmentSelection);
     const text = document.createElement('span');
-    text.textContent = name + (available ? '' : ' — no library packs yet; import after Next');
+    localizeText(text, () => name + (available ? '' : (" " + t("text.no_library_packs_yet_import_after_next"))));
     label.appendChild(box);
     label.appendChild(text);
     $('assessmentPlatforms').appendChild(label);
@@ -887,9 +947,9 @@ function renderAssessmentPacks(catalog) {
     const option = document.createElement('option');
     option.value = value;
     const pack = assessmentPacks.find((p) => assessmentIdentity(p) === value);
-    option.textContent = pack
-      ? `${pack.profile} — ${pack.framework} / ${pack.frameworkVersion || pack.id} (${pack.id}) · ${pack.origin === 'imported' ? 'Imported' : 'Bundled'} · ${pack.version}`
-      : 'All available profiles (select packs below)';
+    localizeText(option, () => pack
+      ? `${pack.profile} — ${pack.framework} / ${pack.frameworkVersion || pack.id} (${pack.id}) · ${pack.origin === 'imported' ? t("text.imported") : t("text.bundled")} · ${pack.version}`
+      : t("text.all_available_profiles_select_packs_below"));
     profile.appendChild(option);
   });
   profile.value = profiles.includes(previous) ? previous : '';
@@ -900,22 +960,22 @@ function renderAssessmentPacks(catalog) {
     const box = document.createElement('input');
     box.type = 'checkbox';
     box.value = assessmentIdentity(p);
-    box.setAttribute('aria-label', `Select ${p.framework} ${p.profile}, ${p.id} version ${p.version}`);
+    box.setAttribute('aria-label', t("text.select_version", { v0: p.framework, v1: p.profile, v2: p.id, v3: p.version }));
     box.checked = selected.has(box.value);
     box.addEventListener('change', updateAssessmentSelection);
     const text = document.createElement('span');
     const classification = p.origin === 'imported'
-      ? `${p.framework} — customer-imported local pack; author-declared ${p.classification}`
-      : p.origin !== 'bundled' ? `${p.framework} — unverified origin; author-declared ${p.classification}`
+      ? t("text.customerimported_local_pack_authordeclared", { v0: p.framework, v1: classificationLabel(p.classification) })
+      : p.origin !== 'bundled' ? t("text.unverified_origin_authordeclared", { v0: p.framework, v1: classificationLabel(p.classification) })
       : p.framework === 'Microsoft' ? (p.classification === 'baseline'
-        ? 'Official Microsoft security baseline — partial mapped checks' : 'Microsoft recommendations')
-        : `${p.framework} — local rule pack`;
+        ? t("text.official_microsoft_security_baseline_partial_mapped_checks") : t("text.microsoft_recommendations"))
+        : t("text.local_rule_pack", { v0: p.framework });
     text.innerHTML = `<strong>${escapeHtml(p.framework)} · ${escapeHtml(p.profile)}</strong>
-      <small>${escapeHtml(assessmentPlatforms[p.platform])} · ${escapeHtml(p.frameworkVersion)} · Version ${escapeHtml(p.version)}</small>
-      <span class="badge">${p.origin === 'imported' ? 'Imported' : 'Bundled'}</span>
+      <small>${h("text.version", { v2: assessmentPlatforms[p.platform], v3: p.frameworkVersion, v4: p.version })}</small>
+      <span class="badge">${p.origin === 'imported' ? t("text.imported") : t("text.bundled")}</span>
       <small>${escapeHtml(classification)}</small>
-      <small>${escapeHtml(p.coverage?.inventory)} inventory · source total ${escapeHtml(p.coverage?.totalSourceControls ?? 'unknown')}</small>
-      <details class="pack-technical"><summary>Identity and source details</summary>
+      <small>${h("text.inventory_source_total", { v7: inventoryLabel(p.coverage?.inventory), v8: p.coverage?.totalSourceControls ?? t("text.unknown") })}</small>
+      <details class="pack-technical"><summary>${h("text.identity_and_source_details")}</summary>
         <p>${escapeHtml(p.id)}</p><p>${escapeHtml(p.sourceRevision)}</p>
         <pre>${assessmentText(p.sources || [])}</pre><p>SHA-256: ${escapeHtml(p.sha256)}</p></details>`;
     label.appendChild(box);
@@ -923,8 +983,8 @@ function renderAssessmentPacks(catalog) {
     if (p.origin === 'imported') {
       const remove = document.createElement('button');
       remove.className = 'btn ghost small pack-remove';
-      remove.innerHTML = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>';
-      remove.setAttribute('aria-label', `Remove imported pack ${p.id} from the local library`);
+      remove.innerHTML = `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>`;
+      remove.setAttribute('aria-label', t("text.remove_imported_pack_from_the_local_library", { v0: p.id }));
       remove.addEventListener('click', () => removeAssessmentPack(p));
       label.appendChild(remove);
     }
@@ -950,8 +1010,8 @@ function updateAssessmentSelection() {
       label.classList.remove('hidden');
     }
   });
-  $('assessmentPacksEmpty').textContent = enabled ? '' : 'No rule pack matches the selected platforms and profile. ' +
-    'Choose other platforms or a different profile, or import a pack below.';
+  localizeText($('assessmentPacksEmpty'), () => enabled ? '' : (t("text.no_rule_pack_matches_the_selected_platforms_and_profile") + " ") +
+    t("text.choose_other_platforms_or_a_different_profile_or_import"));
   setHidden('assessmentPacksEmpty', enabled > 0);
   syncJobAdmission();
 }
@@ -990,15 +1050,13 @@ const assessmentContextFields = {
 };
 // These mirror the <option> labels in index.html; the review must not depend on selectedIndex.
 const assessmentEnrollmentLabels = {
-  workProfile: 'Personally-owned work profile', fullyManaged: 'Fully managed', dedicated: 'Dedicated',
-  corporateOwnedWorkProfile: 'Corporate-owned work profile'
+  get workProfile() { return t("text.personallyowned_work_profile"); }, get fullyManaged() { return t("text.fully_managed"); }, get dedicated() { return t("text.dedicated"); },
+  get corporateOwnedWorkProfile() { return t("text.corporateowned_work_profile"); }
 };
 const assessmentOwnershipLabels = {
-  personallyOwned: 'Personally owned', corporateOwned: 'Corporate owned (excluded by personal-only guidance)'
+  get personallyOwned() { return t("text.personally_owned"); }, get corporateOwned() { return t("text.corporate_owned_excluded_by_personalonly_guidance"); }
 };
-const assessmentWindowsWarning = 'Windows policies targeting Windows 10 and later, such as the Settings Catalog ' +
-  'policies that CIS build-kit packs map to, are assessed only when a Windows 11 build is entered ' +
-  '(for example 10.0.22631 or 10.0.26100); otherwise their controls are reported as not assessed.';
+const assessmentWindowsWarning = () => t("text.windows_policies_targeting_windows_10_and_later_such_as");
 
 function setAssessmentStep(step, focus) {
   assessmentCurrentStep = step;
@@ -1026,9 +1084,9 @@ function assessmentSelection() {
 function assessmentSelectionError() {
   const { platforms, packs } = assessmentSelection();
   if (!platforms.length || platforms.some((p) => !packs.some((pack) => pack.platform === p))) {
-    return 'Every selected platform requires a selected applicable pack; choose at least one platform.';
+    return () => t("text.every_selected_platform_requires_a_selected_applicable_pack_choose");
   }
-  return !packs.length || packs.length > 64 ? 'Select 1–64 packs.' : null;
+  return !packs.length || packs.length > 64 ? () => t("text.select_164_packs") : null;
 }
 
 function selectAssessmentPacks(checked) {
@@ -1043,34 +1101,32 @@ function updateAssessmentContext() {
     ids.forEach((id) => setHidden(id, !platforms.includes(platform)));
   });
   const warn = platforms.includes('windows11') && !$('assessmentOsWindows11').value.trim();
-  $('assessmentContextWarning').textContent = warn ? assessmentWindowsWarning : '';
+  localizeText($('assessmentContextWarning'), () => warn ? assessmentWindowsWarning() : '');
   setHidden('assessmentContextWarning', !warn);
 }
 
 function renderAssessmentReview() {
   const { platforms, packs } = assessmentSelection();
   const context = platforms.map((p) => {
-    let line = `${assessmentPlatforms[p]} — OS version: ${$(assessmentOsId(p)).value.trim() || 'Unknown'}`;
+    let line = t("text.os_version", { v0: assessmentPlatforms[p], v1: $(assessmentOsId(p)).value.trim() || t("text.unknown") });
     if (p === 'iosIpados') {
-      line += '; ownership scope: ' + (assessmentOwnershipLabels[$('assessmentIosOwnership').value] || 'Unknown');
+      line += (t("text.ownership_scope") + " ") + (assessmentOwnershipLabels[$('assessmentIosOwnership').value] || t("text.unknown"));
     }
     if (p === 'androidEnterprise') {
-      line += '; enrollment mode: ' + (assessmentEnrollmentLabels[$('assessmentEnrollment').value] || 'Unknown');
+      line += (t("text.enrollment_mode") + " ") + (assessmentEnrollmentLabels[$('assessmentEnrollment').value] || t("text.unknown"));
     }
     const selected = packs.filter((pack) => pack.platform === p);
     return `<article class="review-platform"><h4>${escapeHtml(assessmentPlatforms[p])}</h4>
       <p>${escapeHtml(line)}</p><ul>${selected.map((pack) => `<li><strong>${escapeHtml(pack.framework)}${pack.frameworkVersion ? ' · ' + escapeHtml(pack.frameworkVersion) : ''} · ${escapeHtml(pack.profile)}</strong>
-        <span>${escapeHtml(pack.id)} · version ${escapeHtml(pack.version)} · ${pack.origin === 'imported' ? 'Imported' : 'Bundled'}
-        · ${escapeHtml(pack.coverage?.inventory)} inventory</span></li>`).join('')}</ul></article>`;
+        <span>${h("text.version_inventory", { v3: pack.id, v4: pack.version, v5: pack.origin === 'imported' ? t("text.imported") : t("text.bundled"), v6: inventoryLabel(pack.coverage?.inventory) })}</span></li>`).join('')}</ul></article>`;
   });
   const source = state?.policies;
-  $('assessmentReview').innerHTML = `<div class="notice"><strong>Target policy source</strong>
-    <p>${escapeHtml(source?.source?.kind === 'offline' ? 'Offline import' : 'Live snapshot')} · ${escapeHtml(source?.tenant?.name || source?.tenant?.id || 'Environment name unavailable')}
-    · Collected ${escapeHtml(source?.capturedAt || 'Unknown')}${source?.source?.importedAt ? ' · Imported ' + escapeHtml(source.source.importedAt) : ''}</p>
-    <p>${Number(source?.count) || 0} policies · ${source?.status === 'partial' ? 'Incomplete evidence: some checks may remain not assessed.' : 'Loaded snapshot'}</p></div>
-    <p class="muted">Each platform below connects the selected packs to your comparison context. This is not discovered device inventory or effective device compliance.</p>
+  $('assessmentReview').innerHTML = `<div class="notice"><strong>${h("text.target_policy_source")}</strong>
+    <p>${h("text.collected", { v0: source?.source?.kind === 'offline' ? t("text.offline_import") : t("text.live_snapshot"), v1: source?.tenant?.name || source?.tenant?.id || t("text.environment_name_unavailable"), v2: i18n.formatDate(source?.capturedAt), v3: source?.source?.importedAt ? (" " + t("text.imported_90") + " ") + i18n.formatDate(source.source.importedAt) : '' })}</p>
+    <p>${escapeHtml(countPolicies(Number(source?.count) || 0))} · ${source?.status === 'partial' ? h("text.incomplete_evidence_some_checks_may_remain_not_assessed") : h("text.loaded_snapshot")}</p></div>
+    <p class="muted">${h("text.each_platform_below_connects_the_selected_packs_to_your")}</p>
     ${context.join('')}${platforms.includes('windows11') && !$('assessmentOsWindows11').value.trim()
-      ? `<p class="notice">${escapeHtml(assessmentWindowsWarning)}</p>` : ''}`;
+      ? `<p class="notice">${escapeHtml(assessmentWindowsWarning())}</p>` : ''}`;
 }
 
 function blockAssessmentStep(message) {
@@ -1090,7 +1146,7 @@ $('btnAssessmentSelectAll').addEventListener('click', () => selectAssessmentPack
 $('btnAssessmentSelectNone').addEventListener('click', () => selectAssessmentPacks(false));
 $('assessmentOsWindows11').addEventListener('input', updateAssessmentContext);
 $('btnAssessPlatformsNext').addEventListener('click', () => {
-  if (!assessmentSelection().platforms.length) blockAssessmentStep('Choose at least one platform to assess.');
+  if (!assessmentSelection().platforms.length) blockAssessmentStep(() => t("text.choose_at_least_one_platform_to_assess"));
   else moveAssessmentStep('import');
 });
 $('btnAssessImportBack').addEventListener('click', () => { if (!assessmentImporting) moveAssessmentStep('platforms'); });
@@ -1109,7 +1165,7 @@ $('btnAssessNew').addEventListener('click', () => {
 });
 
 function showAssessmentError(message) {
-  $('assessmentError').textContent = message || '';
+  showMessage($('assessmentError'), message);
   if (message) $('assessmentError').classList.remove('hidden');
   else $('assessmentError').classList.add('hidden');
 }
@@ -1144,7 +1200,7 @@ function clearAssessmentEvidence() {
   assessmentResult = null;
   ['assessmentResults', 'assessmentSummary', 'assessmentPolicies'].forEach((id) => { $(id).innerHTML = ''; });
   ['assessmentReportPaths', 'assessmentContextResult', 'assessmentPackResult', 'assessmentIssues',
-    'assessmentProgress'].forEach((id) => { $(id).textContent = ''; });
+    'assessmentProgress'].forEach((id) => { writeText($(id), ''); });
   $('assessmentBar').style.width = '0%';
 }
 
@@ -1166,7 +1222,7 @@ function clearAssessment() {
   Object.keys(assessmentPlatforms).forEach((p) => { $(assessmentOsId(p)).value = ''; });
   $('assessmentEnrollment').value = '';
   $('assessmentIosOwnership').value = '';
-  ['assessmentImportSummary', 'assessmentReview', 'assessmentContextWarning'].forEach((id) => { $(id).textContent = ''; });
+  ['assessmentImportSummary', 'assessmentReview', 'assessmentContextWarning'].forEach((id) => { writeText($(id), ''); });
   ['assessmentImportSummary', 'assessmentReview'].forEach((id) => { $(id).innerHTML = ''; });
   setHidden('assessmentContextWarning', true);
   showAssessmentError(null);
@@ -1182,8 +1238,8 @@ function assessmentSessionFailure(r) {
   if (state) state.auth = { connected: false };
   if (state) renderAuth();
   syncJobAdmission();
-  showAssessmentError('401: Session expired. Sign in again before assessing policies.');
-  showSigninError('Your session ended. Sign in again to continue.');
+  showAssessmentError(() => t("text.401_session_expired_sign_in_again_before_assessing_policies"));
+  showSigninError(() => t("text.your_session_ended_sign_in_again_to_continue"));
   return true;
 }
 
@@ -1193,10 +1249,10 @@ async function loadAssessmentCatalog() {
   try {
     const r = await api('/api/assessment/packs');
     if (generation !== assessmentGeneration || request !== assessmentCatalogRequest) return;
-    if (!r.ok) throw new Error(`${r.status}: ${r.body?.error || 'Catalog unavailable.'}`);
+    if (!r.ok) throw new UiError(() => `${r.status}: ${r.body?.error || t("text.catalog_unavailable")}`);
     if (Array.isArray(r.body?.packs)) renderAssessmentPacks(r.body);
   } catch (e) {
-    if (generation === assessmentGeneration && request === assessmentCatalogRequest) showAssessmentError(e.message);
+    if (generation === assessmentGeneration && request === assessmentCatalogRequest) showAssessmentError(e);
   }
 }
 
@@ -1216,17 +1272,17 @@ async function refreshAssessment() {
     if (assessmentSessionFailure(r)) return;
     if (r.status === 404) {
       clearAssessment();
-      showAssessmentError('Assessment session reset. Select context and destination again.');
+      showAssessmentError(() => t("text.assessment_session_reset_select_context_and_destination_again"));
       return;
     }
-    if (!r.ok || !r.body) throw new Error(`${r.status}: ${r.body?.error || 'Progress unavailable.'}`);
+    if (!r.ok || !r.body) throw new UiError(() => `${r.status}: ${r.body?.error || t("text.progress_unavailable")}`);
     const progress = r.body;
     if (progress.running && (assessmentResult || $('assessmentReportPaths').textContent)) clearAssessmentEvidence();
     assessmentBusy = assessmentStarting || !!progress.running;
     const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
     $('assessmentBar').style.width = percent + '%';
-    $('assessmentProgress').textContent = `${percent}% · ${progress.phase || 'Ready'}` +
-      (progress.partial ? ' · Partial evidence — review collection limitations' : '');
+    localizeText($('assessmentProgress'), () => `${i18n.formatNumber(percent / 100, { style: 'percent' })} · ${progress.phase || t("text.ready")}` +
+      (progress.partial ? (" " + t("text.partial_evidence_review_collection_limitations")) : ''));
     if (progress.running) startAssessmentPolling();
     else { clearInterval(assessmentTimer); assessmentTimer = null; }
     if (progress.error) {
@@ -1242,43 +1298,43 @@ async function refreshAssessment() {
       if (assessmentSessionFailure(results)) return;
       if (results.status === 404) {
         clearAssessment();
-        showAssessmentError('Assessment results reset. Run a new assessment.');
+        showAssessmentError(() => t("text.assessment_results_reset_run_a_new_assessment"));
         return;
       }
-      if (!results.ok || !results.body) throw new Error(`${results.status}: ${results.body?.error || 'Results unavailable.'}`);
+      if (!results.ok || !results.body) throw new UiError(() => `${results.status}: ${results.body?.error || t("text.results_unavailable")}`);
       renderAssessmentResult(results.body);
       if (firstResult) setAssessmentStep('results');
       $('assessmentBar').style.width = percent + '%';
-      $('assessmentProgress').textContent = `${percent}% · ${progress.phase || 'Complete'}` +
-        (progress.partial ? ' · Partial evidence — review collection limitations' : '');
+      localizeText($('assessmentProgress'), () => `${i18n.formatNumber(percent / 100, { style: 'percent' })} · ${progress.phase || t("text.complete")}` +
+        (progress.partial ? (" " + t("text.partial_evidence_review_collection_limitations")) : ''));
       const paths = progress.reportPaths;
-      $('assessmentReportPaths').textContent = paths?.markdownPath && paths?.jsonPath
-        ? `Markdown: ${paths.markdownPath}\nJSON: ${paths.jsonPath}` : '';
+      writeText($('assessmentReportPaths'), paths?.markdownPath && paths?.jsonPath
+        ? `Markdown: ${paths.markdownPath}\nJSON: ${paths.jsonPath}` : '');
     } else if (!assessmentStarting && !progress.running && (assessmentResult || $('assessmentReportPaths').textContent)) {
       clearAssessment();
     }
     showAssessmentError(null);
   } catch (e) {
-    if (generation === assessmentGeneration) showAssessmentError(e.message);
+    if (generation === assessmentGeneration) showAssessmentError(e);
   } finally {
     if (generation === assessmentGeneration) { assessmentPolling = false; syncJobAdmission(); }
   }
 }
 
 $('btnAssessmentRun').addEventListener('click', async () => {
-  if (assessmentImporting) { showAssessmentError('Wait for the pack import to finish.'); return; }
-  if (assessmentBusy || exportBusy) { showAssessmentError('An export or assessment is already running.'); return; }
+  if (assessmentImporting) { showAssessmentError(() => t("text.wait_for_the_pack_import_to_finish")); return; }
+  if (assessmentBusy || exportBusy) { showAssessmentError(() => t("text.an_export_or_assessment_is_already_running")); return; }
   if (!state?.auth?.connected && state?.policies?.source?.kind !== 'offline') {
-    showAssessmentError('Sign in or import a policy set before assessing policies.'); return;
+    showAssessmentError(() => t("text.sign_in_or_import_a_policy_set_before_assessing")); return;
   }
-  if (!policiesReady()) { showAssessmentError('Load policies before assessing.'); return; }
+  if (!policiesReady()) { showAssessmentError(() => t("text.load_policies_before_assessing")); return; }
   const { platforms, packs: selectedPacks } = assessmentSelection();
   if (!platforms.length || platforms.some((p) => !selectedPacks.some((pack) => pack.platform === p))) {
-    showAssessmentError('Every selected platform requires a selected applicable pack; choose at least one platform.');
+    showAssessmentError(() => t("text.every_selected_platform_requires_a_selected_applicable_pack_choose"));
     return;
   }
   if (!selectedPacks.length || selectedPacks.length > 64 || !$('assessmentOutputPath').value.trim()) {
-    showAssessmentError('Select 1–64 packs and an absolute assessment report destination.');
+    showAssessmentError(() => t("text.select_164_packs_and_an_absolute_assessment_report_destination"));
     return;
   }
   const context = { platforms, osVersions: {}, enrollmentModes: {} };
@@ -1308,12 +1364,12 @@ $('btnAssessmentRun').addEventListener('click', async () => {
     assessmentStarting = false;
     if (assessmentSessionFailure(r)) return;
     if (r.status !== 202 || !r.body?.started) {
-      throw new Error(r.status === 400
-        ? r.body?.error || 'Controleer de gekozen rapportmap en context voordat je opnieuw start.'
-        : `${r.status}: ${r.body?.error || 'Assessment did not start.'}`);
+      throw new UiError(() => r.status === 400
+        ? r.body?.error || t("text.check_the_selected_report_folder_and_context_before_trying")
+        : `${r.status}: ${r.body?.error || t("text.assessment_did_not_start")}`);
     }
     clearAssessmentEvidence();
-    $('assessmentProgress').textContent = 'Assessment admitted. Collecting policy evidence…';
+    localizeText($('assessmentProgress'), () => t("text.assessment_admitted_collecting_policy_evidence"));
     setAssessmentStep('results', true);
     startAssessmentPolling();
     await refreshAssessment();
@@ -1321,7 +1377,7 @@ $('btnAssessmentRun').addEventListener('click', async () => {
     if (generation === assessmentGeneration) {
       assessmentStarting = false;
       assessmentBusy = false;
-      showAssessmentError(e.message);
+      showAssessmentError(e);
     }
   } finally {
     if (generation === assessmentGeneration) syncJobAdmission();
@@ -1348,33 +1404,33 @@ function assessmentSkippedLines(body) {
   const total = Number.isInteger(body?.skippedCount) ? body.skippedCount : skipped.length;
   const lines = [];
   if (total > 0) {
-    lines.push(`Skipped ${total} archive ${total === 1 ? 'entry' : 'entries'}:`);
+    lines.push(t("text.skipped_archive", { v0: total,  }));
     skipped.slice(0, 10).forEach((s) => lines.push(`${s.entry}: ${s.reason}`));
     const shown = Math.min(skipped.length, 10);
-    if (total > shown) lines.push(`…and ${total - shown} more.`);
+    if (total > shown) lines.push(t("text.and_more", { v0: total - shown }));
   }
   if (body?.ignored > 0) {
-    lines.push(`${body.ignored} other ${body.ignored === 1 ? 'file was' : 'files were'} ignored (not JSON).`);
+    lines.push(t("text.other_ignored_not_json", { v0: body.ignored,  }));
   }
   return lines;
 }
 
 function assessmentImportReport(body, packs) {
-  const lines = [`Imported ${packs.length} rule ${packs.length === 1 ? 'pack' : 'packs'} locally. ` +
-    'Select the platforms and packs to assess; imports are never selected automatically.'];
-  if (typeof body.added === 'number') lines.push(`${body.added} new, ${packs.length - body.added} already present.`);
+  const lines = [t("text.imported_rule_locally", { v0: packs.length,  }) +
+    t("text.select_the_platforms_and_packs_to_assess_imports_are")];
+  if (typeof body.added === 'number') lines.push(t("text.new_already_present", { v0: body.added, v1: packs.length - body.added }));
   packs.forEach((p) => {
     let line = `${p.id} @ ${p.version} — ${assessmentPlatforms[p.platform]} · ${p.profile}`;
     if (typeof p.controlCount === 'number') {
-      line += ` · ${p.controlCount} ${p.controlCount === 1 ? 'control' : 'controls'}`;
+      line += ' · ' + countControls(p.controlCount);
     }
-    if (typeof p.added === 'boolean') line += p.added ? ' · new' : ' · already present';
+    if (typeof p.added === 'boolean') line += p.added ? (" " + t("text.new")) : (" " + t("text.already_present_58"));
     lines.push(line);
   });
   return [...lines, ...assessmentSkippedLines(body)].join('\n');
 }
 
-function renderAssessmentImportQueue() {
+function renderAssessmentImportQueue(updateStatus = true) {
   const host = $('assessmentImportQueue');
   host.innerHTML = '';
   assessmentImportQueue.forEach((item) => {
@@ -1382,13 +1438,13 @@ function renderAssessmentImportQueue() {
     row.className = 'import-queue-row';
     const text = document.createElement('div');
     text.innerHTML = `<strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.kind === 'reference'
-      ? 'Custom reference policy set' : 'Schema-1 packs / licensed CIS ZIP')} · ${item.path ? 'Host folder' : 'File'} · ${escapeHtml(item.status)}</small>
-      ${item.status === 'importing' ? '<span class="spinner" aria-hidden="true"></span>' : ''}`;
+      ? t("text.custom_reference_policy_set") : t("text.schema1_packs_licensed_cis_zip"))} · ${item.path ? t("text.host_folder") : t("text.file")} · ${escapeHtml(queueStatus(item.status))}</small>
+      ${item.status === 'importing' ? `<span class="spinner" aria-hidden="true"></span>` : ''}`;
     const remove = document.createElement('button');
     remove.className = 'btn ghost small';
     remove.disabled = assessmentImporting || assessmentBusy || exportBusy;
-    remove.setAttribute('aria-label', `Remove ${item.name} from the import queue only`);
-    remove.innerHTML = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>';
+    remove.setAttribute('aria-label', t("text.remove_from_the_import_queue_only", { v0: item.name }));
+    remove.innerHTML = `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>`;
     remove.addEventListener('click', () => {
       if (assessmentImporting) return;
       assessmentImportQueue = assessmentImportQueue.filter((candidate) => candidate.id !== item.id);
@@ -1396,9 +1452,9 @@ function renderAssessmentImportQueue() {
     });
     row.appendChild(text); row.appendChild(remove); host.appendChild(row);
   });
-  $('assessmentQueueStatus').textContent = assessmentImporting
-    ? 'Importing the highlighted item. Completed independent items remain in your library if another item fails.'
-    : `${assessmentImportQueue.length} queued items. Removing a queue item does not remove a library pack.`;
+  if (updateStatus) localizeText($('assessmentQueueStatus'), () => assessmentImporting
+    ? t("text.importing_the_highlighted_item_completed_independent_items_remain_in")
+    : t("text.queued_items_removing_a_queue_item_does_not_remove", { v0: assessmentImportQueue.length }));
 }
 
 function queueAssessmentFiles() {
@@ -1414,7 +1470,7 @@ $('btnQueueAssessmentFiles').addEventListener('click', queueAssessmentFiles);
 $('btnQueueAssessmentPath').addEventListener('click', () => {
   if (assessmentImporting || assessmentBusy || exportBusy) return;
   const path = $('assessmentImportHostPath').value.trim();
-  if (!path) { showAssessmentError('Enter an absolute host folder path first.'); return; }
+  if (!path) { showAssessmentError(() => t("text.enter_an_absolute_host_folder_path_first")); return; }
   assessmentImportQueue.push({ id: ++assessmentQueueSequence, path, name: path,
     kind: $('assessmentImportKind').value || 'packs', status: 'queued', result: null });
   renderAssessmentImportQueue();
@@ -1426,7 +1482,7 @@ $('btnQueueAssessmentFolder').addEventListener('click', async () => {
     assessmentImportQueue.push({ id: ++assessmentQueueSequence, path, name: path,
       kind: $('assessmentImportKind').value || 'packs', status: 'queued', result: null });
     renderAssessmentImportQueue();
-  } catch (e) { showAssessmentError(e.message); }
+  } catch (e) { showAssessmentError(e); }
 });
 
 function renderAssessmentImportSummary() {
@@ -1441,28 +1497,28 @@ function renderAssessmentImportSummary() {
     ignored += Number(result.ignored) || 0;
     if (item.status === 'failed') failed++;
     return `<article class="import-result ${item.status === 'failed' ? 'import-failed' : ''}">
-      <h4>${escapeHtml(item.name)} · ${escapeHtml(item.status)}</h4>
-      ${result.error ? `<p>${escapeHtml(result.error)}</p>` : ''}
+      <h4>${escapeHtml(item.name)} · ${escapeHtml(queueStatus(item.status))}</h4>
+      ${result.error ? `<p>${escapeHtml(item.errorMessage ? item.errorMessage() : result.error)}</p>` : ''}
       <ul>${packs.map((pack) => `<li><strong>${escapeHtml(pack.framework)}${pack.frameworkVersion ? ' · ' + escapeHtml(pack.frameworkVersion) : ''} · ${escapeHtml(pack.profile)}</strong>
         <span>${escapeHtml(assessmentPlatforms[pack.platform])} · ${escapeHtml(pack.id)} · ${escapeHtml(pack.version)}
-        ${pack.controlCount == null ? '' : ' · ' + Number(pack.controlCount) + ' checks'}
-        · ${pack.added === false ? 'Already present' : 'Imported'}</span></li>`).join('')}</ul>
-      ${(result.skipped || []).length ? `<details><summary>Skipped entries and reasons (${Number(result.skippedCount) || result.skipped.length})</summary>
+        ${pack.controlCount == null ? '' : ' · ' + escapeHtml(countControls(pack.controlCount))}
+        · ${pack.added === false ? t("text.already_present") : t("text.imported")}</span></li>`).join('')}</ul>
+      ${(result.skipped || []).length ? `<details><summary>${h("text.skipped_entries_and_reasons", { v0: Number(result.skippedCount) || result.skipped.length })}</summary>
         <ul>${result.skipped.map((entry) => `<li>${escapeHtml(entry.entry)}: ${escapeHtml(entry.reason)}</li>`).join('')}</ul>
-        ${result.skippedCount > result.skipped.length ? `<p>${result.skippedCount - result.skipped.length} additional reasons not returned by the server.</p>` : ''}</details>` : ''}
-      ${result.ignored ? `<p>${Number(result.ignored)} non-JSON files ignored.</p>` : ''}</article>`;
+        ${result.skippedCount > result.skipped.length ? `<p>${h("text.additional_reasons_not_returned_by_the_server", { v0: result.skippedCount - result.skipped.length })}</p>` : ''}</details>` : ''}
+      ${result.ignored ? `<p>${h("text.nonjson_files_ignored", { v0: Number(result.ignored) })}</p>` : ''}</article>`;
   });
   $('assessmentImportSummary').innerHTML = items.length
-    ? `<div class="import-totals"><span><b>${added}</b> Added</span><span><b>${present}</b> Already present</span>
-      <span><b>${skipped}</b> Skipped</span><span><b>${ignored}</b> Ignored files</span><span><b>${failed}</b> Failed items</span></div>
-      <p class="muted">Select exact packs on the next step. Imports are never selected automatically.</p>${details.join('')}` : '';
+    ? `<div class="import-totals"><span><b>${number(added)}</b> ${h("text.added")}</span><span><b>${number(present)}</b> ${h("text.already_present")}</span>
+      <span><b>${number(skipped)}</b> ${h("text.skipped")}</span><span><b>${number(ignored)}</b> ${h("text.ignored_files")}</span><span><b>${number(failed)}</b> ${h("text.failed_items")}</span></div>
+      <p class="muted">${h("text.select_exact_packs_on_the_next_step_imports_are")}</p>${details.join('')}` : '';
 }
 
 async function removeAssessmentPack(pack) {
   if (assessmentImporting || assessmentBusy || exportBusy || sourceTransferBusy || pack.origin !== 'imported') return;
-  if (!confirm(`Remove ${pack.id} version ${pack.version} from the local library? Saved reports remain unchanged.`)) return;
+  if (!confirm(t("text.remove_version_from_the_local_library_saved_reports_remain", { v0: pack.id, v1: pack.version }))) return;
   const r = await post('/api/assessment/packs/remove', { selectionId: assessmentIdentity(pack), confirm: true });
-  if (!r.ok) { showAssessmentError(r.body?.error || 'Could not remove the imported pack.'); return; }
+  if (!r.ok) { showAssessmentError(() => r.body?.error || t("text.could_not_remove_the_imported_pack")); return; }
   await loadAssessmentCatalog();
 }
 
@@ -1470,7 +1526,7 @@ $('btnAssessmentImport').addEventListener('click', async () => {
   if (assessmentImporting || assessmentBusy || exportBusy) return;
   if (!assessmentImportQueue.length) queueAssessmentFiles();
   const pending = assessmentImportQueue.filter((item) => ['queued', 'failed'].includes(item.status));
-  if (!pending.length) { showAssessmentError('Add files or a host folder to the queue first.'); return; }
+  if (!pending.length) { showAssessmentError(() => t("text.add_files_or_a_host_folder_to_the_queue")); return; }
   const generation = assessmentGeneration;
   assessmentCatalogRequest++;
   assessmentImporting = true;
@@ -1478,28 +1534,28 @@ $('btnAssessmentImport').addEventListener('click', async () => {
   showAssessmentError(null);
   renderAssessmentImportQueue();
   for (const item of pending) {
-    item.status = 'importing'; item.result = null; renderAssessmentImportQueue();
+    item.status = 'importing'; item.result = null; item.errorMessage = null; renderAssessmentImportQueue();
     try {
     const file = item.file;
     let payload;
     if (item.path) {
       payload = { path: item.path, kind: item.kind };
     } else if (file && /\.zip$/i.test(file.name)) {
-      if (!file.size || file.size > 32 * 1024 * 1024) throw new Error('Choose a nonempty ZIP archive, at most 32 MiB.');
+      if (!file.size || file.size > 32 * 1024 * 1024) throw new UiError(() => t("text.choose_a_nonempty_zip_archive_at_most_32_mib"));
       const buffer = await file.arrayBuffer();
       if (generation !== assessmentGeneration) return;
       payload = { archive: assessmentArchiveBase64(buffer), ...(item.kind === 'reference' ? { kind: 'reference' } : {}) };
     } else if (file && /\.json$/i.test(file.name)) {
-      if (!file.size || file.size > 10 * 1024 * 1024) throw new Error('Choose a nonempty JSON rule pack, at most 10 MiB.');
+      if (!file.size || file.size > 10 * 1024 * 1024) throw new UiError(() => t("text.choose_a_nonempty_json_rule_pack_at_most_10"));
       const content = await file.text();
       if (generation !== assessmentGeneration) return;
       if (new TextEncoder().encode(content).length > 10 * 1024 * 1024) {
-        throw new Error('Decoded UTF-8 pack exceeds 10 MiB.');
+        throw new UiError(() => t("text.decoded_utf8_pack_exceeds_10_mib"));
       }
-      if (item.kind === 'reference') throw new Error('A reference policy set must be a complete policy folder or ZIP, not a single JSON file.');
+      if (item.kind === 'reference') throw new UiError(() => t("text.a_reference_policy_set_must_be_a_complete_policy"));
       payload = { content };
     } else {
-      throw new Error('Choose a JSON rule pack (at most 10 MiB) or a ZIP archive (at most 32 MiB).');
+      throw new UiError(() => t("text.choose_a_json_rule_pack_at_most_10_mib"));
     }
     const r = await post('/api/assessment/packs', payload);
     if (generation !== assessmentGeneration) return;
@@ -1507,7 +1563,7 @@ $('btnAssessmentImport').addEventListener('click', async () => {
     const imported = Array.isArray(r.body?.packs) ? r.body.packs : r.body?.pack ? [r.body.pack] : null;
     item.result = r.body || {};
     if (!r.ok || !imported) {
-      throw new Error(`${r.status}: ${r.body?.error || 'Pack import failed.'}`);
+      throw new UiError(() => `${r.status}: ${r.body?.error || t("text.pack_import_failed")}`);
     }
     assessmentCatalogRequest++;
     const identities = new Set(imported.map(assessmentIdentity));
@@ -1517,7 +1573,8 @@ $('btnAssessmentImport').addEventListener('click', async () => {
   } catch (e) {
     if (generation !== assessmentGeneration) return;
     item.status = 'failed'; item.result = { ...(item.result || {}), error: e.message };
-    showAssessmentError(e.message);
+    item.errorMessage = e instanceof UiError ? e.render : null;
+    showAssessmentError(e);
   }
   renderAssessmentImportQueue(); renderAssessmentImportSummary();
   }
@@ -1534,44 +1591,42 @@ function renderAssessmentPolicySettings(policy) {
       <tbody>${(table.rows || []).map((row) =>
         `<tr>${(row.cells || []).map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
     </table></div>`).join('');
-  return `<p class="muted">${escapeHtml(policy.settingsNote || 'Readable settings are unavailable for this saved result. See technical evidence.')}</p>${tables}`;
+  return `<p class="muted">${escapeHtml(policy.settingsNote || t("text.readable_settings_are_unavailable_for_this_saved_result_see"))}</p>${tables}`;
 }
 
 function renderAssessmentTypedValues(records, expected) {
   if (!Array.isArray(records)) return assessmentText(records);
-  if (!records.length) return 'No mapped values';
+  if (!records.length) return t("text.no_mapped_values");
   return records.map((record) => {
-    const name = record.displayName || record.property || record.settingId || 'Unmapped setting';
+    const name = record.displayName || record.property || record.settingId || t("text.unmapped_setting");
     const raw = expected ? record.expected : record.value;
     const value = record.displayValue ?? (!expected && (record.secret === true || record.supported === false)
-      ? 'Unavailable (secret or unsupported evidence)' : JSON.stringify(raw));
+      ? t("text.unavailable_secret_or_unsupported_evidence") : JSON.stringify(raw));
     return `<p><strong>${escapeHtml(name)}</strong>: ${expected ? escapeHtml(record.operator || '') + ' ' : ''}${escapeHtml(value)}</p>`;
   }).join('');
 }
 
 function renderAssessmentResult(result) {
   assessmentResult = result;
-  $('assessmentLimitations').textContent = assessmentLimits;
+  localizeText($('assessmentLimitations'), () => assessmentLimits());
   $('assessmentSummary').innerHTML = (result.summaries || []).map((s) => `
     <div class="assessment-pack">
-      <strong>${escapeHtml(s.packId)} · ${escapeHtml(s.platform)} · ${escapeHtml(s.profile)}</strong>
-      <p>${escapeHtml(s.inventory)} inventory — listed controls only</p>
-      <p>Assessment coverage: ${assessmentPercent(s.coveragePercent)} (${escapeHtml(s.assessed)} assessed /
-        ${escapeHtml(s.coverageDenominator)} applicable or unknown listed controls).
-        Configuration alignment: ${assessmentPercent(s.alignmentPercent)} of assessed controls.</p>
+      <strong>${escapeHtml(s.packId)} · ${escapeHtml(assessmentPlatforms[s.platform] || s.platform)} · ${escapeHtml(s.profile)}</strong>
+      <p>${h("text.inventory_listed_controls_only", { v3: inventoryLabel(s.inventory) })}</p>
+      <p>${h("text.assessment_coverage_assessed_applicable_or_unknown_listed_controls_configuration", { v4: assessmentPercent(s.coveragePercent), v5: s.assessed, v6: s.coverageDenominator, v7: assessmentPercent(s.alignmentPercent) })}</p>
       <p>${Object.entries(assessmentStatuses).map(([key, label]) =>
-        `${label}: ${escapeHtml((s.counts || {})[key] || 0)}`).join(' · ')}</p>
+        `${label}: ${number((s.counts || {})[key])}`).join(' · ')}</p>
     </div>`).join('');
-  $('assessmentContextResult').textContent = 'User-selected context: ' + JSON.stringify(result.context || {});
-  $('assessmentPackResult').textContent = 'Assessed pack identities, sources and coverage: ' + JSON.stringify(result.packs || []);
-  $('assessmentIssues').textContent = 'Collection completeness and limitations: ' +
-    JSON.stringify({ sources: result.sources || [], issues: result.collectionIssues || [] });
+  localizeText($('assessmentContextResult'), () => (t("text.userselected_context") + " ") + JSON.stringify(result.context || {}));
+  localizeText($('assessmentPackResult'), () => (t("text.assessed_pack_identities_sources_and_coverage") + " ") + JSON.stringify(result.packs || []));
+  localizeText($('assessmentIssues'), () => (t("text.collection_completeness_and_limitations") + " ") +
+    JSON.stringify({ sources: result.sources || [], issues: result.collectionIssues || [] }));
   $('assessmentPolicies').innerHTML = (result.policies || []).map((p) => `
     <div class="assessment-pack"><strong>${escapeHtml(p.name || p.key)}</strong>
-      <p>${p.assignmentsComplete !== true ? 'Assignment evidence incomplete'
-        : !(p.assignments || []).length ? 'Unassigned' : 'Assignment targets present — effective targeting not resolved'}</p>
+      <p>${p.assignmentsComplete !== true ? t("text.assignment_evidence_incomplete_19")
+        : !(p.assignments || []).length ? t("text.unassigned") : t("text.assignment_targets_present_effective_targeting_not_resolved")}</p>
       ${renderAssessmentPolicySettings(p)}
-      <details><summary>Technical policy and assignment evidence</summary>
+      <details><summary>${h("text.technical_policy_and_assignment_evidence")}</summary>
         <pre class="assessment-text">${assessmentText({ ...p, settingsTables: undefined, settingsNote: undefined })}</pre>
       </details></div>`).join('');
   renderAssessmentEvidence();
@@ -1587,44 +1642,74 @@ function renderAssessmentEvidence() {
         const policy = policies.get(p.policyKey) || {};
         const incomplete = p.assignmentsComplete === false || policy.assignmentsComplete === false ||
           (p.assignmentsComplete !== true && policy.assignmentsComplete !== true);
-        const assignment = (p.assigned === false ? 'Unassigned' : p.assigned === true ? 'Assigned' : 'Assignment unknown') +
-          (incomplete ? ' · Assignment evidence incomplete' : '');
+        const assignment = (p.assigned === false ? t("text.unassigned") : p.assigned === true ? t("text.assigned") : t("text.assignment_unknown")) +
+          (incomplete ? (" " + t("text.assignment_evidence_incomplete")) : '');
         return `<div class="assessment-policy"><strong>${escapeHtml(policy.name || p.policyKey)}</strong>
           <p>${escapeHtml(p.policyKey)} · ${escapeHtml(policy.family)} · ${escapeHtml(policy.policyType)}</p>
-          <p>${escapeHtml(assessmentStatuses[p.status] || p.status)}: ${escapeHtml(p.reason)}</p>
+          <p>${escapeHtml(assessmentStatuses[p.status] || p.status)}: ${escapeHtml(p.displayReason ?? p.reason)}</p>
           <p>${assignment}</p>
-          <details><summary>Readable policy settings</summary>${renderAssessmentPolicySettings(policy)}</details>
-          <details><summary>Exact mappings and assignment evidence</summary>
+          <details><summary>${h("text.readable_policy_settings")}</summary>${renderAssessmentPolicySettings(policy)}</details>
+          <details><summary>${h("text.exact_mappings_and_assignment_evidence")}</summary>
             <pre>${assessmentText(policy.assignments || [])}</pre>
-            <p>Expected: ${assessmentText(p.expected || [])}</p>
-            <p>Configured: ${assessmentText(p.observed || [])}</p>
+            <p>${h("text.expected_12", { v9: assessmentValue(p.expected || []) })}</p>
+            <p>${h("text.configured_13", { v10: assessmentValue(p.observed || []) })}</p>
           </details></div>`;
       }).join('');
       return `<tr><td><strong>${escapeHtml(c.controlId)} ${escapeHtml(c.title)}</strong>
-        <p>${escapeHtml(c.packId)} @ ${escapeHtml(c.packVersion)} · ${escapeHtml(c.platform)} · ${escapeHtml(c.profile)}</p>
-        <details><summary>Framework references</summary><pre>${assessmentText(c.references || [])}</pre></details></td>
-        <td><strong>${escapeHtml(assessmentStatuses[c.status] || c.status)}</strong><p>${escapeHtml(c.reason)}</p></td>
-        <td><strong>Expected</strong>${renderAssessmentTypedValues(c.expected, true)}
-          <strong>Configured</strong>${renderAssessmentTypedValues(c.observed || [], false)}
-          <details><summary>Exact typed evidence</summary>
-            <p>Expected: ${assessmentText(c.expected)}</p><p>Configured: ${assessmentText(c.observed || [])}</p>
+        <p>${escapeHtml(c.packId)} @ ${escapeHtml(c.packVersion)} · ${escapeHtml(assessmentPlatforms[c.platform] || c.platform)} · ${escapeHtml(c.profile)}</p>
+        <details><summary>${h("text.framework_references")}</summary><pre>${assessmentText(c.references || [])}</pre></details></td>
+        <td><strong>${escapeHtml(assessmentStatuses[c.status] || c.status)}</strong><p>${escapeHtml(c.displayReason ?? c.reason)}</p></td>
+        <td><strong>${h("text.expected")}</strong>${renderAssessmentTypedValues(c.expected, true)}
+          <strong>${h("text.configured")}</strong>${renderAssessmentTypedValues(c.observed || [], false)}
+          <details><summary>${h("text.exact_typed_evidence")}</summary>
+            <p>${h("text.expected_8", { v11: assessmentValue(c.expected) })}</p><p>${h("text.configured_9", { v12: assessmentValue(c.observed || []) })}</p>
           </details></td>
-        <td>${evidence || 'No policy evidence'}</td></tr>`;
+        <td>${evidence || t("text.no_policy_evidence")}</td></tr>`;
     }).join('');
 }
 
 $('assessmentStatusFilter').addEventListener('change', renderAssessmentEvidence);
 
+function renderLocale() {
+  // Only presentation is refreshed. Never re-enter boot, collection, authentication or job polling.
+  for (const [element, binding] of [...textBindings]) {
+    if (element.textContent === binding.value) localizeText(element, binding.render);
+    else textBindings.delete(element); // A later server/customer message owns this element now.
+  }
+  if (state) {
+    renderPolicyState(false);
+    renderScopes();
+    for (const label of $('sections').children) {
+      const box = label.querySelector('input');
+      const text = label.querySelector('span');
+      const section = state.sections?.find(item => item.key === box?.value);
+      if (text && section) writeText(text, sectionLabel(section.key, section.label) +
+        (section.available === false ? ' ' + t('text.unavailable_offline') : ''));
+    }
+    const clientKey = $('client').value;
+    if (['graphcli', 'azurecli', 'intuneps'].includes(clientKey)) writeText($('clientNote'), t(`client.${clientKey}`));
+  }
+  const details = Array.from(document.querySelectorAll('#assessmentPacks details')).map(item => item.open);
+  if (assessmentPacks.length) renderAssessmentPacks({ packs: assessmentPacks, errors: assessmentCatalogIssues });
+  Array.from(document.querySelectorAll('#assessmentPacks details')).forEach((item, index) => { item.open = details[index]; });
+  renderAssessmentImportQueue(false);
+  renderAssessmentImportSummary();
+  if ($('assessmentReview').innerHTML) renderAssessmentReview();
+  if (assessmentResult) renderAssessmentResult(assessmentResult);
+  if (documentSummary) renderSummary(documentSummary);
+}
+i18n.subscribe(renderLocale);
+
 // --- Boot ------------------------------------------------------------------
 
 async function loadInitialState() {
-  $('loadingText').textContent = 'Connecting to the local server…';
+  localizeText($('loadingText'), () => t("text.connecting_to_the_local_server"));
   setHidden('loadingSpinner', false);
   setHidden('btnRetryState', true);
   try { await refreshState(); } catch (e) { /* reported below */ }
   if (state) return true;
   renderRoute();
-  $('loadingText').textContent = 'The local server is not responding. Restart Intune Docs Studio.';
+  localizeText($('loadingText'), () => t("text.the_local_server_is_not_responding_restart_intune_docs"));
   setHidden('loadingSpinner', true);
   setHidden('btnRetryState', false);
   return false;
@@ -1634,6 +1719,7 @@ async function start() {
   if (booting) return;
   booting = true;
   try {
+    await i18n.ready;
     if (!(await loadInitialState())) return;
     await loadAssessmentCatalog();
     await refreshAssessment();
@@ -1650,12 +1736,13 @@ async function start() {
 
 $('btnRetryState').addEventListener('click', start);
 
-(function init() {
+(async function init() {
+  await i18n.ready;
   const params = new URLSearchParams(window.location.search);
   if (params.has('signin')) {
     window.history.replaceState({}, '', '/' + (window.location.hash || ''));
     if (params.get('signin') === 'state-mismatch') {
-      showSigninError('Sign-in could not be verified (state mismatch). Please try again.');
+      showSigninError(() => t("text.signin_could_not_be_verified_state_mismatch_please_try"));
     }
   }
   setDocumentStep('configure');

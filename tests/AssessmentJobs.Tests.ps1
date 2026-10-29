@@ -10,6 +10,7 @@ BeforeAll {
         $folder = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         [void](New-Item -ItemType Directory "$folder\app\baselines" -Force)
         Copy-Item "$repo\lib" "$folder\app" -Recurse
+        Copy-Item "$repo\locales" "$folder\app" -Recurse
         [IO.File]::WriteAllBytes("$folder\app\baselines\synthetic.json", (New-IdsTestPackBytes))
         if (-not $RealGraph) { Add-Content "$folder\app\lib\Graph.ps1" @'
 function Invoke-IdsGraphRaw {
@@ -98,6 +99,33 @@ Describe 'Assessment job admission and session ownership' {
             $state.Assessment.epoch | Should -Be ($epoch + 1)
             $state.Assessment.result | Should -BeNullOrEmpty
         } finally { Stop-IdsAssessmentJob $state }
+    }
+
+    It 'captures report locale at admission without changing evidence when the caller switches language' {
+        $fixture = New-JobFixture
+        $previousLocale = Get-IdsLocale
+        try {
+            Set-IdsLocale 'fr-FR'
+            Start-IdsAssessmentJob $fixture.state $fixture.options $fixture.root | Should -BeTrue
+            Set-IdsLocale 'de-DE'
+            Wait-Assessment $fixture.state
+            $a = $fixture.state.Assessment
+            $a.error | Should -BeNullOrEmpty
+            $a.locale | Should -BeExactly 'fr-FR'
+            $a.phase | Should -BeExactly (Get-IdsText 'text.completed' -Locale fr-FR)
+            [IO.File]::ReadAllText($a.reportPaths.markdownPath) | Should -Match '# Évaluation'
+            $json = [IO.File]::ReadAllText($a.reportPaths.jsonPath) | ConvertFrom-Json
+            $json.controls[0].status | Should -BeExactly 'missing'
+            $json.controls[0].displayReason | Should -BeExactly (Get-IdsAssessmentDisplayReason missing $json.controls[0].reason -Locale fr-FR)
+            $json.controls[0].reason | Should -BeExactly $a.result.controls[0].reason
+            $json.tenant.name | Should -BeExactly 'Synthetic tenant'
+            [IO.File]::ReadAllText($a.reportPaths.jsonPath) | Should -Match '"generatedAt":\s*"\d{4}-\d{2}-\d{2}T'
+            $json.PSObject.Properties.Name | Should -Not -Contain 'locale'
+            Get-IdsLocale | Should -BeExactly 'de-DE'
+        } finally {
+            Stop-IdsAssessmentJob $fixture.state
+            Set-IdsLocale $previousLocale
+        }
     }
 
     It 'runs real legacy policy evidence through normalization, evaluation and both reports without raw payloads' {

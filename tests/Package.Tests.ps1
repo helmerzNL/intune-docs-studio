@@ -31,6 +31,8 @@ BeforeAll {
         'docs\assessment.md' = 'Synthetic generated report'
         'output\.intune-docs-manifest.json' = '{"tenantId":"synthetic"}'
         'browser-state\Default\Cookies' = 'synthetic browser state'
+        'locales\customer.json' = '{"tenant":"synthetic language-resource sentinel"}'
+        'web\flags\customer.svg' = '<svg>synthetic customer sentinel</svg>'
         '.git\config' = '[core]'
     }
     foreach ($relative in $fixtureArtifacts.Keys) {
@@ -70,13 +72,19 @@ BeforeAll {
         'lib\PolicySnapshots.ps1'
         'lib\PolicyApi.ps1'
         'lib\LocalFolders.ps1'
+        'lib\Localization.ps1'
         'lib\ReferencePacks.ps1'
         'lib\Render.ps1'
         'lib\Version.ps1'
         'web\app.js'
         'web\index.html'
+        'web\i18n.js'
         'web\style.css'
     )
+    foreach ($locale in 'en-GB', 'nl-NL', 'fr-FR', 'de-DE', 'sv-SE', 'es-ES', 'nb-NO', 'pt-PT', 'it-IT', 'da-DK') {
+        $script:ProductFiles += "locales\$locale.json"
+        $script:ProductFiles += "web\flags\$locale.svg"
+    }
     $operations = Join-Path $script:PackageFixture 'docs\operations.md'
     Set-Content -LiteralPath $operations -Value '# Operations guide' -NoNewline
     $script:SourceBuildInfo = Join-Path $script:PackageFixture 'build-info.json'
@@ -144,6 +152,49 @@ Describe 'Build-Package.ps1 product package contract' {
             Should -Be (Get-FileHash -LiteralPath (Join-Path $second 'IntuneDocsStudio.zip') -Algorithm SHA256).Hash
     }
 
+    It 'ships complete local translation catalogs and flag artwork with no remote resource dependency' {
+        $output = Join-Path $TestDrive 'language-package'
+        Invoke-PackageFixture -OutputPath $output
+        $root = Expand-PackageFixture -OutputPath $output
+        foreach ($locale in 'en-GB', 'nl-NL', 'fr-FR', 'de-DE', 'sv-SE', 'es-ES', 'nb-NO', 'pt-PT', 'it-IT', 'da-DK') {
+            $catalogPath = Join-Path $root "locales\$locale.json"
+            $catalog = Get-Content -LiteralPath $catalogPath -Raw | ConvertFrom-Json -AsHashtable
+            $catalog.ui.Count | Should -BeGreaterThan 0
+            $catalog.server.Count | Should -BeGreaterThan 0
+            (Get-FileHash -LiteralPath $catalogPath).Hash |
+                Should -Be (Get-FileHash -LiteralPath (Join-Path $script:PackageRepo "locales\$locale.json")).Hash
+            $flagPath = Join-Path $root "web\flags\$locale.svg"
+            [xml]$flag = Get-Content -LiteralPath $flagPath -Raw
+            $flag.DocumentElement.LocalName | Should -Be 'svg'
+            [IO.File]::ReadAllText($flagPath) | Should -Not -Match '(?i)<script|<foreignObject|\b(?:href|src)\s*=\s*["''](?:https?:|//)|\bon\w+\s*='
+        }
+    }
+
+    It 'rejects malformed, incomplete or empty catalog resources before publishing a package' -ForEach @(
+        @{ Mutation = 'json' }
+        @{ Mutation = 'domain' }
+        @{ Mutation = 'key' }
+        @{ Mutation = 'empty' }
+        @{ Mutation = 'placeholder' }
+    ) {
+        $path = Join-Path $script:PackageFixture 'locales\nl-NL.json'
+        $bytes = [IO.File]::ReadAllBytes($path)
+        try {
+            $catalog = [Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json -AsHashtable
+            $key = @($catalog.ui.Keys)[0]
+            switch ($Mutation) {
+                json { $text = '{' }
+                domain { $catalog.Remove('server'); $text = $catalog | ConvertTo-Json -Depth 16 }
+                key { $catalog.ui.Remove($key); $text = $catalog | ConvertTo-Json -Depth 16 }
+                empty { $catalog.ui[$key] = ' '; $text = $catalog | ConvertTo-Json -Depth 16 }
+                placeholder { $catalog.ui[$key] += ' {unexpectedToken}'; $text = $catalog | ConvertTo-Json -Depth 16 }
+            }
+            [IO.File]::WriteAllText($path, $text)
+            { Invoke-PackageFixture -OutputPath (Join-Path $TestDrive "invalid-language-$Mutation") } |
+                Should -Throw '*localization catalog*'
+        } finally { [IO.File]::WriteAllBytes($path, $bytes) }
+    }
+
     It 'ships exactly four reviewed pack bytes and the customer import reference' {
         $output = Join-Path $TestDrive 'assessment-package'
         Invoke-PackageFixture -OutputPath $output
@@ -170,6 +221,18 @@ Describe 'Build-Package.ps1 product package contract' {
         @{ Relative = 'baselines\microsoft-ios-ipados.json' }
         @{ Relative = 'baselines\microsoft-android-enterprise.json' }
         @{ Relative = 'docs\assessment-rule-packs.md' }
+        @{ Relative = 'web\i18n.js' }
+        @{ Relative = 'locales\nl-NL.json' }
+        @{ Relative = 'locales\fr-FR.json' }
+        @{ Relative = 'locales\de-DE.json' }
+        @{ Relative = 'locales\sv-SE.json' }
+        @{ Relative = 'locales\es-ES.json' }
+        @{ Relative = 'locales\nb-NO.json' }
+        @{ Relative = 'locales\pt-PT.json' }
+        @{ Relative = 'locales\it-IT.json' }
+        @{ Relative = 'locales\da-DK.json' }
+        @{ Relative = 'locales\en-GB.json' }
+        @{ Relative = 'web\flags\nl-NL.svg' }
     ) {
         $path = Join-Path $script:PackageFixture $Relative
         $bytes = [IO.File]::ReadAllBytes($path)
@@ -373,7 +436,7 @@ Describe 'Build-Package.ps1 product package contract' {
                 '.env', '.git', 'AGENTS.md', 'CLAUDE.md', '.github', 'tests',
                 'scripts', 'docs\superpowers', 'browser-state', 'build-info.json',
                 'baselines\customer-import.json', 'baselines\imported', 'AssessmentPacks',
-                'reports', 'docs\assessment.md', 'output'
+                'reports', 'docs\assessment.md', 'output', 'locales\customer.json', 'web\flags\customer.svg'
             )) {
             if ($path -eq 'build-info.json') { continue }
             Test-Path -LiteralPath (Join-Path $root $path) | Should -BeFalse

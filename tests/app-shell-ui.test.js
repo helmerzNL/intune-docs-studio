@@ -5,9 +5,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { installI18n, withoutTranslationSpans } = require('./i18n-test-helpers');
+require('./localization-ui.cases');
 
 const webRoot = path.join(__dirname, '..', 'web');
-const html = fs.readFileSync(path.join(webRoot, 'index.html'), 'utf8');
+const html = withoutTranslationSpans(fs.readFileSync(path.join(webRoot, 'index.html'), 'utf8'));
 const script = fs.readFileSync(path.join(webRoot, 'app.js'), 'utf8');
 const css = fs.readFileSync(path.join(webRoot, 'style.css'), 'utf8');
 const build = { version: '0.1.0', channel: 'beta', commit: 'development' };
@@ -22,7 +24,7 @@ const signedOut = (extra = {}) => ({ build, auth: { connected: false }, ...extra
 const viewIds = ['viewLoading', 'viewLanding', 'viewImport', 'viewPolicies', 'viewHome', 'viewDocument', 'viewAssess'];
 const requestedIds = new Set();
 
-function shell({ hash = '', search = '', respond = () => ({}), seed = () => {} } = {}) {
+function shell({ hash = '', search = '', respond = () => ({}), seed = () => {}, locale = {} } = {}) {
   const elements = new Map();
   const requests = [];
   const listeners = {};
@@ -73,7 +75,8 @@ function shell({ hash = '', search = '', respond = () => ({}), seed = () => {} }
     },
     URLSearchParams, TextEncoder,
     fetch: async (url, options) => {
-      const request = { url, method: options?.method || 'GET', payload: options?.body && JSON.parse(options.body) };
+      const request = { url, method: options?.method || 'GET', payload: options?.body && JSON.parse(options.body),
+        headers: options?.headers };
       requests.push(request);
       const response = await respond(url, request);
       if (response instanceof Error) throw response;
@@ -85,6 +88,7 @@ function shell({ hash = '', search = '', respond = () => ({}), seed = () => {} }
     alert(message) { alerts.push(message); }, confirm() { return true; }
   });
   seed(element);
+  installI18n(context, locale);
   vm.runInContext(script, context);
   return {
     element, requests, history, alerts,
@@ -99,6 +103,23 @@ function shell({ hash = '', search = '', respond = () => ({}), seed = () => {} }
 }
 
 const stateOnly = (body) => (url) => (url === '/api/state' ? body : {});
+
+test('boot waits for browser-selected catalogs and static translations before the first state request', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const d = shell({
+    locale: { languages: ['fr-CA'], beforeCatalog: () => gate },
+    respond: stateOnly(signedOut())
+  });
+  await d.settle();
+  assert.equal(d.requests.length, 0);
+  release();
+  await d.settle();
+  assert.equal(d.requests[0].url, '/api/state');
+  assert.equal(d.requests[0].headers['X-Ids-Locale'], 'fr-FR');
+  assert.equal(d.run('document.documentElement.getAttribute("lang")'), 'fr-FR');
+  assert.equal(d.run('window.IdsI18n.locale'), 'fr-FR');
+});
 
 test('declining policy consent keeps signed-in Home idle across refreshes without collecting', async () => {
   let declined = false;

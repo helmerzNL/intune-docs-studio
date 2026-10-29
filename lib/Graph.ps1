@@ -1,3 +1,5 @@
+. (Join-Path $PSScriptRoot 'Localization.ps1')
+
 <#
     Graph.ps1 — transport-aware Microsoft Graph client.
 
@@ -31,9 +33,9 @@ function Test-IdsGraphAuthenticationFailure {
 }
 
 function Get-IdsGraphAuth {
-    if (-not $script:IdsGraphState) { throw 'Graph client not initialised. Call Initialize-IdsGraph first.' }
+    if (-not $script:IdsGraphState) { throw (Get-IdsText -Key 'text.graph_client_not_initialised_call_initialize_idsgraph_first') }
     $auth = $script:IdsGraphState.Auth
-    if (-not $auth) { throw 'Not signed in.' }
+    if (-not $auth) { throw (Get-IdsText -Key 'text.not_signed_in') }
     if ($auth.transport -ne 'mggraph' -and $auth.expires_at -le (Get-Date).ToUniversalTime()) {
         $refreshed = Update-IdsToken -Auth $auth
         if ($refreshed) {
@@ -108,7 +110,7 @@ function Invoke-IdsGraphRaw {
             }
             $script:IdsGraphStats.failures++
             $msg = $_.Exception.Message
-            $err = New-Object System.Exception ("Graph $Method $Uri failed ($status): $msg")
+            $err = New-Object System.Exception ((Get-IdsText -Key 'text.graph_arg0_arg1_failed_arg2_arg3' -Arguments @{ arg0 = ($Method); arg1 = ($Uri); arg2 = ($status); arg3 = ($msg) }))
             $err | Add-Member -NotePropertyName StatusCode -NotePropertyValue $status -Force
             throw $err
         }

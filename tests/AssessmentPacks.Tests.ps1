@@ -9,6 +9,8 @@ BeforeAll {
         $library = Join-Path $installation 'lib'
         [void][IO.Directory]::CreateDirectory($library)
         Copy-Item -LiteralPath $module -Destination $library
+        Copy-Item -LiteralPath (Join-Path $repo 'lib\Localization.ps1') -Destination $library
+        Copy-Item -LiteralPath (Join-Path $repo 'locales') -Destination $installation -Recurse
         . (Join-Path $library 'BaselinePacks.ps1')
     }
     function ConvertTo-TestBytes($Pack) {

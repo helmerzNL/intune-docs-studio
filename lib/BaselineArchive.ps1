@@ -1,3 +1,5 @@
+. (Join-Path $PSScriptRoot 'Localization.ps1')
+
 <#
     In-memory CIS build-kit archive reading and conversion. Requires
     BaselinePacks.ps1, AssessmentCollection.ps1 and AssessmentSettings.ps1.
@@ -43,7 +45,7 @@ function Write-IdsBuildKitJsonValue {
         $Writer.WriteEndArray()
         return
     }
-    throw "Unsupported generated pack value type: $($Value.GetType().FullName)."
+    throw (Get-IdsText -Key 'text.unsupported_generated_pack_value_type_arg0' -Arguments @{ arg0 = ($Value.GetType().FullName) })
 }
 
 function ConvertTo-IdsBuildKitJsonBytes {
@@ -150,7 +152,7 @@ function Get-IdsBuildKitVersions {
 function ConvertTo-IdsBuildKitPacks {
     param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Policies,
         [Parameter(Mandatory)][AllowEmptyString()][string]$ArchiveSha256)
-    if ($ArchiveSha256 -cnotmatch '\A[0-9a-f]{64}\z') { throw 'ArchiveSha256 must be 64 lowercase hexadecimal characters.' }
+    if ($ArchiveSha256 -cnotmatch '\A[0-9a-f]{64}\z') { throw (Get-IdsText -Key 'text.archivesha256_must_be_64_lowercase_hexadecimal_characters') }
     $skipped = [Collections.Generic.List[object]]::new()
     $groups = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
     foreach ($item in $Policies) {
@@ -159,12 +161,12 @@ function ConvertTo-IdsBuildKitPacks {
         $name = Get-IdsBuildKitPolicyName $policy $entry
         $platform = Get-IdsAssessmentPlatform $policy $null
         if (-not $platform) {
-            $skipped.Add([pscustomobject]@{ entry = $entry; reason = "Policy '$name' targets an unsupported or combined platform." })
+            $skipped.Add([pscustomobject]@{ entry = $entry; reason = (Get-IdsText -Key 'text.policy_arg0_targets_an_unsupported_or_combined_platform' -Arguments @{ arg0 = ($name) }) })
             continue
         }
         $settings = Get-IdsAssessmentMember $policy 'settings'
         if ($settings -isnot [Collections.IList] -or $settings.Count -eq 0) {
-            $skipped.Add([pscustomobject]@{ entry = $entry; reason = "Policy '$name' contains no settings." })
+            $skipped.Add([pscustomobject]@{ entry = $entry; reason = (Get-IdsText -Key 'text.policy_arg0_contains_no_settings' -Arguments @{ arg0 = ($name) }) })
             continue
         }
         $definitions = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
@@ -195,7 +197,7 @@ function ConvertTo-IdsBuildKitPacks {
         foreach ($setting in $settings) {
             $instance = Get-IdsAssessmentMember $setting 'settingInstance'
             $topId = Get-IdsAssessmentMember $instance 'settingDefinitionId'
-            $label = if ($topId -is [string] -and -not [string]::IsNullOrWhiteSpace($topId)) { $topId } else { '(unnamed setting)' }
+            $label = if ($topId -is [string] -and -not [string]::IsNullOrWhiteSpace($topId)) { $topId } else { (Get-IdsText -Key 'text.unnamed_setting') }
             $scan = @{
                 ids = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
                 counts = $counts; templateDefault = $false
@@ -203,7 +205,7 @@ function ConvertTo-IdsBuildKitPacks {
             Add-IdsBuildKitSettingScan $instance $scan
             if ($scan.templateDefault) {
                 $skipped.Add([pscustomobject]@{ entry = $entry
-                    reason = "Setting '$label' in policy '$name' uses a template default value and was not converted." })
+                    reason = (Get-IdsText -Key 'text.setting_arg0_in_policy_arg1_uses_a_template_default_value_and_was_not_converted' -Arguments @{ arg0 = ($label); arg1 = ($name) }) })
                 continue
             }
             # Only relevant definitions are needed by the normalizer.
@@ -215,15 +217,15 @@ function ConvertTo-IdsBuildKitPacks {
             ConvertTo-IdsCatalogObservations $state $instance $subset.ToArray() '' $counters
             for ($index = $start; $index -lt $state.observations.Count; $index++) {
                 $observation = $state.observations[$index]
-                $problem = if ($observation.secret) { 'is secret' }
-                elseif (-not $observation.supported) { 'has an unsupported shape or value type' }
-                elseif (-not $observation.configured -or -not $observation.valueType) { 'has no configured value' }
+                $problem = if ($observation.secret) { (Get-IdsText -Key 'text.is_secret') }
+                elseif (-not $observation.supported) { (Get-IdsText -Key 'text.has_an_unsupported_shape_or_value_type') }
+                elseif (-not $observation.configured -or -not $observation.valueType) { (Get-IdsText -Key 'text.has_no_configured_value') }
                 else { $null }
                 if (-not $problem) { $kept.Add($observation); continue }
                 $settingLabel = if ($observation.settingId -is [string] -and
-                    -not [string]::IsNullOrWhiteSpace($observation.settingId)) { $observation.settingId } else { '(unnamed setting)' }
+                    -not [string]::IsNullOrWhiteSpace($observation.settingId)) { $observation.settingId } else { (Get-IdsText -Key 'text.unnamed_setting') }
                 $skipped.Add([pscustomobject]@{ entry = $entry
-                    reason = "Setting '$settingLabel' in policy '$name' $problem and was not converted." })
+                    reason = (Get-IdsText -Key 'text.setting_arg0_in_policy_arg1_arg2_and_was_not_converted' -Arguments @{ arg0 = ($settingLabel); arg1 = ($name); arg2 = ($problem) }) })
             }
         }
         $level = Get-IdsBuildKitProfile $name
@@ -255,7 +257,7 @@ function ConvertTo-IdsBuildKitPacks {
                 if ($pair.Value -le 1 -or -not $excluded.Add($id)) { continue }
                 [void]$candidates.Remove($id)
                 $skipped.Add([pscustomobject]@{ entry = $member.entry
-                    reason = "Setting '$id' occurs more than once in policy '$($member.name)', so it was skipped for pack '$packId'." })
+                    reason = (Get-IdsText -Key 'text.setting_arg0_occurs_more_than_once_in_policy_arg1_so_it_was_skipped_for_pack_arg2' -Arguments @{ arg0 = ($id); arg1 = ($member.name); arg2 = ($packId) }) })
             }
             foreach ($observation in $member.observations) {
                 $id = $observation.settingId
@@ -270,8 +272,10 @@ function ConvertTo-IdsBuildKitPacks {
                     [void]$excluded.Add($id)
                     [void]$candidates.Remove($id)
                     $skipped.Add([pscustomobject]@{ entry = $member.entry
-                        reason = "Setting '$id' has different values in policies '$($first.name)' (archive entry '$($first.entry)') " +
-                            "and '$($member.name)' (archive entry '$($member.entry)'), so it was skipped for pack '$packId'." })
+                        reason = (Get-IdsText 'import.mapping_conflict' -Arguments @{
+                            setting = $id; firstPolicy = $first.name; firstEntry = $first.entry
+                            secondPolicy = $member.name; secondEntry = $member.entry; pack = $packId
+                        }) })
                 } else {
                     $candidates[$id].members.Add($member)
                 }
@@ -341,11 +345,11 @@ function ConvertTo-IdsBuildKitPacks {
         $pack.version = '1.0.0+' + (Get-IdsBuildKitSha256 (ConvertTo-IdsBuildKitJsonBytes $pack)).Substring(0, 12)
         $bytes = ConvertTo-IdsBuildKitJsonBytes $pack
         if ($bytes.Length -gt 10MB) {
-            $skipped.Add([pscustomobject]@{ entry = $packId; reason = "Generated pack '$packId' exceeds the 10 MiB pack limit." })
+            $skipped.Add([pscustomobject]@{ entry = $packId; reason = (Get-IdsText -Key 'text.generated_pack_arg0_exceeds_the_10_mib_pack_limit' -Arguments @{ arg0 = ($packId) }) })
             continue
         }
         try { [void](Read-IdsBaselinePack -Bytes $bytes) } catch {
-            $skipped.Add([pscustomobject]@{ entry = $packId; reason = "Generated pack '$packId' is invalid: $($_.Exception.Message)" })
+            $skipped.Add([pscustomobject]@{ entry = $packId; reason = (Get-IdsText -Key 'text.generated_pack_arg0_is_invalid_arg1' -Arguments @{ arg0 = ($packId); arg1 = ($_.Exception.Message) }) })
             continue
         }
         $packs.Add($bytes)
@@ -714,7 +718,7 @@ function ConvertFrom-IdsBaselineArchiveText {
     param([byte[]]$Bytes)
     # UTF-32 LE shares the UTF-16 LE prefix, but is not a supported encoding.
     if ($Bytes.Length -ge 4 -and $Bytes[0] -eq 0xFF -and $Bytes[1] -eq 0xFE -and $Bytes[2] -eq 0 -and $Bytes[3] -eq 0) {
-        throw [Text.DecoderFallbackException]::new('UTF-32 text is not supported.')
+        throw [Text.DecoderFallbackException]::new((Get-IdsText -Key 'text.utf_32_text_is_not_supported'))
     }
     if ($Bytes.Length -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF) {
         return [Text.UTF8Encoding]::new($false, $true).GetString($Bytes, 3, $Bytes.Length - 3)
@@ -749,7 +753,7 @@ function ConvertFrom-IdsBaselineArchive {
     $policies = [Collections.Generic.List[object]]::new()
     $ignored = 0
     $budget = @{ read = 0L }
-    $unreadable = 'Could not be read (encrypted, corrupt or unsupported compression).'
+    $unreadable = (Get-IdsText -Key 'text.could_not_be_read_encrypted_corrupt_or_unsupported_compression')
     $options = [Text.Json.JsonDocumentOptions]::new()
     $options.MaxDepth = 64
     $stream = [IO.MemoryStream]::new($Bytes, $false)
@@ -762,22 +766,22 @@ function ConvertFrom-IdsBaselineArchive {
             $entries = @($archive.get_Entries())
         } catch {
             # ZipArchive reports damage as InvalidDataException, which the API maps to 413.
-            throw [ArgumentException]::new('The file is not a valid ZIP archive.')
+            throw [ArgumentException]::new((Get-IdsText -Key 'text.the_file_is_not_a_valid_zip_archive'))
         }
-        if ($entries.Count -gt 1000) { throw [ArgumentException]::new('Archive entry limit exceeded (1,000 entries).') }
+        if ($entries.Count -gt 1000) { throw [ArgumentException]::new((Get-IdsText -Key 'text.archive_entry_limit_exceeded_1_000_entries')) }
         $jsonCount = 0
         foreach ($entry in $entries) {
             $name = $entry.FullName
             if ($name.StartsWith('/') -or $name.StartsWith('\') -or $name.Contains(':') -or
                 (($name -split '[/\\]') -contains '..')) {
-                throw [ArgumentException]::new("Archive entry names must be relative without ':' or '..' segments.")
+                throw [ArgumentException]::new((Get-IdsText -Key 'text.archive_entry_names_must_be_relative_without_or_segments'))
             }
             if ($name.EndsWith('.json', [StringComparison]::OrdinalIgnoreCase)) { $jsonCount++ }
         }
-        if ($jsonCount -gt 500) { throw [ArgumentException]::new('Archive JSON entry limit exceeded (500 entries).') }
+        if ($jsonCount -gt 500) { throw [ArgumentException]::new((Get-IdsText -Key 'text.archive_json_entry_limit_exceeded_500_entries')) }
         Initialize-IdsBaselineArchiveReader
         try { $metadata = @([Ids.BaselineZipReader]::ReadDirectory($Bytes, $entries.Count)) }
-        catch [IO.InvalidDataException] { throw [ArgumentException]::new('The file is not a valid ZIP archive.') }
+        catch [IO.InvalidDataException] { throw [ArgumentException]::new((Get-IdsText -Key 'text.the_file_is_not_a_valid_zip_archive')) }
 
         for ($entryIndex = 0; $entryIndex -lt $entries.Count; $entryIndex++) {
             $entry = $entries[$entryIndex]
@@ -785,7 +789,7 @@ function ConvertFrom-IdsBaselineArchive {
             $name = $entry.FullName
             if ($name.EndsWith('/') -or $name.EndsWith('\')) { continue }
             if ($name.EndsWith('.zip', [StringComparison]::OrdinalIgnoreCase)) {
-                $skipped.Add([pscustomobject]@{ entry = $name; reason = 'Nested ZIP archives are not opened; extract and upload the inner ZIP.' })
+                $skipped.Add([pscustomobject]@{ entry = $name; reason = (Get-IdsText -Key 'text.nested_zip_archives_are_not_opened_extract_and_upload_the_inner_zip') })
                 continue
             }
             if (-not $name.EndsWith('.json', [StringComparison]::OrdinalIgnoreCase)) { $ignored++; continue }
@@ -796,20 +800,20 @@ function ConvertFrom-IdsBaselineArchive {
                 continue
             }
             if ($entry.Length -gt 10MB) {
-                $skipped.Add([pscustomobject]@{ entry = $name; reason = 'JSON entry exceeds the 10 MiB limit.' })
+                $skipped.Add([pscustomobject]@{ entry = $name; reason = (Get-IdsText -Key 'text.json_entry_exceeds_the_10_mib_limit') })
                 continue
             }
             $content = $null
             try { $content = Read-IdsBaselineArchiveEntry $Bytes $info $budget }
             catch [IO.InvalidDataException], [IO.IOException], [NotSupportedException], [InvalidOperationException] { $content = $null }
             # Outside the entry catch: the budget fails the whole request.
-            if ($budget.read -gt 64MB) { throw [IO.InvalidDataException]::new('Archive JSON read limit exceeded (64 MiB).') }
+            if ($budget.read -gt 64MB) { throw [IO.InvalidDataException]::new((Get-IdsText -Key 'text.archive_json_read_limit_exceeded_64_mib')) }
             if ($null -eq $content) {
                 $skipped.Add([pscustomobject]@{ entry = $name; reason = $unreadable })
                 continue
             }
             if ($content.Length -gt 10MB) {
-                $skipped.Add([pscustomobject]@{ entry = $name; reason = 'JSON entry exceeds the 10 MiB limit.' })
+                $skipped.Add([pscustomobject]@{ entry = $name; reason = (Get-IdsText -Key 'text.json_entry_exceeds_the_10_mib_limit') })
                 continue
             }
             if ($content.Length -ne $entry.Length) {
@@ -817,21 +821,21 @@ function ConvertFrom-IdsBaselineArchive {
                 continue
             }
             try { $text = ConvertFrom-IdsBaselineArchiveText $content } catch {
-                $skipped.Add([pscustomobject]@{ entry = $name; reason = 'Not valid UTF-8 or UTF-16 text.' })
+                $skipped.Add([pscustomobject]@{ entry = $name; reason = (Get-IdsText -Key 'text.not_valid_utf_8_or_utf_16_text') })
                 continue
             }
             try { $document = [Text.Json.JsonDocument]::Parse($text, $options) } catch {
-                $skipped.Add([pscustomobject]@{ entry = $name; reason = 'Invalid JSON or nesting deeper than 64 levels.' })
+                $skipped.Add([pscustomobject]@{ entry = $name; reason = (Get-IdsText -Key 'text.invalid_json_or_nesting_deeper_than_64_levels') })
                 continue
             }
             try { $value = ConvertFrom-IdsPackJsonElement $document.RootElement } catch {
-                $skipped.Add([pscustomobject]@{ entry = $name; reason = "Invalid JSON: $($_.Exception.Message)" })
+                $skipped.Add([pscustomobject]@{ entry = $name; reason = (Get-IdsText -Key 'text.invalid_json_arg0' -Arguments @{ arg0 = ($_.Exception.Message) }) })
                 continue
             } finally { $document.Dispose() }
             if ($value -is [Collections.IDictionary] -and $value.Contains('schemaVersion')) {
                 $packBytes = [Text.UTF8Encoding]::new($false).GetBytes($text)
                 try { [void](Read-IdsBaselinePack -Bytes $packBytes) } catch {
-                    $skipped.Add([pscustomobject]@{ entry = $name; reason = "Invalid rule pack: $($_.Exception.Message)" })
+                    $skipped.Add([pscustomobject]@{ entry = $name; reason = (Get-IdsText -Key 'text.invalid_rule_pack_arg0' -Arguments @{ arg0 = ($_.Exception.Message) }) })
                     continue
                 }
                 $packs.Add($packBytes)
@@ -839,7 +843,7 @@ function ConvertFrom-IdsBaselineArchive {
             }
             $found = Get-IdsBaselineArchivePolicies $value
             if ($null -eq $found) {
-                $skipped.Add([pscustomobject]@{ entry = $name; reason = 'Not a Settings Catalog policy or rule pack.' })
+                $skipped.Add([pscustomobject]@{ entry = $name; reason = (Get-IdsText -Key 'text.not_a_settings_catalog_policy_or_rule_pack') })
                 continue
             }
             foreach ($policy in $found) {

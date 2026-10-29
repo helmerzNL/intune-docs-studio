@@ -28,6 +28,15 @@ PowerShell 5.1 is never used as a fallback.
 A console window opens and your browser goes to <http://localhost:7654>. Leave the console
 window open while you work — closing it stops the tool.
 
+Use the language selector in the header to choose English, Nederlands, Français,
+Deutsch, Svenska, Español, Norsk bokmål, Português, Italiano or Dansk. It works
+with the keyboard and remains available on every screen. The first visit follows
+your browser language (English if unsupported); subsequent visits use your saved
+selection. Changing language keeps entered wizard data, queued imports and
+running work. New reports/documentation use the language selected when their job
+starts; an already running job keeps its original language. Customer policy data,
+Microsoft setting names and external benchmark wording are not translated.
+
 ## 3. Sign in
 
 On the landing page, click **Sign in via the Intune portal** (the recommended option). The

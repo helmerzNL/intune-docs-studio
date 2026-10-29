@@ -1,3 +1,5 @@
+. (Join-Path $PSScriptRoot 'Localization.ps1')
+
 <#
     Read-only assessment adapters. Graph.ps1 supplies authentication/retry/transport;
     no exporter helpers or tolerant/flattening reads are used here.

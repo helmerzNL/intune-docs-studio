@@ -98,4 +98,48 @@ Describe 'Documentation from loaded policy evidence' {
         $fixture.state.Export.error | Should -Match 'current tenant'
         Test-Path (Join-Path $fixture.options.OutputPath 'README.md') | Should -BeFalse
     }
+
+    It 'localizes complete documentation while retaining customer and raw policy data in <Locale>' -ForEach @(
+        'nl-NL', 'fr-FR', 'de-DE', 'sv-SE', 'es-ES', 'nb-NO', 'pt-PT', 'it-IT', 'da-DK' |
+            ForEach-Object { @{ Locale = $_ } }
+    ) {
+        $fixture = New-SnapshotExportFixture
+        $before = ConvertTo-Json $fixture.snapshot -Depth 40 -Compress
+        Start-IdsExport $fixture.state $fixture.options $fixture.snapshot -Locale $Locale
+        $fixture.state.Export.error | Should -BeNullOrEmpty
+        $fixture.state.Export.locale | Should -BeExactly $Locale
+        $fixture.state.Export.summary.meta.totalObjects | Should -Be 5
+        $policy = Get-ChildItem (Join-Path $fixture.options.OutputPath 'configuration\settings-catalog') -Recurse -Filter synthetic-settingsCatalog.md |
+            Select-Object -First 1
+        $markdown = [IO.File]::ReadAllText($policy.FullName)
+        $markdown | Should -Match ([regex]::Escape((Get-IdsText 'text.overview' -Locale $Locale)))
+        $markdown | Should -Match ([regex]::Escape('## ' + (Get-IdsText 'text.settings' -Locale $Locale)))
+        $markdown | Should -Match 'Synthetic settingsCatalog'
+        $markdown | Should -Match 'Synthetic policy'
+        $readme = [IO.File]::ReadAllText((Join-Path $fixture.options.OutputPath 'README.md'))
+        $readme | Should -Match ([regex]::Escape((Get-IdsText 'text.objects_documented' -Locale $Locale)))
+        $raw = Get-ChildItem (Join-Path $fixture.options.OutputPath '_raw') -Recurse -Filter synthetic-settingsCatalog.json |
+            Select-Object -First 1
+        $rawPolicy = [IO.File]::ReadAllText($raw.FullName) | ConvertFrom-Json
+        $rawPolicy.id | Should -BeExactly 'synthetic-settingsCatalog'
+        $rawPolicy.platforms | Should -BeExactly 'windows10'
+        $rawPolicy.passwordRequired | Should -BeFalse
+        (ConvertTo-Json $fixture.snapshot -Depth 40 -Compress) | Should -BeExactly $before
+        Get-IdsLocale | Should -BeExactly 'en-GB'
+        Should -Invoke Invoke-IdsGraph -Times 0
+    }
+
+    It 'renders incomplete offline settings explicitly without translating or replacing rendered content' {
+        $fixture = New-SnapshotExportFixture
+        $fixture.snapshot.source = @{ kind = 'offline' }
+        $fixture.snapshot.collection.issues = @(@{ family = 'settingsCatalog'; stage = 'settings'; reason = 'Synthetic incomplete evidence' })
+        Start-IdsExport $fixture.state $fixture.options $fixture.snapshot -Locale nl-NL
+        $fixture.state.Export.error | Should -BeNullOrEmpty
+        $policy = Get-ChildItem (Join-Path $fixture.options.OutputPath 'configuration\settings-catalog') -Recurse -Filter synthetic-settingsCatalog.md |
+            Select-Object -First 1
+        $markdown = [IO.File]::ReadAllText($policy.FullName)
+        $markdown | Should -Match ([regex]::Escape((Get-IdsText 'doc.settings_unknown' -Locale nl-NL)))
+        $markdown | Should -Match ([regex]::Escape((Get-IdsText 'doc.offline_incomplete' -Locale nl-NL)))
+        $markdown | Should -Match 'Synthetic settingsCatalog'
+    }
 }

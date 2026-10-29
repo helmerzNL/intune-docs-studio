@@ -1,3 +1,5 @@
+. (Join-Path $PSScriptRoot 'Localization.ps1')
+
 <#
     Pure configuration-alignment evaluation over validated packs and normalized
     snapshots. No collection, targeting resolution, file access, or device

@@ -1,3 +1,5 @@
+. (Join-Path $PSScriptRoot 'Localization.ps1')
+
 <#
     BrowserSession.ps1 — reuse the administrator's existing Intune admin center session.
 
@@ -442,7 +444,7 @@ function Get-IdsTokenFromBrowser {
     function Report { param([string]$m) if ($StatusCallback) { & $StatusCallback $m } else { Write-Host "  $m" } }
 
     $exe = Find-IdsBrowser -Preferred $BrowserPath
-    if (-not $exe) { throw 'Neither Microsoft Edge nor Google Chrome could be found. Install one, or use a different sign-in method.' }
+    if (-not $exe) { throw (Get-IdsText -Key 'text.neither_microsoft_edge_nor_google_chrome_could_be_found_install_one_or_use_a_different_sign_in_metho') }
 
     $port = Get-IdsFreePort
     $profileDir = Get-IdsBrowserProfilePath -Ephemeral:($Ephemeral -or $ForceAccountPicker)
@@ -484,7 +486,7 @@ function Get-IdsTokenFromBrowser {
     $browserArgs += '--new-window'
     $browserArgs += $startUrl
 
-    Report 'Starting a browser window for the Intune admin center…'
+    Report (Get-IdsText -Key 'text.starting_a_browser_window_for_the_intune_admin_center')
     $proc = Start-Process -FilePath $exe -ArgumentList $browserArgs -PassThru
     $browserPid = $proc.Id
 
@@ -502,10 +504,10 @@ function Get-IdsTokenFromBrowser {
                 if ($v.webSocketDebuggerUrl) { $ready = $true; break }
             } catch { }
         }
-        if (-not $ready) { throw 'Could not attach to the browser. Close any other debugging session and try again.' }
+        if (-not $ready) { throw (Get-IdsText -Key 'text.could_not_attach_to_the_browser_close_any_other_debugging_session_and_try_again') }
 
-        Report 'Sign in to the Intune admin center in the browser window that just opened.'
-        Report 'This is your normal portal sign-in — no consent prompt, no app registration.'
+        Report (Get-IdsText -Key 'text.sign_in_to_the_intune_admin_center_in_the_browser_window_that_just_opened')
+        Report (Get-IdsText -Key 'text.this_is_your_normal_portal_sign_in_no_consent_prompt_no_app_registration')
 
         $captured = $null
         $wrongTenant = $false
@@ -522,7 +524,7 @@ function Get-IdsTokenFromBrowser {
 
         while ((Get-Date) -lt $deadline -and -not $captured) {
             if (-not (Test-IdsBrowserAlive -Port $port -ProcessId $browserPid)) {
-                throw 'The browser window was closed before sign-in finished. Click "Sign in via the Intune portal" again and leave the window open until it closes by itself.'
+                throw (Get-IdsText -Key 'text.the_browser_window_was_closed_before_sign_in_finished_click_sign_in_via_the_intune_portal_again_and_')
             }
 
             $d = $null
@@ -546,21 +548,21 @@ function Get-IdsTokenFromBrowser {
             $elapsed = ((Get-Date) - $started).TotalSeconds
             if (-not $nudged -and $sawAnyToken -and $elapsed -gt 15) {
                 $nudged = $true
-                Report 'Opening Devices > Configuration profiles to prompt the portal for an Intune token…'
+                Report (Get-IdsText -Key 'text.opening_devices_configuration_profiles_to_prompt_the_portal_for_an_intune_token')
                 [void](Invoke-IdsPortalNudge -Port $port -Tenant $Tenant)
             }
 
             if (((Get-Date) - $lastNote).TotalSeconds -gt 15) {
                 if ($wrongTenant) {
-                    Report 'Signed in with an account from a different tenant. Use "Sign in with a different account" in the portal.'
+                    Report (Get-IdsText -Key 'text.signed_in_with_an_account_from_a_different_tenant_use_sign_in_with_a_different_account_in_the_portal')
                 } elseif ($graphSeen -gt 0) {
-                    Report "Signed in. Checking the portal's tokens for Intune access…"
+                    Report (Get-IdsText -Key 'text.signed_in_checking_the_portal_s_tokens_for_intune_access')
                 } elseif ($sawAnyToken) {
-                    Report "Signed in. Waiting for the portal to acquire a Microsoft Graph token — open Devices > Configuration profiles."
+                    Report (Get-IdsText -Key 'text.signed_in_waiting_for_the_portal_to_acquire_a_microsoft_graph_token_open_devices_configuration_profi')
                 } else {
                     $where = ''
-                    if ($diag -and $diag.origins.Count -gt 0) { $where = " (watching: $(@($diag.origins) -join ', '))" }
-                    Report "Waiting for you to complete sign-in…$where"
+                    if ($diag -and $diag.origins.Count -gt 0) { $where = (Get-IdsText -Key 'text.watching_arg0' -Arguments @{ arg0 = (@($diag.origins) -join ', ') }) }
+                    Report (Get-IdsText -Key 'text.waiting_for_you_to_complete_sign_in_arg0' -Arguments @{ arg0 = ($where) })
                 }
                 $lastNote = Get-Date
             }
@@ -569,7 +571,7 @@ function Get-IdsTokenFromBrowser {
 
         if (-not $captured) {
             if ($wrongTenant) {
-                throw 'The browser signed in with an account from a different tenant. Tick "Force account picker" and try again, or use "forget saved session".'
+                throw (Get-IdsText -Key 'text.the_browser_signed_in_with_an_account_from_a_different_tenant_tick_force_account_picker_and_try_agai')
             }
             if ($graphSeen -gt 0) {
                 $who = ''
@@ -578,19 +580,19 @@ function Get-IdsTokenFromBrowser {
                     if ($c -and $c.PSObject.Properties['upn'] -and $c.upn) { $who = [string]$c.upn; break }
                 }
                 $whoText = ''
-                if ($who) { $whoText = " The signed-in account is $who." }
-                throw ("Signed in, but none of the portal's Microsoft Graph tokens could read Intune configuration.$whoText " +
-                    'If that is not your admin account, tick "Force account picker" and sign in again. Otherwise that account holds no Intune role in this tenant.')
+                if ($who) { $whoText = (Get-IdsText -Key 'text.the_signed_in_account_is_arg0' -Arguments @{ arg0 = ($who) }) }
+                throw ((Get-IdsText -Key 'text.signed_in_but_none_of_the_portal_s_microsoft_graph_tokens_could_read_intune_configuration_arg0' -Arguments @{ arg0 = ($whoText) }) +
+                    (Get-IdsText -Key 'text.if_that_is_not_your_admin_account_tick_force_account_picker_and_sign_in_again_otherwise_that_account'))
             }
             if ($sawAnyToken) {
                 $origins = ''
-                if ($diag -and $diag.origins.Count -gt 0) { $origins = ' Origins scanned: ' + (@($diag.origins) -join ', ') + '.' }
-                throw ("Signed in, but the portal never acquired a Microsoft Graph token. Open Devices > Configuration profiles in the portal window and try again.$origins")
+                if ($diag -and $diag.origins.Count -gt 0) { $origins = (Get-IdsText -Key 'text.origins_scanned') + (@($diag.origins) -join ', ') + '.' }
+                throw ((Get-IdsText -Key 'text.signed_in_but_the_portal_never_acquired_a_microsoft_graph_token_open_devices_configuration_profiles_' -Arguments @{ arg0 = ($origins) }))
             }
             $waited = [int]((Get-Date) - $started).TotalSeconds
             $extra = ''
-            if ($diag) { $extra = " Scanned $($diag.scanned) of $($diag.targets) browser targets." }
-            throw "No sign-in was detected after $waited seconds. Make sure you completed the sign-in in the browser window that opened.$extra"
+            if ($diag) { $extra = (Get-IdsText -Key 'text.scanned_arg0_of_arg1_browser_targets' -Arguments @{ arg0 = ($diag.scanned); arg1 = ($diag.targets) }) }
+            throw (Get-IdsText -Key 'text.no_sign_in_was_detected_after_arg0_seconds_make_sure_you_completed_the_sign_in_in_the_browser_window' -Arguments @{ arg0 = ($waited); arg1 = ($extra) })
         }
 
         $claims = $captured.claims
@@ -605,9 +607,9 @@ function Get-IdsTokenFromBrowser {
         $tid = ''
         if ($claims.PSObject.Properties['tid']) { $tid = [string]$claims.tid }
 
-        Report "Captured a Microsoft Graph token for $account."
+        Report (Get-IdsText -Key 'text.captured_a_microsoft_graph_token_for_arg0' -Arguments @{ arg0 = ($account) })
         $mins = [int]([Math]::Max(0, ($expires - (Get-Date).ToUniversalTime()).TotalMinutes))
-        Report "Valid for about $mins more minutes; it cannot be renewed automatically."
+        Report (Get-IdsText -Key 'text.valid_for_about_arg0_more_minutes_it_cannot_be_renewed_automatically' -Arguments @{ arg0 = ($mins) })
 
         return @{
             access_token  = $captured.token
