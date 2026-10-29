@@ -82,7 +82,7 @@ identity checks, and output backup/restore, see [the operator guide](docs/operat
 ## Languages
 
 The header language selector is available before and after sign-in. Bundled SVG
-flags and native country/language names identify English, Dutch, French, German,
+flags and native language names identify English, Dutch, French, German,
 Swedish, Spanish, Norwegian Bokmål, European Portuguese, Italian and Danish.
 On the first visit the app matches the browser language, falling back to English;
 a saved choice in this browser takes precedence. Selection works with the keyboard

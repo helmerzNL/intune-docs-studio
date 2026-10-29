@@ -1250,7 +1250,8 @@ async function loadAssessmentCatalog() {
     const r = await api('/api/assessment/packs');
     if (generation !== assessmentGeneration || request !== assessmentCatalogRequest) return;
     if (!r.ok) throw new UiError(() => `${r.status}: ${r.body?.error || t("text.catalog_unavailable")}`);
-    if (Array.isArray(r.body?.packs)) renderAssessmentPacks(r.body);
+    if (!Array.isArray(r.body?.packs)) throw new UiError(() => t("text.catalog_unavailable"));
+    renderAssessmentPacks(r.body);
   } catch (e) {
     if (generation === assessmentGeneration && request === assessmentCatalogRequest) showAssessmentError(e);
   }
@@ -1385,8 +1386,8 @@ $('btnAssessmentRun').addEventListener('click', async () => {
 });
 
 $('btnAssessmentRefresh').addEventListener('click', async () => {
-  await loadAssessmentCatalog();
   await refreshAssessment();
+  await loadAssessmentCatalog();
 });
 
 function assessmentArchiveBase64(buffer) {
@@ -1690,7 +1691,7 @@ function renderLocale() {
     if (['graphcli', 'azurecli', 'intuneps'].includes(clientKey)) writeText($('clientNote'), t(`client.${clientKey}`));
   }
   const details = Array.from(document.querySelectorAll('#assessmentPacks details')).map(item => item.open);
-  if (assessmentPacks.length) renderAssessmentPacks({ packs: assessmentPacks, errors: assessmentCatalogIssues });
+  renderAssessmentPacks({ packs: assessmentPacks, errors: assessmentCatalogIssues });
   Array.from(document.querySelectorAll('#assessmentPacks details')).forEach((item, index) => { item.open = details[index]; });
   renderAssessmentImportQueue(false);
   renderAssessmentImportSummary();
@@ -1721,8 +1722,8 @@ async function start() {
   try {
     await i18n.ready;
     if (!(await loadInitialState())) return;
-    await loadAssessmentCatalog();
     await refreshAssessment();
+    await loadAssessmentCatalog();
     const { body } = await api('/api/export/log?from=0');
     if (body && body.running) {
       $('cardRun').classList.remove('hidden');
@@ -1738,6 +1739,7 @@ $('btnRetryState').addEventListener('click', start);
 
 (async function init() {
   await i18n.ready;
+  renderAssessmentPacks({ packs: [], errors: [] });
   const params = new URLSearchParams(window.location.search);
   if (params.has('signin')) {
     window.history.replaceState({}, '', '/' + (window.location.hash || ''));
