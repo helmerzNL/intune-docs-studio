@@ -1371,7 +1371,7 @@ function ConvertTo-IdsBuildKitPacks {
                     $candidate = [pscustomobject]@{ key = $key; observation = $observation; members = [Collections.Generic.List[object]]::new() }
                     $candidate.members.Add($member)
                     $candidates[$id] = $candidate
-                } elseif ($candidates[$id].key -cne $key) {
+                } elseif (-not [StringComparer]::Ordinal.Equals($candidates[$id].key, $key)) {
                     $first = $candidates[$id].members[0]
                     [void]$excluded.Add($id)
                     [void]$candidates.Remove($id)

@@ -140,6 +140,34 @@ Describe 'Build-kit Settings Catalog conversion' {
         ) -join "`n")
     }
 
+    It 'skips ordinal-distinct Unicode <shape> rather than merging linguistically equal values' -ForEach @(
+        @{ shape = 'scalar strings'; isSet = $false }
+        @{ shape = 'string-set members'; isSet = $true }
+    ) {
+        $values = @([string][char]0x00C5, [string][char]0x212B)
+        $items = @(for ($index = 0; $index -lt $values.Count; $index++) {
+            $instance = if ($isSet) {
+                New-IdsTestSettingCollectionInstance -Id 'syn.unicode' -Values @(
+                    @{ value = $values[$index] }, @{ value = 'shared' })
+            } else {
+                New-IdsTestSettingInstance -Id 'syn.unicode' -Value @{ value = $values[$index] }
+            }
+            $policy = New-IdsTestBuildKitPolicy -Name "Synthetic L1 Unicode $index" -Instances @(
+                $instance,
+                (New-IdsTestSettingInstance -Id 'syn.kept' -Value @{ value = 1 })
+            )
+            New-IdsTestBuildKitItem $policy "kit/unicode$index.json"
+        })
+        $result = ConvertTo-IdsBuildKitPacks -Policies $items -ArchiveSha256 $archiveSha
+        $result.skipped.Count | Should -Be 1
+        $result.skipped[0].entry | Should -BeExactly 'kit/unicode1.json'
+        $result.skipped[0].reason | Should -BeExactly ("Setting 'syn.unicode' has different values in policies " +
+            "'Synthetic L1 Unicode 0' (archive entry 'kit/unicode0.json') and " +
+            "'Synthetic L1 Unicode 1' (archive entry 'kit/unicode1.json'), so it was skipped for pack 'cis.windows11.l1'.")
+        $result.packs.Count | Should -Be 1
+        (Read-IdsBaselinePack -Bytes $result.packs[0]).controls.id | Should -BeExactly 'syn.kept'
+    }
+
     It 'lists at most five policy references per control' {
         $items = @(foreach ($number in 1..7) {
             $policy = New-IdsTestBuildKitPolicy -Name "Synthetic L1 policy $number" -Instances @(
