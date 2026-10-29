@@ -1,3 +1,5 @@
+. (Join-Path $PSScriptRoot 'Localization.ps1')
+
 <#
     Standalone, customer-owned assessment evidence. Both formats use the same
     allowlisted projection, never collection/authentication objects. Array
@@ -25,12 +27,99 @@ function Get-IdsReportMember {
     }
 }
 
+function Get-IdsAssessmentReasonTemplates {
+    # Exact canonical evaluator sentences only; imported/manual wording is not rewritten.
+    return [ordered]@{
+        'Unsupported or redacted setting evidence.' = 'report.reason.unsupported_evidence'
+        'Setting is not configured.' = 'report.reason.unconfigured'
+        'Unsupported mapping type, operator, or case sensitivity.' = 'report.reason.unsupported_mapping'
+        'Observed value does not have the declared mapping type; coercion is not supported.' = 'report.reason.observed_type'
+        'Operator is incompatible with the mapping type.' = 'report.reason.operator_type'
+        'Expected value does not have the required typed scalar or set shape.' = 'report.reason.expected_shape'
+        'Configured value satisfies the rule.' = 'report.reason.value_satisfies'
+        'Configured value violates the rule.' = 'report.reason.value_violates'
+        'Selected OS build excludes Windows 11.' = 'report.reason.windows_excluded'
+        'Selected OS build is not a known Windows 11 version shape.' = 'report.reason.windows_unknown'
+        'Selected platform context is unknown.' = 'report.reason.platform_unknown'
+        'Selected platforms exclude this control.' = 'report.reason.platform_excluded'
+        'Policy platform applicability is unknown.' = 'report.reason.policy_platform_unknown'
+        'Policy platform excludes this context.' = 'report.reason.policy_platform_excluded'
+        'Windows-family policy requires an explicit Windows 11 comparison target OS build.' = 'report.reason.windows_target_required'
+        'Policy edition or device-mode applicability is unsupported by the comparison context.' = 'report.reason.edition_unsupported'
+        'Policy OS applicability rule is malformed or unsupported.' = 'report.reason.os_rule_unsupported'
+        'Policy OS applicability requires a known target build.' = 'report.reason.os_target_unknown'
+        'Policy OS applicability rule excludes this comparison target.' = 'report.reason.os_target_excluded'
+        'Selected enrollment mode applicability is unknown.' = 'report.reason.selected_mode_unknown'
+        'Enrollment mode applicability is unknown.' = 'report.reason.mode_unknown'
+        'Selected enrollment mode is excluded.' = 'report.reason.mode_excluded'
+        'Policy enrollment mode applicability is unknown.' = 'report.reason.policy_mode_unknown'
+        'Policy enrollment mode excludes this context.' = 'report.reason.policy_mode_excluded'
+        'Applicability established by assessment context and explicit policy metadata.' = 'report.reason.applicability_established'
+        'No supported automated mapping is available.' = 'report.reason.no_mapping'
+        'Contradictory duplicate evidence for one policy/setting/path identity.' = 'report.reason.duplicate_evidence'
+        'Incomplete settings read, unsupported, redacted, or untyped setting evidence.' = 'report.reason.incomplete_settings'
+        'Mapped setting is absent or not configured in this policy.' = 'report.reason.policy_missing'
+        'Configured values satisfy the rule; this is not device compliance.' = 'report.reason.policy_aligned'
+        'Policy is unassigned; matching configuration does not establish device reach.' = 'report.reason.unassigned'
+        'Assignment evidence is incomplete; device reach is unknown.' = 'report.reason.assignments_incomplete'
+        'Differing configured values across policies; potential conflict only, not proof of overlapping targeting or an Intune conflict.' = 'report.reason.potential_conflict_detail'
+        'Configured values violate the rule.' = 'report.reason.values_violate'
+        'Mapped setting is absent or not configured across relevant sources.' = 'report.reason.control_missing'
+        'Configured values satisfy the rule; this is configuration alignment, not device compliance.' = 'report.reason.control_aligned'
+        'Observed potential conflict: differing cross-policy values; targeting overlap is not established.' = 'report.reason.observed_conflict'
+        'Observed configured values violate the rule.' = 'report.reason.observed_violation'
+    }
+}
+
+function Get-IdsAssessmentDisplayReason {
+    [CmdletBinding()]
+    param([string]$Status, [string]$Reason, [string]$Locale = (Get-IdsLocale))
+    $Locale = Resolve-IdsLocale $Locale
+    $remaining = $Reason.Trim()
+    $parts = [Collections.Generic.List[string]]::new()
+    $templates = Get-IdsAssessmentReasonTemplates
+    while ($remaining.Length) {
+        $consumed = 0
+        foreach ($canonical in $templates.Keys) {
+            if ($remaining.StartsWith($canonical, [StringComparison]::Ordinal) -and
+                ($remaining.Length -eq $canonical.Length -or $remaining[$canonical.Length] -eq ' ')) {
+                $parts.Add((Get-IdsText -Key $templates[$canonical] -Locale $Locale))
+                $consumed = $canonical.Length
+                break
+            }
+        }
+        if (-not $consumed) {
+            $key = $null; $arguments = @{}
+            if ($remaining -cmatch "\AOS version applicability \((osMin|osMax)\) is unknown\.(?= |\z)") {
+                $key = 'report.reason.os_bound_unknown'; $arguments.bound = $Matches[1]
+            } elseif ($remaining -cmatch "\AOS version is outside (osMin|osMax)\.(?= |\z)") {
+                $key = 'report.reason.os_bound_excluded'; $arguments.bound = $Matches[1]
+            } elseif ($remaining -cmatch "\ARelevant source '(settingsCatalog|deviceConfiguration|compliance|admx|intent)' is incomplete or unreported\.(?= |\z)") {
+                $key = 'report.reason.source_incomplete'; $arguments.family = $Matches[1]
+            } elseif ($remaining -cmatch "\APolicy '([^'`r`n]{1,256})': (?=.)") {
+                $key = 'report.reason.policy_prefix'; $arguments.policy = $Matches[1]
+            }
+            if ($key) {
+                $consumed = $Matches[0].Length
+                $parts.Add((Get-IdsText -Key $key -Arguments $arguments -Locale $Locale))
+            }
+        }
+        if (-not $consumed) {
+            Write-Warning 'IDS localization: unrecognized assessment reason semantics; preserving the canonical technical reason.'
+            return $Reason
+        }
+        $remaining = $remaining.Substring($consumed).TrimStart(' ')
+    }
+    if ($Locale -eq 'en-GB') { return $Reason }
+    return $parts -join ' '
+}
+
 function Add-IdsAssessmentPolicyPresentation {
     param($Collection, $Snapshot)
     foreach ($policy in $Snapshot.policies) {
         $inputPolicy = @($Collection.policies | Where-Object key -CEQ $policy.key)[0]
         $tables = @()
-        $note = 'Readable settings are limited to supported assessment evidence; exact mappings and typed values remain in control evidence.'
+        $note = (Get-IdsText -Key 'text.readable_settings_are_limited_to_supported_assessment_evidence_exact_mappings_and_typed_values_remai')
         if ($policy.settingsComplete -eq $true) {
             $settings = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject @($inputPolicy.rawSettings) -Depth 64) -Depth 64 -NoEnumerate
             $tables = @(switch -CaseSensitive ($policy.family) {
@@ -48,7 +137,7 @@ function Add-IdsAssessmentPolicyPresentation {
                 }
             })
         } else {
-            $note = 'Readable settings withheld because evidence is incomplete, secret or unsupported. Review collection limitations and exact mapped evidence; this is not an empty-policy finding.'
+            $note = (Get-IdsText -Key 'text.readable_settings_withheld_because_evidence_is_incomplete_secret_or_unsupported_review_collection_li')
         }
         $policy | Add-Member NoteProperty settingsTables @($tables) -Force
         $policy | Add-Member NoteProperty settingsNote $note -Force
@@ -62,9 +151,9 @@ function Set-IdsAssessmentEvidencePresentation {
     } else { Get-IdsSettingName -DefMap $Definitions -Id $Record.settingId }
     $value = if ($Expected) { $Record.expected } else { $Record.value }
     $display = if (-not $Expected -and ($Record.secret -ne $false -or $Record.supported -ne $true)) {
-        'Unavailable (secret or unsupported evidence)'
+        (Get-IdsText -Key 'text.unavailable_secret_or_unsupported_evidence')
     } elseif (-not $Expected -and $Record.configured -ne $true) {
-        'Not configured'
+        (Get-IdsText -Key 'text.not_configured')
     } else {
         $formatted = @(foreach ($item in @($value)) {
             if ($item -is [string] -and $Record.settingId) {
@@ -95,11 +184,13 @@ function Add-IdsAssessmentEvidencePresentation {
         }
     }
     foreach ($control in $Evaluation.controls) {
+        $control | Add-Member NoteProperty displayReason (Get-IdsAssessmentDisplayReason $control.status $control.reason) -Force
         foreach ($mapping in $control.expected) { Set-IdsAssessmentEvidencePresentation $mapping $allDefinitions -Expected }
         foreach ($observation in $control.observed) {
             Set-IdsAssessmentEvidencePresentation $observation $byPolicy[$observation.policyKey]
         }
         foreach ($result in $control.policyResults) {
+            $result | Add-Member NoteProperty displayReason (Get-IdsAssessmentDisplayReason $result.status $result.reason) -Force
             foreach ($mapping in $result.expected) { Set-IdsAssessmentEvidencePresentation $mapping $byPolicy[$result.policyKey] -Expected }
             foreach ($observation in $result.observed) {
                 Set-IdsAssessmentEvidencePresentation $observation $byPolicy[$result.policyKey]
@@ -137,7 +228,7 @@ function Copy-IdsReportRecord {
         } }
         Control { [ordered]@{
             packId = 'text'; packVersion = 'text'; platform = 'text'; profile = 'text'
-            controlId = 'text'; title = 'text'; status = 'status'; reason = 'text'
+            controlId = 'text'; title = 'text'; status = 'status'; reason = 'text'; displayReason = 'text'
             expected = 'Mapping[]'; observed = 'Observation[]'; policyResults = 'PolicyResult[]'; references = 'Reference[]'
         } }
         Mapping { [ordered]@{
@@ -151,7 +242,7 @@ function Copy-IdsReportRecord {
             displayName = 'text'; displayValue = 'text'
         } }
         PolicyResult { [ordered]@{
-            policyKey = 'text'; status = 'status'; reason = 'text'; expected = 'Mapping[]'; observed = 'Observation[]'
+            policyKey = 'text'; status = 'status'; reason = 'text'; displayReason = 'text'; expected = 'Mapping[]'; observed = 'Observation[]'
             assigned = 'boolean'; assignmentsComplete = 'boolean'
         } }
         Policy { [ordered]@{
@@ -176,11 +267,11 @@ function Copy-IdsReportRecord {
         } }
         Issue { [ordered]@{ family = 'text'; policyKey = 'text'; stage = 'text'; statusCode = 'number'; reason = 'text' } }
         Source { [ordered]@{ family = 'text'; platform = 'text'; complete = 'boolean'; errors = 'Issue[]' } }
-        default { throw "Unsupported assessment report record: $Kind." }
+        default { throw (Get-IdsText -Key 'text.unsupported_assessment_report_record_arg0' -Arguments @{ arg0 = ($Kind) }) }
     }
     if ($null -eq $InputObject) { return $null }
     if ($InputObject -isnot [Collections.IDictionary] -and $InputObject -isnot [pscustomobject]) {
-        throw "Assessment report $Kind must be a record."
+        throw (Get-IdsText -Key 'text.assessment_report_arg0_must_be_a_record' -Arguments @{ arg0 = ($Kind) })
     }
     $record = [ordered]@{}
     foreach ($field in $schema.Keys) {
@@ -224,7 +315,7 @@ function Copy-IdsReportField {
         status { $Value -is [string] -and $Value -cin @('aligned', 'misaligned', 'missing', 'potentialConflict', 'notApplicable', 'notAssessed') }
         default { return Copy-IdsReportRecord $Value $Type }
     }
-    if (-not $valid) { throw "Invalid $Type field in assessment report evidence." }
+    if (-not $valid) { throw (Get-IdsText -Key 'text.invalid_arg0_field_in_assessment_report_evidence' -Arguments @{ arg0 = ($Type) }) }
     return $Value
 }
 
@@ -232,15 +323,15 @@ function Copy-IdsReportTypedValue {
     param($Value, [string]$ValueType, [bool]$Membership = $false)
     if ($ValueType -cnotin @('boolean', 'number', 'string', 'stringSet', 'numberSet')) {
         if ($null -eq $Value) { return $null }
-        throw 'Unsupported typed assessment report value.'
+        throw (Get-IdsText -Key 'text.unsupported_typed_assessment_report_value')
     }
     if ($null -eq $Value) { return $null }
     $type = if ($ValueType -ceq 'string' -or $ValueType -ceq 'stringSet') { 'text' }
         elseif ($ValueType -ceq 'numberSet') { 'number' } else { $ValueType }
     if ($Membership -or $ValueType.EndsWith('Set')) {
-        if ($Value -isnot [Collections.IList]) { throw 'Assessment report set value must be an array.' }
+        if ($Value -isnot [Collections.IList]) { throw (Get-IdsText -Key 'text.assessment_report_set_value_must_be_an_array') }
         $items = @(foreach ($item in $Value) {
-            if ($null -eq $item) { throw 'Assessment report set cannot contain null.' }
+            if ($null -eq $item) { throw (Get-IdsText -Key 'text.assessment_report_set_cannot_contain_null') }
             Copy-IdsReportField $item $type
         })
         return ,@($items | Sort-Object { ConvertTo-Json -InputObject $_ -Compress } -CaseSensitive)
@@ -250,7 +341,7 @@ function Copy-IdsReportTypedValue {
 
 function ConvertTo-IdsReportProjection {
     param([pscustomobject]$Result)
-    if ($Result.schemaVersion -cne 1) { throw 'Unsupported assessment report schemaVersion; expected 1.' }
+    if ($Result.schemaVersion -cne 1) { throw (Get-IdsText -Key 'text.unsupported_assessment_report_schemaversion_expected_1') }
     return Copy-IdsReportRecord $Result Result
 }
 
@@ -258,7 +349,7 @@ function ConvertTo-IdsReportText {
     param([AllowNull()]$Value)
     # Entities neutralize both HTML and Markdown, including links, table/newline
     # injection and code fences. No imported content is emitted as markup.
-    $text = if ($null -eq $Value) { 'not available' } else { [string]$Value }
+    $text = if ($null -eq $Value) { (Get-IdsText -Key 'text.not_available') } else { [string]$Value }
     $builder = [Text.StringBuilder]::new()
     foreach ($character in $text.ToCharArray()) {
         if ($character -in @('&', '<', '>', '|', '[', ']', '(', ')', '*', '_', '`', '\', '#', '!', '+', '-', '{', '}', '~', "`r", "`n")) {
@@ -271,7 +362,7 @@ function ConvertTo-IdsReportText {
 function Format-IdsReportRecord {
     param($Record)
     $lines = [Collections.Generic.List[string]]::new()
-    $lines.Add('| Field | Evidence |')
+    $lines.Add("| $(Get-IdsText 'text.field') | $(Get-IdsText 'text.evidence') |")
     $lines.Add('| --- | --- |')
     foreach ($property in $Record.PSObject.Properties) {
         $value = $property.Value
@@ -286,7 +377,7 @@ function Format-IdsReportRecord {
 function Format-IdsReadableAssessmentEvidence {
     param($Expected, $Observed)
     $lines = [Collections.Generic.List[string]]::new()
-    $lines.Add('| Evidence | Setting | Value | Operator / policy |')
+    $lines.Add("| $(Get-IdsText 'text.evidence') | $(Get-IdsText 'text.setting') | $(Get-IdsText 'text.value') | $(Get-IdsText 'text.operator_policy') |")
     $lines.Add('| --- | --- | --- | --- |')
     foreach ($entry in @(@{ kind = 'Expected'; records = $Expected }, @{ kind = 'Configured'; records = $Observed })) {
         foreach ($record in $entry.records) {
@@ -297,7 +388,8 @@ function Format-IdsReadableAssessmentEvidence {
                 ConvertTo-Json -InputObject $raw -Depth 64 -Compress
             }
             $scope = if ($entry.kind -ceq 'Expected') { $record.operator } else { $record.policyKey }
-            $lines.Add("| $($entry.kind) | $(ConvertTo-IdsReportText $name) | $(ConvertTo-IdsReportText $value) | $(ConvertTo-IdsReportText $scope) |")
+            $kindLabel = if ($entry.kind -ceq 'Expected') { Get-IdsText 'text.expected' } else { Get-IdsText 'text.configured' }
+            $lines.Add("| $kindLabel | $(ConvertTo-IdsReportText $name) | $(ConvertTo-IdsReportText $value) | $(ConvertTo-IdsReportText $scope) |")
         }
     }
     return $lines -join "`n"
@@ -306,29 +398,33 @@ function Format-IdsReadableAssessmentEvidence {
 function ConvertTo-IdsProjectedAssessmentMarkdown {
     param($Result)
     $lines = [Collections.Generic.List[string]]::new()
-    $lines.Add('# Policy configuration alignment assessment')
+    $lines.Add((Get-IdsText -Key 'text.policy_configuration_alignment_assessment'))
     $lines.Add('')
-    $lines.Add('This is configuration alignment, not effective device compliance or certification. Assignments are evidence only; group membership, filters and effective targeting are not resolved. Potential conflict does not establish targeting overlap or an Intune conflict.')
-    $lines.Add('Pack origin distinguishes application-reviewed bundled resources from customer-imported packs. Imported framework/classification labels are author-declared, not verified Microsoft authority. Windows-family policy metadata is not discovered Windows 11 inventory; a supplied target build establishes comparison context only.')
+    $lines.Add((Get-IdsText -Key 'text.this_is_configuration_alignment_not_effective_device_compliance_or_certification_assignments_are_evi'))
+    $lines.Add((Get-IdsText -Key 'text.pack_origin_distinguishes_application_reviewed_bundled_resources_from_customer_imported_packs_import'))
     $lines.Add('')
-    $lines.Add('Missing means absent/not configured only in the mapped families and policy types read completely for this rule, not tenant-wide absence. Partial packs cover only their listed checks, not the entire benchmark. User-selected context is not discovered device inventory. Legacy-only mappings do not cover equivalent modern policy families. Personal-only iOS/iPadOS and Android profiles do not establish organization-owned coverage. A macOS beta/deprecated template reference does not establish current-template or device encryption compliance.')
+    $lines.Add((Get-IdsText -Key 'text.missing_means_absent_not_configured_only_in_the_mapped_families_and_policy_types_read_completely_for'))
     $lines.Add('')
-    $lines.Add('Assessment coverage = assessed / listed controls excluding notApplicable; unknown applicability stays in the denominator. Configuration alignment = aligned / assessed (aligned, misaligned, missing, potentialConflict). Null percentages are not available, never 100%.')
+    $lines.Add((Get-IdsText -Key 'text.assessment_coverage_assessed_listed_controls_excluding_notapplicable_unknown_applicability_stays_in_'))
     $lines.Add('')
-    $lines.Add('Status labels: aligned (Aligned), misaligned (Misaligned), missing (Missing), potentialConflict (Potential conflict), notApplicable (Not applicable), notAssessed (Not assessed).')
+    $lines.Add((Get-IdsText 'report.status_legend' -Arguments @{
+        aligned = (Get-IdsText 'text.aligned'); misaligned = (Get-IdsText 'text.misaligned')
+        missing = (Get-IdsText 'text.missing'); potentialConflict = (Get-IdsText 'text.potential_conflict')
+        notApplicable = (Get-IdsText 'text.not_applicable'); notAssessed = (Get-IdsText 'text.not_assessed')
+    }))
     $lines.Add('')
-    $lines.Add('## Run identity and user-selected context')
+    $lines.Add((Get-IdsText -Key 'text.run_identity_and_user_selected_context'))
     $lines.Add((Format-IdsReportRecord ([pscustomobject]@{
         schemaVersion = $Result.schemaVersion; runId = $Result.runId; generatedAt = $Result.generatedAt
         policySnapshotAt = $Result.policySnapshotAt; tenant = $Result.tenant; context = $Result.context
     })))
     foreach ($section in @(
-        @{ title = 'Pack identity, sources and coverage boundaries'; field = 'packs'; heading = 'id' }
-        @{ title = 'Assessment coverage and Configuration alignment summaries'; field = 'summaries'; heading = 'packId' }
-        @{ title = 'Control evidence'; field = 'controls'; heading = 'controlId' }
-        @{ title = 'Source policies and assignment evidence'; field = 'policies'; heading = 'key' }
-        @{ title = 'Collection source completeness'; field = 'sources'; heading = 'family' }
-        @{ title = 'Collection limitations'; field = 'collectionIssues'; heading = 'stage' }
+        @{ title = (Get-IdsText -Key 'text.pack_identity_sources_and_coverage_boundaries'); field = 'packs'; heading = 'id' }
+        @{ title = (Get-IdsText -Key 'text.assessment_coverage_and_configuration_alignment_summaries'); field = 'summaries'; heading = 'packId' }
+        @{ title = (Get-IdsText -Key 'text.control_evidence'); field = 'controls'; heading = 'controlId' }
+        @{ title = (Get-IdsText -Key 'text.source_policies_and_assignment_evidence'); field = 'policies'; heading = 'key' }
+        @{ title = (Get-IdsText -Key 'text.collection_source_completeness'); field = 'sources'; heading = 'family' }
+        @{ title = (Get-IdsText -Key 'text.collection_limitations'); field = 'collectionIssues'; heading = 'stage' }
     )) {
         $lines.Add('')
         $lines.Add("## $($section.title)")
@@ -337,11 +433,17 @@ function ConvertTo-IdsProjectedAssessmentMarkdown {
             $lines.Add("### $(ConvertTo-IdsReportText $record.($section.heading))")
             if ($section.field -ceq 'controls') {
                 $lines.Add("**$(ConvertTo-IdsReportText $record.title)**")
-                $lines.Add("$(ConvertTo-IdsReportText $record.status): $(ConvertTo-IdsReportText $record.reason)")
+                $statusKeys = @{
+                    aligned = 'text.aligned'; misaligned = 'text.misaligned'; missing = 'text.missing'
+                    potentialConflict = 'text.potential_conflict'; notApplicable = 'text.not_applicable'; notAssessed = 'text.not_assessed'
+                }
+                $statusLabel = if ((Get-IdsLocale) -eq 'en-GB') { $record.status } else { Get-IdsText -Key $statusKeys[$record.status] }
+                $reasonLabel = Get-IdsAssessmentDisplayReason $record.status $record.reason
+                $lines.Add("$(ConvertTo-IdsReportText $statusLabel): $(ConvertTo-IdsReportText $reasonLabel)")
                 $lines.Add('')
                 $lines.Add((Format-IdsReadableAssessmentEvidence $record.expected $record.observed))
                 $lines.Add('')
-                $lines.Add('<details><summary>Exact mappings, typed values and assignment evidence</summary>')
+                $lines.Add("<details><summary>$(Get-IdsHtmlText 'text.exact_mappings_typed_values_and_assignment_evidence')</summary>")
                 $lines.Add('')
                 $lines.Add((Format-IdsReportRecord $record))
                 $lines.Add('')
@@ -359,7 +461,7 @@ function ConvertTo-IdsProjectedAssessmentMarkdown {
                     }
                 }
                 $lines.Add('')
-                $lines.Add('<details><summary>Technical policy and assignment evidence</summary>')
+                $lines.Add("<details><summary>$(Get-IdsHtmlText 'text.technical_policy_and_assignment_evidence')</summary>")
                 $lines.Add('')
                 $lines.Add((Format-IdsReportRecord ($record | Select-Object -Property * -ExcludeProperty settingsTables, settingsNote)))
                 $lines.Add('')
@@ -368,14 +470,18 @@ function ConvertTo-IdsProjectedAssessmentMarkdown {
                 $lines.Add((Format-IdsReportRecord $record))
             }
         }
-        if (@($Result.($section.field)).Count -eq 0) { $lines.Add('No entries supplied.') }
+        if (@($Result.($section.field)).Count -eq 0) { $lines.Add((Get-IdsText -Key 'text.no_entries_supplied')) }
     }
     return (($lines -join "`n") + "`n")
 }
 
 function ConvertTo-IdsAssessmentMarkdown {
-    param([Parameter(Mandatory)][pscustomobject]$Result)
-    return ConvertTo-IdsProjectedAssessmentMarkdown (ConvertTo-IdsReportProjection $Result)
+    param([Parameter(Mandatory)][pscustomobject]$Result, [string]$Locale = (Get-IdsLocale))
+    $previousLocale = Get-IdsLocale
+    try {
+        Set-IdsLocale -Locale (Resolve-IdsLocale $Locale -Strict)
+        return ConvertTo-IdsProjectedAssessmentMarkdown (ConvertTo-IdsReportProjection $Result)
+    } finally { Set-IdsLocale $previousLocale }
 }
 
 function Get-IdsReportReparseTag {
@@ -429,11 +535,11 @@ function Assert-IdsReportDirectoryPath {
             $attributes = Get-IdsReportDirectoryAttributes $current
             if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
                 if (-not (Test-IdsReportCloudTag (Get-IdsReportReparseTag $current))) {
-                    throw "De map '$current' bevat een symbolische koppeling, junction of onbekend reparse point. Kies via Choose report folder een gewone lokale map buiten de applicatie en documentatie, bijvoorbeeld een nieuwe map onder C:\IntuneReports. Verplaats zo nodig de applicatie of documentatie uit de gekoppelde map. OneDrive-cloudmappen zonder omleiding zijn toegestaan."
+                    throw (Get-IdsText 'error.report_linked_folder' -Arguments @{ path = $current })
                 }
             }
             if (($attributes -band [IO.FileAttributes]::Directory) -eq 0) {
-                throw 'Assessment report roots must be directories.'
+                throw (Get-IdsText -Key 'text.assessment_report_roots_must_be_directories')
             }
         } catch [IO.FileNotFoundException] {
             # A nonexistent suffix is allowed, but every existing ancestor is checked.
@@ -448,7 +554,7 @@ function Get-IdsReportCanonicalRoot {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path) -or -not [IO.Path]::IsPathFullyQualified($Path) -or
         $Path.StartsWith('\\?\') -or $Path.StartsWith('\\.\')) {
-        throw 'Assessment report roots must be ordinary fully qualified absolute filesystem paths.'
+        throw (Get-IdsText -Key 'text.assessment_report_roots_must_be_ordinary_fully_qualified_absolute_filesystem_paths')
     }
     $full = [IO.Path]::GetFullPath($Path)
     $root = [IO.Path]::GetPathRoot($full)
@@ -456,7 +562,7 @@ function Get-IdsReportCanonicalRoot {
         if ($component -in @('', '.', '..')) { continue }
         if ($component -match '[<>:"|?*\x00-\x1f]' -or $component -match '[. ]$' -or
             $component -match '^(?i:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)') {
-            throw 'Assessment report root contains an ambiguous filesystem component.'
+            throw (Get-IdsText -Key 'text.assessment_report_root_contains_an_ambiguous_filesystem_component')
         }
     }
     if ($full.Length -gt $root.Length) { $full = $full.TrimEnd('\', '/') }
@@ -472,7 +578,7 @@ function Assert-IdsReportDistinctRoots {
             $b = $Roots[$j].TrimEnd('\') + '\'
             if ($a.StartsWith($b, [StringComparison]::OrdinalIgnoreCase) -or
                 $b.StartsWith($a, [StringComparison]::OrdinalIgnoreCase)) {
-                throw 'Assessment installation, export and report roots must not overlap.'
+                throw (Get-IdsText -Key 'text.assessment_installation_export_and_report_roots_must_not_overlap')
             }
         }
     }
@@ -483,7 +589,8 @@ function Write-IdsAssessmentReports {
         [Parameter(Mandatory)][pscustomobject]$Result,
         [Parameter(Mandatory)][string]$OutputPath,
         [Parameter(Mandatory)][string]$InstallRoot,
-        [Parameter(Mandatory)][string]$ExportRoot
+        [Parameter(Mandatory)][string]$ExportRoot,
+        [string]$Locale = (Get-IdsLocale)
     )
     $output = Get-IdsReportCanonicalRoot $OutputPath
     $install = Get-IdsReportCanonicalRoot $InstallRoot
@@ -498,13 +605,13 @@ function Write-IdsAssessmentReports {
         $candidate = Join-Path $output ".assessment-stage-$unique"
         $final = Join-Path $output "assessment-$unique"
         if ([IO.Directory]::Exists($candidate) -or [IO.File]::Exists($candidate) -or
-            [IO.Directory]::Exists($final) -or [IO.File]::Exists($final)) { throw 'Assessment run directory already exists.' }
+            [IO.Directory]::Exists($final) -or [IO.File]::Exists($final)) { throw (Get-IdsText -Key 'text.assessment_run_directory_already_exists') }
         [void][IO.Directory]::CreateDirectory($candidate)
         $stage = $candidate
         Assert-IdsReportDirectoryPath $stage
         $json = ConvertTo-Json -InputObject $projection -Depth 64
         Set-Content -LiteralPath (Join-Path $stage 'assessment.json') -Value $json -Encoding utf8 -NoNewline -ErrorAction Stop
-        $markdown = ConvertTo-IdsProjectedAssessmentMarkdown $projection
+        $markdown = ConvertTo-IdsAssessmentMarkdown -Result $projection -Locale $Locale
         Set-Content -LiteralPath (Join-Path $stage 'assessment.md') -Value $markdown -Encoding utf8 -NoNewline -ErrorAction Stop
         foreach ($path in @($stage, $install, $export)) { Assert-IdsReportDirectoryPath $path }
         [IO.Directory]::Move($stage, $final)
@@ -515,7 +622,7 @@ function Write-IdsAssessmentReports {
             jsonPath = Join-Path $final 'assessment.json'
         }
     } catch {
-        throw [IO.IOException]::new('Assessment report publication failed; no successful report pair was returned.', $_.Exception)
+        throw [IO.IOException]::new((Get-IdsText -Key 'text.assessment_report_publication_failed_no_successful_report_pair_was_returned'), $_.Exception)
     } finally {
         if ($null -ne $stage) {
             try {
@@ -527,7 +634,7 @@ function Write-IdsAssessmentReports {
                 }
                 [IO.Directory]::Delete($stage, $false)
             } catch {
-                Write-Warning 'Unable to clean the assessment staging directory; no report pair was published.'
+                Write-Warning (Get-IdsText -Key 'text.unable_to_clean_the_assessment_staging_directory_no_report_pair_was_published')
             }
         }
     }

@@ -1,3 +1,5 @@
+. (Join-Path $PSScriptRoot 'Localization.ps1')
+
 <#
     Typed, local-only normalization. Requires BaselinePacks.ps1 and
     AssessmentCollection.ps1; never uses the exporter's display renderer.

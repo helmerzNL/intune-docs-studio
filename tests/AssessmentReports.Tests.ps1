@@ -302,7 +302,7 @@ Describe 'Standalone assessment reports' {
         }
         @(Get-ChildItem $real).Count | Should -Be 0
         Get-IdsReportReparseTag $alias | Should -Be 0xA0000003u
-        { Get-IdsReportCanonicalRoot "$alias\new" } | Should -Throw '*Kies via Choose report folder*'
+        { Get-IdsReportCanonicalRoot "$alias\new" } | Should -Throw '*Choose an ordinary local folder*'
     }
 
     It 'allows only known non-redirecting Windows cloud placeholder tags' {
@@ -327,7 +327,7 @@ Describe 'Standalone assessment reports' {
         Test-Path $pair.markdownPath | Should -BeTrue
         { Write-IdsAssessmentReports (New-ReportResult) "$TestDrive\docs\reports" "$TestDrive\app" "$TestDrive\docs" } | Should -Throw '*overlap*'
         Mock Get-IdsReportReparseTag { return 0x900000FFu }
-        { Get-IdsReportCanonicalRoot $output } | Should -Throw '*reparse point*Kies*'
+        { Get-IdsReportCanonicalRoot $output } | Should -Throw '*reparse point*Choose*'
     }
 
     It 'fails after the first staged file without publishing or deleting other runs' {

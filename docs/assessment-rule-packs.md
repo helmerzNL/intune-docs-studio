@@ -410,6 +410,18 @@ names to numeric OS-version strings. Optional `context.enrollmentModes` accepts
 `corporateOwnedWorkProfile`, and independently `iosIpados` with `personallyOwned`
 or `corporateOwned`. Omit unknown applicability rather than inventing it.
 Accepted context is snapshotted at admission and retained in results/reports.
+The dashboard sends its selected language using `X-Ids-Locale`. The job captures
+that validated locale at admission too; changing the interface language during
+a run does not change the language of that run's report. Application-owned
+headings, labels and explanatory text are localized. Rule-pack titles, external
+framework/control wording, customer evidence, technical identifiers, JSON keys
+and machine status values retain their original meaning and spelling. Language
+selection does not alter rule evaluation or rewrite existing reports.
+Control and per-policy `reason` values remain canonical technical evidence;
+their separate `displayReason` fields are human-facing translations in the
+captured report locale. Dashboard and Markdown presentation share that reason
+formatter rather than changing the underlying comparison result. Older saved
+results without `displayReason` retain their original explanation.
 API pack metadata and result packs retain `origin` (`bundled` or `imported`),
 never local catalog paths. Imported authority labels remain unverified.
 Reports, installation, and documentation export roots must be mutually disjoint.

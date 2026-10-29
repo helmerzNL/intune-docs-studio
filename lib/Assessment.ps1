@@ -1,3 +1,5 @@
+. (Join-Path $PSScriptRoot 'Localization.ps1')
+
 function Test-IdsWorkActive {
     param([hashtable]$State)
     return [bool]($State.Export.running -or $State.Assessment.running -or $State.Browser.running -or
@@ -22,18 +24,18 @@ function Initialize-IdsAssessment {
 function Get-IdsAssessmentCatalog {
     param([hashtable]$State, [string]$Root)
     $imported = $State.Config.ImportedPackRoot
-    if (-not $imported) { throw 'Local imported pack directory is not configured.' }
+    if (-not $imported) { throw (Get-IdsText -Key 'text.local_imported_pack_directory_is_not_configured') }
     return Get-IdsBaselinePacks -BundledRoot (Join-Path $Root 'baselines') -ImportedRoot $imported
 }
 
 function Assert-IdsAssessmentFields {
     param($Value, [string[]]$Allowed, [string[]]$Required = @())
-    if ($Value -isnot [Collections.IDictionary]) { throw 'Assessment input must be an object.' }
+    if ($Value -isnot [Collections.IDictionary]) { throw (Get-IdsText -Key 'text.assessment_input_must_be_an_object') }
     foreach ($key in $Value.Keys) {
-        if ($key -cnotin $Allowed) { throw 'Unknown assessment input field.' }
+        if ($key -cnotin $Allowed) { throw (Get-IdsText -Key 'text.unknown_assessment_input_field') }
     }
     foreach ($key in $Required) {
-        if ($key -cnotin @($Value.Keys)) { throw "Assessment $key is required." }
+        if ($key -cnotin @($Value.Keys)) { throw (Get-IdsText -Key 'text.assessment_arg0_is_required' -Arguments @{ arg0 = ($key) }) }
     }
 }
 
@@ -41,35 +43,35 @@ function Resolve-IdsAssessmentOptions {
     param([hashtable]$State, [hashtable]$Options, [string]$Root)
     Assert-IdsAssessmentFields $Options @('packIds', 'context', 'outputPath') @('packIds', 'context', 'outputPath')
     if ($Options.packIds -isnot [array] -or $Options.packIds.Count -lt 1 -or $Options.packIds.Count -gt 64) {
-        throw 'Select between 1 and 64 pack identities.'
+        throw (Get-IdsText -Key 'text.select_between_1_and_64_pack_identities')
     }
     $context = $Options.context
     Assert-IdsAssessmentFields $context @('platforms', 'osVersions', 'enrollmentModes') @('platforms')
     $platforms = @('windows11', 'macos', 'iosIpados', 'androidEnterprise')
     if ($context.platforms -isnot [array] -or $context.platforms.Count -lt 1 -or $context.platforms.Count -gt 4) {
-        throw 'Select between 1 and 4 platforms.'
+        throw (Get-IdsText -Key 'text.select_between_1_and_4_platforms')
     }
     foreach ($platform in $context.platforms) {
-        if ($platform -isnot [string] -or $platform -cnotin $platforms) { throw 'Unknown assessment platform.' }
+        if ($platform -isnot [string] -or $platform -cnotin $platforms) { throw (Get-IdsText -Key 'text.unknown_assessment_platform') }
     }
-    if (@($context.platforms | Select-Object -Unique).Count -ne $context.platforms.Count) { throw 'Duplicate assessment platform.' }
+    if (@($context.platforms | Select-Object -Unique).Count -ne $context.platforms.Count) { throw (Get-IdsText -Key 'text.duplicate_assessment_platform') }
     $snapshot = @{ platforms = @($context.platforms); osVersions = @{}; enrollmentModes = @{} }
     foreach ($field in 'osVersions', 'enrollmentModes') {
         if ($null -eq $context[$field]) { continue }
         Assert-IdsAssessmentFields $context[$field] $(if ($field -eq 'osVersions') { $platforms } else { @('androidEnterprise', 'iosIpados') })
         foreach ($key in $context[$field].Keys) {
             $value = $context[$field][$key]
-            if ($value -isnot [string] -or $value.Length -gt 128) { throw 'Invalid assessment applicability value.' }
-            if ($field -eq 'osVersions' -and -not (ConvertTo-IdsRuleOsVersion $value)) { throw 'Invalid assessment OS version.' }
+            if ($value -isnot [string] -or $value.Length -gt 128) { throw (Get-IdsText -Key 'text.invalid_assessment_applicability_value') }
+            if ($field -eq 'osVersions' -and -not (ConvertTo-IdsRuleOsVersion $value)) { throw (Get-IdsText -Key 'text.invalid_assessment_os_version') }
             if ($field -eq 'enrollmentModes') {
                 $modes = if ($key -ceq 'iosIpados') { @('personallyOwned', 'corporateOwned') }
                     else { @('workProfile', 'fullyManaged', 'dedicated', 'corporateOwnedWorkProfile') }
-                if ($value -cnotin $modes) { throw "Invalid $key enrollment/ownership mode." }
+                if ($value -cnotin $modes) { throw (Get-IdsText -Key 'text.invalid_arg0_enrollment_ownership_mode' -Arguments @{ arg0 = ($key) }) }
             }
             $snapshot[$field][$key] = $value
         }
     }
-    if ($Options.outputPath -isnot [string]) { throw 'Assessment outputPath must be an absolute path.' }
+    if ($Options.outputPath -isnot [string]) { throw (Get-IdsText -Key 'text.assessment_outputpath_must_be_an_absolute_path') }
     $output = Get-IdsReportCanonicalRoot $Options.outputPath
     $install = Get-IdsReportCanonicalRoot $Root
     $export = Get-IdsReportCanonicalRoot $State.Config.OutputPath
@@ -78,17 +80,17 @@ function Resolve-IdsAssessmentOptions {
     $selected = [Collections.Generic.List[object]]::new()
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($identity in $Options.packIds) {
-        if ($identity -isnot [string] -or $identity.Length -gt 512 -or -not $seen.Add($identity)) { throw 'Invalid or duplicate pack identity.' }
+        if ($identity -isnot [string] -or $identity.Length -gt 512 -or -not $seen.Add($identity)) { throw (Get-IdsText -Key 'text.invalid_or_duplicate_pack_identity') }
         $matches = @($catalog.packs | Where-Object { "$($_.id)@$($_.version)#$($_.sha256)" -ceq $identity })
-        if ($matches.Count -eq 0) { throw 'Unknown pack identity or changed SHA-256 hash; reload the catalog.' }
+        if ($matches.Count -eq 0) { throw (Get-IdsText -Key 'text.unknown_pack_identity_or_changed_sha_256_hash_reload_the_catalog') }
         $pack = $matches[0]
-        if ($pack.platform -cnotin $snapshot.platforms) { throw 'Selected pack does not match the platform context.' }
+        if ($pack.platform -cnotin $snapshot.platforms) { throw (Get-IdsText -Key 'text.selected_pack_does_not_match_the_platform_context') }
         # These are fresh validated objects, never references retained by the caller
         # or re-read by the worker after admission.
         $selected.Add($pack)
     }
     foreach ($platform in $snapshot.platforms) {
-        if ($platform -cnotin @($selected | ForEach-Object platform)) { throw 'Every selected platform requires an applicable pack.' }
+        if ($platform -cnotin @($selected | ForEach-Object platform)) { throw (Get-IdsText -Key 'text.every_selected_platform_requires_an_applicable_pack') }
     }
     return @{ packs = $selected.ToArray(); context = $snapshot; outputPath = $output; exportRoot = $export }
 }
@@ -96,12 +98,14 @@ function Resolve-IdsAssessmentOptions {
 function Start-IdsAssessmentJob {
     param([hashtable]$State, [hashtable]$Options, [string]$Root)
     if (Test-IdsWorkActive $State) { return $false }
-    if (-not $State.Auth -and -not $State.Policies) { throw 'Load or import a policy set first.' }
+    if (-not $State.Auth -and -not $State.Policies) { throw (Get-IdsText -Key 'text.load_or_import_a_policy_set_first') }
     if ($State.Browser.running) { return $false }
     Initialize-IdsAssessment $State
     Clear-IdsAssessmentJob $State
     if ($State.Assessment.job) { return $false }
     $resolved = Resolve-IdsAssessmentOptions $State $Options $Root
+    $resolved.Locale = Get-IdsLocale
+    $State.Assessment.locale = $resolved.Locale
     $loadedPolicies = if ($State.Policies) { Get-IdsLoadedPolicies $State } else { $null }
     $assessment = $State.Assessment
     $epoch = $assessment.epoch
@@ -113,7 +117,7 @@ function Start-IdsAssessmentJob {
     $assessment.reportPaths = $null
     $assessment.partial = $false
     $assessment.percent = 0
-    $assessment.phase = 'Starting'
+    $assessment.phase = (Get-IdsText -Key 'text.starting')
     $assessment.runId = $runId
     $assessment.running = $true
     # Admission and identity replacement are serialized in the HTTP loop.
@@ -125,6 +129,8 @@ function Start-IdsAssessmentJob {
         $ErrorActionPreference = 'Stop'
         $a = $State.Assessment
         try {
+            . (Join-Path $Root 'lib\Localization.ps1')
+            Set-IdsLocale -Locale $Options.Locale
             foreach ($module in 'Auth', 'Graph', 'Render', 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'AssessmentRules', 'AssessmentReports', 'PolicyInventory') {
                 . (Join-Path $Root "lib\$module.ps1")
             }
@@ -134,10 +140,10 @@ function Start-IdsAssessmentJob {
             }
             if ($LoadedPolicies) {
                 $tenants = @(@{ id = $LoadedPolicies.tenant.id; displayName = $LoadedPolicies.tenant.name })
-                $a.phase = 'Using loaded policies'; $a.percent = 10
+                $a.phase = (Get-IdsText -Key 'text.using_loaded_policies'); $a.percent = 10
                 $collection = Select-IdsPolicyCollection $LoadedPolicies $Options.packs $Options.context
             } else {
-            $a.phase = 'Authenticating'
+            $a.phase = (Get-IdsText -Key 'text.authenticating')
             try {
                 $organization = Invoke-IdsGraph -Path '/organization?$select=id,displayName' -Version 'v1.0'
                 $tenants = @(Get-IdsAssessmentMember $organization 'value')
@@ -148,18 +154,18 @@ function Start-IdsAssessmentJob {
                 if ($_.Exception.StatusCode -notin @(403, 404) -or -not $Auth.tenant_id) { throw }
                 $tenants = @(@{ id = $Auth.tenant_id; displayName = '' })
             }
-            if ($tenants.Count -ne 1 -or -not $tenants[0].id) { throw 'Cannot establish authenticated tenant.' }
-            if ($Auth.tenant_id -and $Auth.tenant_id -ne $tenants[0].id) { throw 'Authenticated tenant does not match the session.' }
-            $a.phase = 'Collecting'; $a.percent = 10
+            if ($tenants.Count -ne 1 -or -not $tenants[0].id) { throw (Get-IdsText -Key 'text.cannot_establish_authenticated_tenant') }
+            if ($Auth.tenant_id -and $Auth.tenant_id -ne $tenants[0].id) { throw (Get-IdsText -Key 'text.authenticated_tenant_does_not_match_the_session') }
+            $a.phase = (Get-IdsText -Key 'text.collecting'); $a.percent = 10
             $collection = Get-IdsAssessmentCollection -Packs $Options.packs -Context $Options.context
             if (@($collection.issues | Where-Object { $_.statusCode -eq 401 -or $_.authenticationFailure }).Count) {
-                throw 'Assessment authentication failed.'
+                throw (Get-IdsText -Key 'text.assessment_authentication_failed')
             }
             }
-            $a.phase = 'Normalizing'; $a.percent = 50
+            $a.phase = (Get-IdsText -Key 'text.normalizing'); $a.percent = 50
             $snapshot = ConvertTo-IdsAssessmentSnapshot -Collection $collection
             Add-IdsAssessmentPolicyPresentation -Collection $collection -Snapshot $snapshot
-            $a.phase = 'Evaluating'; $a.percent = 65
+            $a.phase = (Get-IdsText -Key 'text.evaluating'); $a.percent = 65
             $evaluation = Compare-IdsAssessment -Packs $Options.packs -Snapshot $snapshot -Context $Options.context
             Add-IdsAssessmentEvidencePresentation -Collection $collection -Evaluation $evaluation
             $result = ConvertTo-IdsReportProjection ([pscustomobject]@{
@@ -171,8 +177,8 @@ function Start-IdsAssessmentJob {
                 summaries = @($evaluation.summaries); controls = @($evaluation.controls)
                 policies = @($snapshot.policies); collectionIssues = @($snapshot.issues); sources = @($snapshot.sources)
             })
-            if ($a.epoch -ne $Epoch -or $a.runId -ne $RunId) { throw 'Assessment session expired.' }
-            $a.phase = 'Writing reports'; $a.percent = 85
+            if ($a.epoch -ne $Epoch -or $a.runId -ne $RunId) { throw (Get-IdsText -Key 'text.assessment_session_expired') }
+            $a.phase = (Get-IdsText -Key 'text.writing_reports'); $a.percent = 85
             $paths = Write-IdsAssessmentReports -Result $result -OutputPath $Options.outputPath -InstallRoot $Root -ExportRoot $Options.exportRoot
             if ($a.epoch -eq $Epoch -and $a.runId -eq $RunId) {
                 $a.result = $result
@@ -180,13 +186,13 @@ function Start-IdsAssessmentJob {
                 $a.partial = [bool](@($result.packs | Where-Object { $_.coverage.inventory -eq 'partial' }).Count -or
                     @($result.controls | Where-Object status -eq 'notAssessed').Count -or $result.collectionIssues.Count -or
                     @($result.sources | Where-Object { -not $_.complete }).Count)
-                $a.percent = 100; $a.phase = 'Completed'
+                $a.percent = 100; $a.phase = (Get-IdsText -Key 'text.completed')
             }
         } catch {
             if ($a.epoch -eq $Epoch -and $a.runId -eq $RunId) {
                 # Transport/provider exceptions may contain credentials or payloads.
-                $a.error = "Assessment failed during $($a.phase). No successful report pair is available."
-                $a.result = $null; $a.reportPaths = $null; $a.phase = 'Failed'
+                $a.error = (Get-IdsText -Key 'text.assessment_failed_during_arg0_no_successful_report_pair_is_available' -Arguments @{ arg0 = ($a.phase) })
+                $a.result = $null; $a.reportPaths = $null; $a.phase = (Get-IdsText -Key 'text.failed')
             }
         } finally {
             if ($a.epoch -eq $Epoch -and $a.runId -eq $RunId) { $a.done = $true; $a.running = $false }
@@ -206,8 +212,8 @@ function Start-IdsAssessmentJob {
     } catch {
         if ($ps) { $ps.Dispose() }
         if ($runspace) { $runspace.Dispose() }
-        $assessment.running = $false; $assessment.done = $true; $assessment.phase = 'Failed'
-        $assessment.error = 'Unable to start assessment worker.'
+        $assessment.running = $false; $assessment.done = $true; $assessment.phase = (Get-IdsText -Key 'text.failed')
+        $assessment.error = (Get-IdsText -Key 'text.unable_to_start_assessment_worker')
         throw [InvalidOperationException]::new($assessment.error)
     }
 }
@@ -217,13 +223,13 @@ function Clear-IdsAssessmentJob {
     $job = $State.Assessment.job
     if (-not $job -or -not $job.handle.IsCompleted) { return }
     try { [void]$job.ps.EndInvoke($job.handle) } catch {
-        $State.Assessment.error = 'Assessment worker terminated unexpectedly.'
+        $State.Assessment.error = (Get-IdsText -Key 'text.assessment_worker_terminated_unexpectedly' -Locale $State.Assessment.locale)
         $State.Assessment.result = $null; $State.Assessment.reportPaths = $null
     } finally {
         $job.ps.Dispose(); $job.runspace.Dispose()
         $State.Assessment.job = $null
         if ($State.Assessment.running) {
-            $State.Assessment.error = 'Assessment worker terminated unexpectedly.'
+            $State.Assessment.error = (Get-IdsText -Key 'text.assessment_worker_terminated_unexpectedly' -Locale $State.Assessment.locale)
             $State.Assessment.running = $false; $State.Assessment.done = $true
         }
     }
@@ -240,15 +246,15 @@ function Stop-IdsAssessmentJob {
     if ($State.Assessment) {
         $State.Assessment.running = $false
         if ($wasRunning) {
-            $State.Assessment.done = $true; $State.Assessment.error = 'Assessment cancelled.'
-            $State.Assessment.phase = 'Cancelled'; $State.Assessment.result = $null; $State.Assessment.reportPaths = $null
+            $State.Assessment.done = $true; $State.Assessment.error = (Get-IdsText -Key 'text.assessment_cancelled' -Locale $State.Assessment.locale)
+            $State.Assessment.phase = (Get-IdsText -Key 'text.cancelled' -Locale $State.Assessment.locale); $State.Assessment.result = $null; $State.Assessment.reportPaths = $null
         }
     }
 }
 
 function Reset-IdsAssessment {
     param([hashtable]$State)
-    if (Test-IdsWorkActive $State) { throw 'An export or assessment is still running.' }
+    if (Test-IdsWorkActive $State) { throw (Get-IdsText -Key 'text.an_export_or_assessment_is_still_running') }
     Initialize-IdsAssessment $State
     Clear-IdsAssessmentJob $State
     $a = $State.Assessment

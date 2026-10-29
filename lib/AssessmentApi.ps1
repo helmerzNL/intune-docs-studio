@@ -1,9 +1,11 @@
+. (Join-Path $PSScriptRoot 'Localization.ps1')
+
 function Assert-IdsAssessmentJsonMembers {
     param([System.Text.Json.JsonElement]$Element)
     if ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Object) {
         $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
         foreach ($member in $Element.EnumerateObject()) {
-            if (-not $names.Add($member.Name)) { throw 'Duplicate JSON member.' }
+            if (-not $names.Add($member.Name)) { throw (Get-IdsText -Key 'text.duplicate_json_member') }
             Assert-IdsAssessmentJsonMembers $member.Value
         }
     } elseif ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Array) {
@@ -14,7 +16,7 @@ function Assert-IdsAssessmentJsonMembers {
 function Read-IdsAssessmentRequestJson {
     param([object]$Request, [ValidateRange(1, 67108864)][int]$MaxBytes)
     if ($Request.ContentLength64 -gt $MaxBytes) {
-        throw [IO.InvalidDataException]::new('Request byte limit exceeded.')
+        throw [IO.InvalidDataException]::new((Get-IdsText -Key 'text.request_byte_limit_exceeded'))
     }
     $buffer = [byte[]]::new(8192)
     $stream = [IO.MemoryStream]::new()
@@ -23,7 +25,7 @@ function Read-IdsAssessmentRequestJson {
             $count = $Request.InputStream.Read($buffer, 0, [Math]::Min($buffer.Length, $MaxBytes + 1 - [int]$stream.Length))
             if ($count -eq 0) { break }
             $stream.Write($buffer, 0, $count)
-            if ($stream.Length -gt $MaxBytes) { throw [IO.InvalidDataException]::new('Request byte limit exceeded.') }
+            if ($stream.Length -gt $MaxBytes) { throw [IO.InvalidDataException]::new((Get-IdsText -Key 'text.request_byte_limit_exceeded')) }
         }
         try {
             $text = [Text.UTF8Encoding]::new($false, $true).GetString($stream.ToArray())
@@ -32,12 +34,12 @@ function Read-IdsAssessmentRequestJson {
             $document = [System.Text.Json.JsonDocument]::Parse($text, $options)
             try {
                 if ($document.RootElement.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) {
-                    throw 'Request must be a JSON object.'
+                    throw (Get-IdsText -Key 'text.request_must_be_a_json_object')
                 }
                 Assert-IdsAssessmentJsonMembers $document.RootElement
                 return [pscustomobject](ConvertFrom-Json -InputObject $text -AsHashtable -Depth 32)
             } finally { $document.Dispose() }
-        } catch { throw [ArgumentException]::new('Invalid JSON request.', $_.Exception) }
+        } catch { throw [ArgumentException]::new((Get-IdsText -Key 'text.invalid_json_request'), $_.Exception) }
     } finally { $stream.Dispose() }
 }
 
@@ -51,13 +53,13 @@ function Get-IdsAssessmentPackMetadata {
 function Import-IdsAssessmentArchive {
     param($Archive, [hashtable]$State, [string]$Root)
     if ($Archive -isnot [string] -or $Archive.Length % 4 -ne 0 -or $Archive -cnotmatch '\A[A-Za-z0-9+/]*={0,2}\z') {
-        throw 'Archive must be strict base64 text.'
+        throw (Get-IdsText -Key 'text.archive_must_be_strict_base64_text')
     }
     # 44,739,244 base64 characters decode to at most 32 MiB + 1 byte.
-    if ($Archive.Length -gt 44739244) { throw [IO.InvalidDataException]::new('Archive byte limit exceeded (32 MiB).') }
+    if ($Archive.Length -gt 44739244) { throw [IO.InvalidDataException]::new((Get-IdsText -Key 'text.archive_byte_limit_exceeded_32_mib')) }
     $bytes = [Convert]::FromBase64String($Archive)
-    if ($bytes.Length -eq 0) { throw 'Archive is empty.' }
-    if ($bytes.Length -gt 32MB) { throw [IO.InvalidDataException]::new('Archive byte limit exceeded (32 MiB).') }
+    if ($bytes.Length -eq 0) { throw (Get-IdsText -Key 'text.archive_is_empty') }
+    if ($bytes.Length -gt 32MB) { throw [IO.InvalidDataException]::new((Get-IdsText -Key 'text.archive_byte_limit_exceeded_32_mib')) }
     $result = ConvertFrom-IdsBaselineArchive -Bytes $bytes
     $skipped = @($result.skipped | Select-Object -First 100 | ForEach-Object {
         $entry = [string]$_.entry
@@ -66,8 +68,7 @@ function Import-IdsAssessmentArchive {
     })
     if ($result.packs.Count -eq 0) {
         return [pscustomobject]@{ status = 400; body = @{
-            error = 'The archive contains no importable rule packs or Settings Catalog policies. ' +
-                'PDF, Excel, XCCDF/OVAL, Group Policy and OMA-URI content is not supported.'
+            error = (Get-IdsText -Key 'import.unsupported_archive')
             skipped = $skipped; skippedCount = $result.skipped.Count; ignored = $result.ignored
         } }
     }
@@ -78,7 +79,7 @@ function Import-IdsAssessmentArchive {
         $candidate = Read-IdsBaselinePack -Bytes $packBytes
         foreach ($existing in $catalog.packs) {
             if ($existing.id -ceq $candidate.id -and $existing.version -ceq $candidate.version -and $existing.sha256 -cne $candidate.sha256) {
-                throw "Pack $($candidate.id)@$($candidate.version) already exists with different bytes; nothing was imported."
+                throw (Get-IdsText -Key 'text.pack_arg0_arg1_already_exists_with_different_bytes_nothing_was_imported' -Arguments @{ arg0 = ($candidate.id); arg1 = ($candidate.version) })
             }
         }
     }
@@ -113,20 +114,20 @@ function Invoke-IdsAssessmentRoute {
             $expected = "http://localhost:$($State.Config.Port)"
             $authority = ([uri]$expected).Authority
             if ($Request.Headers['Host'] -cne $authority -or $Request.Headers['Origin'] -cne $expected) {
-                $response.status = 403; $response.body = @{ error = 'Same-origin request required.' }
+                $response.status = 403; $response.body = @{ error = (Get-IdsText -Key 'text.same_origin_request_required') }
                 return $response
             }
             if ($Request.ContentType -notmatch '^(?i:application/json)(?:\s*;\s*charset\s*=\s*(?i:utf-8))?\s*$') {
-                $response.status = 415; $response.body = @{ error = 'Content-Type must be application/json with UTF-8 encoding.' }
+                $response.status = 415; $response.body = @{ error = (Get-IdsText -Key 'text.content_type_must_be_application_json_with_utf_8_encoding') }
                 return $response
             }
         }
         if ($Path -cnotin @('/api/assessment/packs', '/api/assessment/packs/remove')) {
             if (-not $State.Auth -and -not $State.Policies.snapshot) {
-                $response.status = 401; $response.body = @{ error = 'Not signed in.' }; return $response
+                $response.status = 401; $response.body = @{ error = (Get-IdsText -Key 'text.not_signed_in') }; return $response
             }
             if ($Method -ceq 'POST' -and ((Test-IdsWorkActive $State) -or $State.Browser.running)) {
-                $response.status = 409; $response.body = @{ error = 'An export, assessment or sign-in is already running.' }; return $response
+                $response.status = 409; $response.body = @{ error = (Get-IdsText -Key 'text.an_export_assessment_or_sign_in_is_already_running') }; return $response
             }
             if ($Method -ceq 'POST' -and $State.Policies) {
                 try { $null = Get-IdsLoadedPolicies $State } catch {
@@ -135,7 +136,7 @@ function Invoke-IdsAssessmentRoute {
             }
         }
         if ($Method -eq 'POST' -and (Test-IdsWorkActive $State)) {
-            $response.status = 409; $response.body = @{ error = 'Wait for policy loading, imports and active runs before changing the library.' }; return $response
+            $response.status = 409; $response.body = @{ error = (Get-IdsText -Key 'text.wait_for_policy_loading_imports_and_active_runs_before_changing_the_library') }; return $response
         }
         switch -CaseSensitive ("$Method $Path") {
             'POST /api/assessment/packs/remove' {
@@ -155,14 +156,14 @@ function Invoke-IdsAssessmentRoute {
                 foreach ($property in $body.PSObject.Properties) { $fields[$property.Name] = $property.Value }
                 Assert-IdsAssessmentFields $fields @('content', 'archive', 'path', 'kind') @()
                 if (@($fields.Keys | Where-Object { $_ -cin @('content', 'archive', 'path') }).Count -ne 1) {
-                    throw 'Provide exactly one of content or archive, or a host folder path.'
+                    throw (Get-IdsText -Key 'text.provide_exactly_one_of_content_or_archive_or_a_host_folder_path')
                 }
-                if ($body.kind -and $body.kind -cnotin @('reference', 'packs')) { throw 'Unknown import kind.' }
+                if ($body.kind -and $body.kind -cnotin @('reference', 'packs')) { throw (Get-IdsText -Key 'text.unknown_import_kind') }
                 if ($fields.ContainsKey('path') -and ($body.path -isnot [string] -or [string]::IsNullOrWhiteSpace($body.path))) {
-                    throw 'Provide an absolute host folder path.'
+                    throw (Get-IdsText -Key 'text.provide_an_absolute_host_folder_path')
                 }
                 if ($body.kind -ceq 'reference' -and $fields.ContainsKey('content')) {
-                    throw 'A custom reference requires a policy-set folder or ZIP, not rule-pack content.'
+                    throw (Get-IdsText -Key 'text.a_custom_reference_requires_a_policy_set_folder_or_zip_not_rule_pack_content')
                 }
                 if ($body.kind -eq 'reference' -or $fields.ContainsKey('path')) {
                     $result = if ($body.kind -eq 'reference') {
@@ -177,13 +178,13 @@ function Invoke-IdsAssessmentRoute {
                         @{ packs = $bytes; skipped = @(); skippedCount = 0; ignored = 0 }
                     }
                     if ($result.packs.Count -eq 0) {
-                        $response.status = 400; $response.body = @{ error = 'No safe reference checks or schema-1 rule packs found.'; skipped = $result.skipped; skippedCount = $result.skippedCount }; break
+                        $response.status = 400; $response.body = @{ error = (Get-IdsText -Key 'text.no_safe_reference_checks_or_schema_1_rule_packs_found'); skipped = $result.skipped; skippedCount = $result.skippedCount }; break
                     }
                     $catalog = Get-IdsAssessmentCatalog $State $Root
                     foreach ($entryBytes in $result.packs) {
                         $candidate = Read-IdsBaselinePack $entryBytes
                         if (@($catalog.packs | Where-Object { $_.id -ceq $candidate.id -and $_.version -ceq $candidate.version -and $_.sha256 -cne $candidate.sha256 }).Count) {
-                            throw 'Pack ID/version conflicts with the library; this item was not imported.'
+                            throw (Get-IdsText -Key 'text.pack_id_version_conflicts_with_the_library_this_item_was_not_imported')
                         }
                     }
                     $imported = @(Import-IdsBaselinePackSet -Packs $result.packs -ImportedRoot $State.Config.ImportedPackRoot)
@@ -197,21 +198,21 @@ function Invoke-IdsAssessmentRoute {
                     }); added = @($imported | Where-Object added).Count; skipped = $result.skipped; skippedCount = $result.skippedCount; ignored = $result.ignored }
                     break
                 }
-                if (@($fields.Keys | Where-Object { $_ -in @('content', 'archive') }).Count -ne 1) { throw 'Provide exactly one of content or archive.' }
+                if (@($fields.Keys | Where-Object { $_ -in @('content', 'archive') }).Count -ne 1) { throw (Get-IdsText -Key 'text.provide_exactly_one_of_content_or_archive') }
                 if ($fields.ContainsKey('archive')) {
                     $imported = Import-IdsAssessmentArchive $fields['archive'] $State $Root
                     $response.status = $imported.status; $response.body = $imported.body
                     break
                 }
-                if ($body.content -isnot [string]) { throw 'Pack content must be original UTF-8 JSON text.' }
+                if ($body.content -isnot [string]) { throw (Get-IdsText -Key 'text.pack_content_must_be_original_utf_8_json_text') }
                 $encoding = [Text.UTF8Encoding]::new($false, $true)
-                if ($encoding.GetByteCount($body.content) -gt 10MB) { throw [IO.InvalidDataException]::new('Decoded pack byte limit exceeded (10 MiB).') }
+                if ($encoding.GetByteCount($body.content) -gt 10MB) { throw [IO.InvalidDataException]::new((Get-IdsText -Key 'text.decoded_pack_byte_limit_exceeded_10_mib')) }
                 $bytes = $encoding.GetBytes($body.content)
                 $candidate = Read-IdsBaselinePack -Bytes $bytes
                 $catalog = Get-IdsAssessmentCatalog $State $Root
                 foreach ($existing in $catalog.packs) {
                     if ($existing.id -ceq $candidate.id -and $existing.version -ceq $candidate.version -and $existing.sha256 -cne $candidate.sha256) {
-                        throw 'Pack ID/version already exists with different bytes.'
+                        throw (Get-IdsText -Key 'text.pack_id_version_already_exists_with_different_bytes')
                     }
                 }
                 $item = @(Import-IdsBaselinePackSet -Packs @(,$bytes) -ImportedRoot $State.Config.ImportedPackRoot)[0]
@@ -231,16 +232,16 @@ function Invoke-IdsAssessmentRoute {
                     $response.status = 202
                     $response.body = @{ started = $true; runId = $State.Assessment.runId }
                 } else {
-                    $response.status = 409; $response.body = @{ error = 'An export, assessment or sign-in is already running.' }
+                    $response.status = 409; $response.body = @{ error = (Get-IdsText -Key 'text.an_export_assessment_or_sign_in_is_already_running') }
                 }
             }
             'GET /api/assessment' {
                 $a = $State.Assessment
                 if ($null -ne $a.resultEpoch -and $a.resultEpoch -ne $a.epoch) {
-                    $response.status = 404; $response.body = @{ error = 'No assessment in this session.' }; break
+                    $response.status = 404; $response.body = @{ error = (Get-IdsText -Key 'text.no_assessment_in_this_session') }; break
                 }
                 $response.body = @{
-                    running = $a.running; done = $a.done; percent = $a.percent; phase = $a.phase
+                    running = $a.running; done = $a.done; percent = $a.percent; phase = $a.phase; locale = $a.locale
                     error = $a.error; partial = $a.partial; reportPaths = $a.reportPaths
                     summaries = @($a.result.summaries | Where-Object { $null -ne $_ })
                 }
@@ -248,7 +249,7 @@ function Invoke-IdsAssessmentRoute {
             'GET /api/assessment/results' {
                 $a = $State.Assessment
                 if (-not $a.done -or -not $a.result -or $a.resultEpoch -ne $a.epoch) {
-                    $response.status = 404; $response.body = @{ error = 'No completed assessment in this session.' }; break
+                    $response.status = 404; $response.body = @{ error = (Get-IdsText -Key 'text.no_completed_assessment_in_this_session') }; break
                 }
                 $response.body = ConvertTo-IdsReportProjection $a.result
             }
@@ -256,9 +257,9 @@ function Invoke-IdsAssessmentRoute {
     } catch [IO.InvalidDataException] {
         $response.status = 413; $response.body = @{ error = $_.Exception.Message }
     } catch [IO.IOException] {
-        $response.status = 500; $response.body = @{ error = 'Local assessment storage failed.' }
+        $response.status = 500; $response.body = @{ error = (Get-IdsText -Key 'text.local_assessment_storage_failed') }
     } catch [InvalidOperationException] {
-        $response.status = 500; $response.body = @{ error = 'Assessment worker could not start.' }
+        $response.status = 500; $response.body = @{ error = (Get-IdsText -Key 'text.assessment_worker_could_not_start') }
     } catch {
         $response.status = 400; $response.body = @{ error = $_.Exception.Message }
     }

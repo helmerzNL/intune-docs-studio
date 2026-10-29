@@ -45,11 +45,45 @@ chosen output folder. It is not a hosted service.
   no equal, ancestor, or descendant paths and no symlink/junction roots/ancestors.
   Known non-redirecting Windows cloud-placeholder tags (including OneDrive) are
   allowed; unknown reparse tags remain blocked. A rejected path identifies the
-  problematic ancestor and explains in Dutch how to choose an ordinary local
+  problematic ancestor and explains in the selected language how to choose an ordinary local
   folder or move the application/documentation out of a linked directory.
   A new `assessment-<generated-id>` directory contains `assessment.md` and
   `assessment.json` for each successful run. Reports do not change exporter
   pages/manifests, prune previous runs, or automatically upload, commit, or push.
+
+## Language settings and output
+
+The application supports `en-GB`, `nl-NL`, `fr-FR`, `de-DE`, `sv-SE`, `es-ES`,
+`nb-NO` (Norwegian Bokmål), `pt-PT` (European Portuguese), `it-IT` and `da-DK`.
+The header selector uses bundled flags, native names and keyboard navigation.
+The first visit matches the browser language with English fallback. The selected
+locale is stored only in this browser's local storage, not in tenant exports or
+authentication objects; clearing the browser's site data resets that preference.
+This preference is not a credential and does not alter permissions or consent.
+
+Language changes update the interface in place without signing out, replacing
+the active policy source, clearing wizard data or cancelling work. Requests carry
+the selected locale; each new background job captures a validated locale before
+starting. Its progress and generated human-facing output keep that captured
+language, even if the interface changes language while it runs. Select the
+desired output language before starting a job. Changing a preference alone does
+not rewrite old documentation/reports or re-evaluate evidence.
+
+Only application-owned presentation is translated. Customer names and values,
+Microsoft setting labels, external framework/control wording, technical IDs,
+API/schema/storage keys and machine-readable status values remain unchanged.
+Native Windows dialog controls and Microsoft/identity-provider pages follow the
+OS/provider language; the app's dialog title and its own errors are localized.
+CLI developer diagnostics, source comments and contributor documentation are
+outside the translation scope.
+
+Language catalogs and SVG flags are local product resources, included in the
+package allowlist. No translation API/CDN or internet connection is needed for
+offline localization. Missing catalog/key and unsupported-locale diagnostics
+identify translation problems rather than treating an English fallback as
+complete coverage. If resources are missing or damaged, stop the app and restore
+the complete matching application package, keeping customer output separate as
+described below. Do not copy tokens or browser-session state.
 
 ## Assessment scope and operation
 

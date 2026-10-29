@@ -15,6 +15,7 @@ BeforeAll {
                 $folder = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
                 [void][IO.Directory]::CreateDirectory("$folder\app\baselines")
                 Copy-Item "$repo\lib" "$folder\app" -Recurse
+                Copy-Item "$repo\locales" "$folder\app" -Recurse
                 $pack = [Text.Encoding]::UTF8.GetString((New-IdsTestPackBytes)) | ConvertFrom-Json
                 $pack.controls[0].mappings[0].family = 'deviceConfiguration'
                 $pack.controls[0].mappings[0].policyTypes = @('windows10EndpointProtectionConfiguration')

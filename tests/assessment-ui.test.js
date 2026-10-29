@@ -5,8 +5,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { installI18n, withoutTranslationSpans } = require('./i18n-test-helpers');
 
-function assessmentDashboard(respond = () => ({})) {
+async function assessmentDashboard(respond = () => ({})) {
   const elements = new Map();
   const requests = [];
   const timers = new Map();
@@ -45,14 +46,16 @@ function assessmentDashboard(respond = () => ({})) {
       querySelectorAll(selector) {
         if (selector === '#sections input') return [{ checked: true, value: 'compliance' }];
         const id = selector.split(' ')[0].slice(1);
-        return descendants(element(id)).filter((el) => el.type === 'checkbox');
+        return descendants(element(id)).filter((el) => selector.endsWith(' details')
+          ? el.tagName === 'DETAILS' : el.type === 'checkbox');
       },
       createElement: () => element(Symbol())
     },
     window: { location: { search: '' }, history: { replaceState() {} }, addEventListener() {}, scrollTo() {} },
     URLSearchParams, TextEncoder, btoa,
     fetch: async (url, options) => {
-      const request = { url, payload: options && JSON.parse(options.body), method: options?.method || 'GET' };
+      const request = { url, payload: options?.body && JSON.parse(options.body), method: options?.method || 'GET',
+        headers: options?.headers };
       requests.push(request);
       const response = await respond(url, request) || {};
       const status = response.httpStatus || 200;
@@ -63,13 +66,38 @@ function assessmentDashboard(respond = () => ({})) {
     clearInterval(id) { timers.delete(id); }, setTimeout() {},
     alert(message) { alerts.push(message); }, confirm() { return true; }
   });
+  await installI18n(context).ready;
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'web', 'app.js'), 'utf8'), context);
   return { element, requests, context, timers, alerts, focused: () => focused,
     run(code) { return vm.runInContext(code, context); } };
 }
 
-test('assessment rendering treats imported control names as text', () => {
-  const { element, run } = assessmentDashboard();
+test('Home and assessment review pluralize policy counts idiomatically in every locale, including French many', async () => {
+  const d = await assessmentDashboard(url => url === '/api/state' ? connectedState() : {});
+  await new Promise(setImmediate);
+  await d.run('refreshState()');
+  const nouns = {
+    'en-GB': ['policy', 'policies'], 'nl-NL': ['beleidsregel', 'beleidsregels'],
+    'fr-FR': ['stratégie', 'stratégies'], 'de-DE': ['Richtlinie', 'Richtlinien'],
+    'sv-SE': ['princip', 'principer'], 'es-ES': ['directiva', 'directivas'],
+    'nb-NO': ['policy', 'policyer'], 'pt-PT': ['política', 'políticas'],
+    'it-IT': ['criterio', 'criteri'], 'da-DK': ['politik', 'politikker']
+  };
+  assert.equal(new Intl.PluralRules('fr-FR').select(1000000), 'many');
+  for (const [locale, [singular, plural]] of Object.entries(nouns)) {
+    await d.context.window.IdsI18n.setLocale(locale);
+    for (const count of [0, 1, 2, 1.5, 1000000]) {
+      d.run(`state.policies.count = ${count}; renderPolicyState(false); renderAssessmentReview()`);
+      const noun = new Intl.PluralRules(locale).select(count) === 'one' ? singular : plural;
+      const expected = `${new Intl.NumberFormat(locale).format(count)} ${noun} · `;
+      assert.ok(d.element('policySummary').textContent.startsWith(expected), `${locale}:${count} Home`);
+      assert.ok(d.element('assessmentReview').innerHTML.includes(`<p>${expected}`), `${locale}:${count} review`);
+    }
+  }
+});
+
+test('assessment rendering treats imported control names as text', async () => {
+  const { element, run } = await assessmentDashboard();
   run(`renderAssessmentResult({
     summaries: [],
     controls: [{
@@ -82,8 +110,46 @@ test('assessment rendering treats imported control names as text', () => {
   assert.match(element('assessmentResults').innerHTML, /&lt;script&gt;/);
 });
 
-test('readable policy tables show shared documentation formatting and escape every cell', () => {
-  const d = assessmentDashboard();
+test('localized result display reasons are escaped without replacing canonical evidence or retranslating captured messages', async () => {
+  const d = await assessmentDashboard();
+  const result = {
+    controls: [{
+      controlId: 'SYN-LOCALIZED', title: 'Synthetic control', status: 'misaligned',
+      reason: 'Canonical control mismatch',
+      displayReason: 'Waarde <configuratie> ontbreekt & vereist herstel',
+      policyResults: [{
+        policyKey: 'settingsCatalog:synthetic', status: 'misaligned',
+        reason: 'Canonical policy mismatch',
+        displayReason: 'Configuratie wijkt af: <img src=x onerror=alert(1)>'
+      }]
+    }]
+  };
+  d.run(`renderAssessmentResult(${JSON.stringify(result)})`);
+  const assertLocalized = () => {
+    const html = d.element('assessmentResults').innerHTML;
+    assert.match(html, /Waarde &lt;configuratie&gt; ontbreekt &amp; vereist herstel/);
+    assert.match(html, /Configuratie wijkt af: &lt;img src=x onerror=alert\(1\)&gt;/);
+    assert.doesNotMatch(html, /Canonical control mismatch|Canonical policy mismatch|<img|<configuratie>/);
+    assert.equal(d.run('assessmentResult.controls[0].reason'), result.controls[0].reason);
+    assert.equal(d.run('assessmentResult.controls[0].policyResults[0].reason'), result.controls[0].policyResults[0].reason);
+    assert.equal(d.run('assessmentResult.controls[0].status'), 'misaligned');
+  };
+  assertLocalized();
+  await d.context.window.IdsI18n.setLocale('fr-FR');
+  assertLocalized();
+
+  delete result.controls[0].displayReason;
+  delete result.controls[0].policyResults[0].displayReason;
+  result.controls[0].reason = 'Legacy control <reason>';
+  result.controls[0].policyResults[0].reason = 'Legacy policy <reason>';
+  d.run(`renderAssessmentResult(${JSON.stringify(result)})`);
+  assert.match(d.element('assessmentResults').innerHTML, /Legacy control &lt;reason&gt;/);
+  assert.match(d.element('assessmentResults').innerHTML, /Legacy policy &lt;reason&gt;/);
+  assert.doesNotMatch(d.element('assessmentResults').innerHTML, /Waarde|Configuratie|<reason>/);
+});
+
+test('readable policy tables show shared documentation formatting and escape every cell', async () => {
+  const d = await assessmentDashboard();
   d.run(`renderAssessmentResult({
     policies: [{ key: 'settingsCatalog:synthetic', name: 'Firewall policy', assignmentsComplete: true,
       settingsNote: 'Supported evidence only', settingsTables: [{
@@ -112,8 +178,8 @@ test('readable policy tables show shared documentation formatting and escape eve
   assert.match(d.element('assessmentResults').innerHTML, /Exact typed evidence/);
 });
 
-test('evidence shows every status, typed values, assignment limits, sources and filters without compliance claims', () => {
-  const { element, run } = assessmentDashboard();
+test('evidence shows every status, typed values, assignment limits, sources and filters without compliance claims', async () => {
+  const { element, run } = await assessmentDashboard();
   const statuses = ['aligned', 'misaligned', 'missing', 'potentialConflict', 'notApplicable', 'notAssessed'];
   const result = {
     context: { platforms: ['windows11'], osVersions: { windows11: '10.0.22000' } },
@@ -174,8 +240,8 @@ const boxes = (d, root) => d.element(root).children.map((label) => label.childre
 const renderCatalog = (d, packs = syntheticPacks()) =>
   d.run(`renderAssessmentPacks(${JSON.stringify({ packs, errors: [] })})`);
 
-test('imported Microsoft authority is author-declared, never an official reviewed baseline', () => {
-  const d = assessmentDashboard();
+test('imported Microsoft authority is author-declared, never an official reviewed baseline', async () => {
+  const d = await assessmentDashboard();
   renderCatalog(d, [{ ...syntheticPacks()[0], origin: 'imported' }]);
   const html = d.element('assessmentPacks').children[0].children[1].innerHTML;
   assert.match(html, /customer-imported/i);
@@ -188,10 +254,10 @@ test('imported Microsoft authority is author-declared, never an official reviewe
 });
 
 test('iOS ownership starts unknown and is described as explicit user comparison context', async () => {
-  const html = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
+  const html = withoutTranslationSpans(fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8'));
   assert.match(html, /id="assessmentIosOwnership">\s*<option value="">Unknown<\/option>/);
   assert.doesNotMatch(html, /personal scope is determined from policy evidence/);
-  const d = assessmentDashboard((url) => url === '/api/state' ? connectedState() : {});
+  const d = await assessmentDashboard((url) => url === '/api/state' ? connectedState() : {});
   await selectAll(d);
   await d.element('btnAssessmentRun').handlers.click();
   const request = d.requests.find((r) => r.url === '/api/assessment' && r.method === 'POST');
@@ -201,8 +267,8 @@ test('iOS ownership starts unknown and is described as explicit user comparison 
   assert.equal(d.element('assessmentIosOwnership').value, '');
 });
 
-test('catalog uses exact metadata, platform and profile selections and disables unavailable combinations', () => {
-  const d = assessmentDashboard();
+test('catalog uses exact metadata, platform and profile selections and disables unavailable combinations', async () => {
+  const d = await assessmentDashboard();
   renderCatalog(d);
   const platforms = boxes(d, 'assessmentPlatforms');
   platforms[0].checked = true;
@@ -236,7 +302,7 @@ test('catalog uses exact metadata, platform and profile selections and disables 
 
 test('import sends original JSON text and preserves selected pack and export options on validation failure', async () => {
   let reject = false;
-  const d = assessmentDashboard((url, r) => {
+  const d = await assessmentDashboard((url, r) => {
     if (url === '/api/assessment/packs' && r.method === 'POST') {
       return reject ? { httpStatus: 400, body: { error: '<Invalid pack>' } }
         : { httpStatus: 201, body: { pack: syntheticPacks()[3] } };
@@ -270,7 +336,7 @@ test('import sends original JSON text and preserves selected pack and export opt
 });
 
 test('import bounds files before reading and checks decoded UTF-8 bytes before submission', async () => {
-  const d = assessmentDashboard();
+  const d = await assessmentDashboard();
   let reads = 0;
   for (const file of [
     { name: 'pack.pdf', size: 2 },
@@ -305,10 +371,114 @@ async function selectAll(d) {
   d.element('assessmentOutputPath').value = ' C:\\SyntheticReports ';
 }
 
+test('live switching all languages preserves exact wizard, profile, queue, evidence and running job state', async () => {
+  const d = await assessmentDashboard(url => url === '/api/state' ? connectedState() : {});
+  await selectAll(d);
+  for (const box of boxes(d, 'assessmentPlatforms')) box.checked = box.value === 'windows11';
+  boxes(d, 'assessmentPlatforms')[0].handlers.change();
+  d.element('assessmentProfile').value = boxes(d, 'assessmentPacks')[0].value;
+  d.element('assessmentProfile').handlers.change();
+  boxes(d, 'assessmentPacks')[0].checked = true;
+  click(d, 'btnAssessPlatformsNext');
+  click(d, 'btnAssessImportNext');
+  click(d, 'btnAssessBaselinesNext');
+  d.element('assessmentOsWindows11').value = ' 10.0.26100 ';
+  d.element('assessmentOsMacos').value = ' 14.0 ';
+  d.element('assessmentEnrollment').value = 'corporateOwnedWorkProfile';
+  d.element('assessmentIosOwnership').value = 'personallyOwned';
+  d.element('assessmentImportHostPath').value = ' C:\\Synthetic source ';
+  d.element('assessmentStatusFilter').value = 'notAssessed';
+  click(d, 'btnAssessContextNext');
+  d.run(`assessmentImportQueue.push({
+    id: 700, name: '<queue> & {v0}', kind: 'reference', status: 'failed',
+    file: { name: 'synthetic.json', size: 2 },
+    result: { error: 'Server-owned message stays literal', packs: [] }
+  });
+  renderAssessmentImportQueue(); renderAssessmentImportSummary();
+  renderAssessmentResult({
+    controls: [{ controlId: 'SYN-1', title: '<Customer control>', reason: 'Captured job message',
+      status: 'notAssessed', expected: [{ displayName: 'Customer setting', expected: '<value>', operator: 'eq' }],
+      observed: [], policyResults: [], references: [] }],
+    summaries: [], policies: [], context: { synthetic: true }
+  });
+  renderSummary({ stats: { created: 1234 }, root: 'C:\\\\SyntheticExport', counts: {} });
+  assessmentBusy = true; assessmentStarting = true; assessmentPolling = true;
+  exportBusy = true; exportStarting = true; sourceTransferBusy = true; assessmentImporting = true;
+  assessmentTimer = setInterval(() => {}, 1000); logTimer = setInterval(() => {}, 1000);
+  policyTimer = setInterval(() => {}, 1000); deviceTimer = setInterval(() => {}, 1000);
+  syncJobAdmission();
+  globalThis.retained = { state, assessmentPacks, assessmentImportQueue, assessmentResult, documentSummary,
+    assessmentTimer, logTimer, policyTimer, deviceTimer, assessmentGeneration, workspaceGeneration,
+    stateRequest, assessmentCatalogRequest, assessmentCurrentStep, assessmentQueueSequence };`);
+  const fields = ['assessmentOutputPath', 'assessmentOsWindows11', 'assessmentOsMacos', 'assessmentEnrollment',
+    'assessmentIosOwnership', 'assessmentProfile', 'assessmentImportHostPath', 'assessmentStatusFilter'];
+  const values = fields.map(id => d.element(id).value);
+  const selections = () => ['assessmentPlatforms', 'assessmentPacks'].map(id =>
+    boxes(d, id).map(box => [box.value, box.checked, box.disabled]));
+  const selected = selections();
+  const requestCount = d.requests.length;
+  const timerCount = d.timers.size;
+  const focus = d.focused();
+  for (const locale of ['nl-NL', 'fr-FR', 'de-DE', 'sv-SE', 'es-ES', 'nb-NO', 'pt-PT', 'it-IT', 'da-DK', 'en-GB']) {
+    await d.run(`window.IdsI18n.setLocale(${JSON.stringify(locale)})`);
+    assert.deepEqual(fields.map(id => d.element(id).value), values, locale);
+    assert.deepEqual(selections(), selected, locale);
+    assert.equal(d.context.document.documentElement.getAttribute('lang'), locale);
+    assert.equal(d.requests.length, requestCount, 'switch does not restart jobs, auth, collection or refresh');
+    assert.equal(d.timers.size, timerCount);
+    assert.equal(d.focused(), focus);
+    assert.equal(d.run(`Object.entries(retained).every(([key, value]) => eval(key) === value)`), true);
+    assert.equal(d.run('assessmentBusy && assessmentStarting && assessmentPolling && exportBusy && exportStarting && sourceTransferBusy && assessmentImporting'), true);
+    assert.ok(d.element('assessmentResults').innerHTML.includes('&lt;Customer control&gt;'));
+    assert.ok(d.element('assessmentResults').innerHTML.includes('Captured job message'));
+    assert.ok(d.element('assessmentImportSummary').innerHTML.includes('Server-owned message stays literal'));
+    assert.equal(d.run('assessmentCurrentStep'), 'review');
+  }
+});
+
+test('HTML interpolation escapes hostile literal data exactly once and API requests carry the current locale', async () => {
+  const d = await assessmentDashboard(url => url === '/api/state' ? connectedState() : {});
+  await new Promise(setImmediate);
+  const hostile = '<img src=x onerror=alert(1)> {v0} $&';
+  const rendered = d.run(`h('text.use', { v0: ${JSON.stringify(hostile)} })`);
+  assert.equal(rendered, 'use &lt;img src=x onerror=alert(1)&gt; {v0} $&amp;');
+  d.run(`renderAssessmentResult({ controls: [{ title: 'Synthetic', status: 'notAssessed',
+    expected: ${JSON.stringify(hostile)}, observed: [], policyResults: [] }] })`);
+  assert.match(d.element('assessmentResults').innerHTML, /&lt;img src=x/);
+  assert.doesNotMatch(d.element('assessmentResults').innerHTML, /<img|&amp;lt;/);
+  await d.run("window.IdsI18n.setLocale('de-DE')");
+  await d.run("post('/api/synthetic', { synthetic: true })");
+  const last = d.requests.at(-1);
+  assert.equal(last.headers['X-Ids-Locale'], 'de-DE');
+  assert.equal(last.headers['Content-Type'], 'application/json');
+  assert.deepEqual(last.payload, { synthetic: true });
+  await d.run("api('/api/synthetic')");
+  assert.equal(d.requests.at(-1).headers['X-Ids-Locale'], 'de-DE');
+});
+
+test('switching updates app-owned errors and folder guidance but never matches server strings by content', async () => {
+  const d = await assessmentDashboard(url => url === '/api/state' ? connectedState() : {});
+  await new Promise(setImmediate);
+  d.run(`localizeText($('assessmentProgress'), () => t('text.ready'));
+    writeText($('assessmentProgress'), 'Ready');
+    showMessage($('policyLoadError'), new UiError(() => t('text.could_not_reload_policies')));
+    setHidden('policyLoadError', false);
+    folderPickerBusy = true;
+    localizeText($('assessmentQueueStatus'), () => t('text.choose_a_folder_in_the_windows_dialog_on_the'));
+    assessmentImportQueue.push({ id: 1, name: 'Synthetic', status: 'queued', kind: 'packs' });`);
+  await d.run("window.IdsI18n.setLocale('nl-NL')");
+  const nl = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'locales', 'nl-NL.json'), 'utf8')).ui;
+  assert.equal(d.element('assessmentProgress').textContent, 'Ready');
+  assert.equal(d.element('policyLoadError').textContent, nl['text.could_not_reload_policies']);
+  assert.equal(isHidden(d, 'policyLoadError'), false);
+  assert.equal(d.element('assessmentQueueStatus').textContent, nl['text.choose_a_folder_in_the_windows_dialog_on_the']);
+  assert.equal(d.run('folderPickerBusy'), true);
+});
+
 test('four-platform assessment submits snapshot identities and exact context, polls 202 and renders only server report paths', async () => {
   let done = false;
   let started = false;
-  const d = assessmentDashboard((url, r) => {
+  const d = await assessmentDashboard((url, r) => {
     if (url === '/api/state') return connectedState();
     if (url === '/api/assessment' && r.method === 'POST') {
       started = true;
@@ -367,7 +537,7 @@ test('four-platform assessment submits snapshot identities and exact context, po
 
 test('admission validates missing packs/platforms, handles 409 and report errors without losing selection', async () => {
   let startStatus = 409;
-  const d = assessmentDashboard((url, r) => {
+  const d = await assessmentDashboard((url, r) => {
     if (url === '/api/state') return connectedState();
     if (url === '/api/assessment' && r.method === 'POST') return { httpStatus: startStatus,
       body: startStatus === 409 ? { error: 'An export is already running.' } : { started: true } };
@@ -396,7 +566,7 @@ test('idle refresh preserves pending assessment admission and export settings un
   for (const outcome of ['409', 'network']) {
     const previousEvidence = outcome === 'network';
     let finish;
-    const d = assessmentDashboard((url, r) => {
+    const d = await assessmentDashboard((url, r) => {
       if (url === '/api/state') return connectedState();
       if (url === '/api/assessment' && r.method === 'POST') {
         return new Promise((resolve, reject) => {
@@ -445,7 +615,7 @@ test('tenant reset releases admission but a stale POST cannot release a newer as
   let tenant = 'synthetic-first';
   let running = false;
   const pendingPosts = [];
-  const d = assessmentDashboard((url, r) => {
+  const d = await assessmentDashboard((url, r) => {
     if (url === '/api/state') return connectedState(tenant);
     if (url === '/api/assessment' && r.method === 'POST') {
       return new Promise((resolve) => { pendingPosts.push(resolve); });
@@ -482,7 +652,7 @@ test('tenant reset releases admission but a stale POST cannot release a newer as
 
 test('an in-flight export disables assessment admission, including before export returns', async () => {
   let finish;
-  const d = assessmentDashboard((url, r) => {
+  const d = await assessmentDashboard((url, r) => {
     if (url === '/api/state') return connectedState();
     if (url === '/api/export' && r.method === 'POST') return new Promise((resolve) => { finish = resolve; });
     return {};
@@ -500,7 +670,7 @@ test('an in-flight export disables assessment admission, including before export
 test('clearWorkspace clears assessment evidence, context and report destination while stale progress cannot restore them', async () => {
   let release;
   let hold = false;
-  const d = assessmentDashboard((url) => {
+  const d = await assessmentDashboard((url) => {
     if (url === '/api/state') return connectedState();
     if (url === '/api/assessment' && hold) return new Promise((resolve) => { release = resolve; });
     return {};
@@ -526,7 +696,7 @@ test('tenant change clears evidence and rejects an in-flight results response', 
   let tenant = 'synthetic-first';
   let hold = false;
   let release;
-  const d = assessmentDashboard((url) => {
+  const d = await assessmentDashboard((url) => {
     if (url === '/api/state') return connectedState(tenant);
     if (url === '/api/assessment') return hold ? { done: true } : {};
     if (url === '/api/assessment/results') return new Promise((resolve) => { release = resolve; });
@@ -548,7 +718,7 @@ test('tenant change clears evidence and rejects an in-flight results response', 
 test('401 on progress or results clears sensitive evidence and 404 resets same-account auth epoch results', async () => {
   for (const stage of ['progress401', 'results401', 'epoch404', 'epochIdle']) {
     let active = false;
-    const d = assessmentDashboard((url) => {
+    const d = await assessmentDashboard((url) => {
       if (url === '/api/state') return connectedState();
       if (url === '/api/assessment' && active) {
         if (stage === 'progress401') return { httpStatus: 401, body: { error: 'Not signed in.' } };
@@ -575,7 +745,7 @@ test('signout, saved-session forget, sign-in retry and tenant edits invalidate p
     let releaseProgress;
     let releaseAction;
     let hold = false;
-    const d = assessmentDashboard((url, r) => {
+    const d = await assessmentDashboard((url, r) => {
       if (url === '/api/state') return connectedState();
       if (url === '/api/assessment' && hold) return new Promise((resolve) => { releaseProgress = resolve; });
       if (r.method === 'POST') return new Promise((resolve) => { releaseAction = resolve; });
@@ -601,7 +771,7 @@ test('signout, saved-session forget, sign-in retry and tenant edits invalidate p
 test('stale import completion and assessment admission cannot repopulate a reset session', async () => {
   for (const operation of ['import', 'start']) {
     let release;
-    const d = assessmentDashboard((url, r) => {
+    const d = await assessmentDashboard((url, r) => {
       if (url === '/api/state') return connectedState();
       if (r.method === 'POST') return new Promise((resolve) => { release = resolve; });
       return {};
@@ -625,7 +795,7 @@ test('stale import completion and assessment admission cannot repopulate a reset
 
 test('an externally running export releases assessment admission when server state becomes idle', async () => {
   let running = true;
-  const d = assessmentDashboard((url) => {
+  const d = await assessmentDashboard((url) => {
     if (url === '/api/state') return { ...connectedState(), export: { running } };
     return {};
   });
@@ -640,7 +810,7 @@ test('catalog responses issued before import cannot replace the newly imported c
   let releaseCatalog;
   let delayed = false;
   const imported = { ...syntheticPacks()[0], id: 'synthetic-new' };
-  const d = assessmentDashboard((url, r) => {
+  const d = await assessmentDashboard((url, r) => {
     if (url === '/api/assessment/packs' && r.method === 'POST') return { httpStatus: 201, body: { pack: imported } };
     if (url === '/api/assessment/packs' && delayed) return new Promise((resolve) => { releaseCatalog = resolve; });
     return {};
@@ -656,8 +826,8 @@ test('catalog responses issued before import cannot replace the newly imported c
   assert.equal(boxes(d, 'assessmentPacks').some((b) => b.value.startsWith('synthetic-new@')), true);
 });
 
-test('all policy evidence flags unassigned and unknown assignments even outside matched controls', () => {
-  const d = assessmentDashboard();
+test('all policy evidence flags unassigned and unknown assignments even outside matched controls', async () => {
+  const d = await assessmentDashboard();
   d.run(`renderAssessmentResult({ summaries: [], controls: [], policies: [
     { key: 'synthetic:unassigned', name: '<Unassigned>', assignments: [], assignmentsComplete: true },
     { key: 'synthetic:unknown', assignments: [], assignmentsComplete: false }
@@ -670,7 +840,7 @@ test('all policy evidence flags unassigned and unknown assignments even outside 
 test('stale export folder and file reads cannot overwrite a reset workspace', async () => {
   let releaseFolder;
   let releaseFiles;
-  const d = assessmentDashboard((url) => {
+  const d = await assessmentDashboard((url) => {
     if (url === '/api/state') return connectedState();
     if (url.startsWith('/api/checkfolder')) return new Promise((resolve) => { releaseFolder = resolve; });
     if (url === '/api/files') return new Promise((resolve) => { releaseFiles = resolve; });
@@ -691,7 +861,7 @@ test('stale export folder and file reads cannot overwrite a reset workspace', as
 
 test('signout blocks new assessment admission until refreshed authentication is available', async () => {
   let release;
-  const d = assessmentDashboard((url, r) => {
+  const d = await assessmentDashboard((url, r) => {
     if (url === '/api/state') return connectedState();
     if (r.method === 'POST') return new Promise((resolve) => { release = resolve; });
     return {};
@@ -705,7 +875,7 @@ test('signout blocks new assessment admission until refreshed authentication is 
 
 test('network and 413 import errors preserve selection and expose actionable text', async () => {
   let network = false;
-  const d = assessmentDashboard((url, r) => {
+  const d = await assessmentDashboard((url, r) => {
     if (url === '/api/assessment/packs' && r.method === 'POST') {
       if (network) throw new Error('Synthetic connection failed');
       return { httpStatus: 413, body: { error: 'Decoded pack byte limit exceeded.' } };
@@ -728,7 +898,7 @@ test('network and 413 import errors preserve selection and expose actionable tex
 
 test('401 on admission or import resets evidence and disables assessment until sign-in', async () => {
   for (const action of ['btnAssessmentRun', 'btnAssessmentImport']) {
-    const d = assessmentDashboard((url, r) => {
+    const d = await assessmentDashboard((url, r) => {
       if (url === '/api/state') return connectedState();
       if (r.method === 'POST') return { httpStatus: 401, body: { error: 'Not signed in.' } };
       return {};
@@ -745,7 +915,7 @@ test('401 on admission or import resets evidence and disables assessment until s
 
 test('discovering another running assessment removes old evidence and report paths without changing destination', async () => {
   let running = false;
-  const d = assessmentDashboard((url) => {
+  const d = await assessmentDashboard((url) => {
     if (url === '/api/state') return connectedState();
     if (url === '/api/assessment') return { running, phase: 'Collecting', percent: 45 };
     return {};
@@ -763,7 +933,7 @@ test('discovering another running assessment removes old evidence and report pat
 
 test('shutdown honors server 409 and permits stopping after a previously observed export finishes', async () => {
   let blocked = true;
-  const d = assessmentDashboard((url) => {
+  const d = await assessmentDashboard((url) => {
     if (url === '/api/state') return { ...connectedState(), export: { running: true } };
     if (url.startsWith('/api/export/log')) return { done: true, running: false };
     if (url === '/api/quit') return blocked
@@ -804,7 +974,7 @@ function expectStep(d, number, focusedHeading) {
 }
 
 test('wizard Next and Back validate the current step, mark the stepper and focus the new heading', async () => {
-  const d = assessmentDashboard((url) => (url === '/api/state' ? connectedState() : {}));
+  const d = await assessmentDashboard((url) => (url === '/api/state' ? connectedState() : {}));
   await new Promise(setImmediate);
   renderCatalog(d);
   expectStep(d, 1, null);
@@ -853,7 +1023,7 @@ test('wizard Next and Back validate the current step, mark the stepper and focus
 });
 
 test('step buttons navigate back without losing choices, never skip forward and block during active work', async () => {
-  const d = assessmentDashboard((url) => (url === '/api/state' ? connectedState() : {}));
+  const d = await assessmentDashboard((url) => (url === '/api/state' ? connectedState() : {}));
   await selectAll(d);
   boxes(d, 'assessmentPlatforms').forEach((box, i) => { box.checked = i === 0; });
   boxes(d, 'assessmentPlatforms')[0].handlers.change();
@@ -895,7 +1065,7 @@ test('step buttons navigate back without losing choices, never skip forward and 
 });
 
 test('refreshing completed results does not undo explicit backward wizard navigation', async () => {
-  const d = assessmentDashboard((url) => {
+  const d = await assessmentDashboard((url) => {
     if (url === '/api/state') return connectedState();
     if (url === '/api/assessment') return { done: true, percent: 100 };
     if (url === '/api/assessment/results') return { summaries: [], controls: [] };
@@ -911,7 +1081,7 @@ test('refreshing completed results does not undo explicit backward wizard naviga
 
 test('report path rejection shows actionable Dutch guidance without a raw HTTP prefix or losing selections', async () => {
   const message = 'Deze map bevat een junction of reparse point. Kies via Choose report folder een gewone lokale map.';
-  const d = assessmentDashboard((url, r) => {
+  const d = await assessmentDashboard((url, r) => {
     if (url === '/api/state') return connectedState();
     if (url === '/api/assessment' && r.method === 'POST') return { httpStatus: 400, body: { error: message } };
     return {};
@@ -926,7 +1096,7 @@ test('report path rejection shows actionable Dutch guidance without a raw HTTP p
 
 test('background refresh shows a running or completed assessment without moving focus; errors keep the step', async () => {
   for (const progress of [{ running: true, percent: 20, phase: 'Collecting' }, { done: true, percent: 100 }]) {
-    const d = assessmentDashboard((url) => {
+    const d = await assessmentDashboard((url) => {
       if (url === '/api/state') return connectedState();
       if (url === '/api/assessment') return progress;
       if (url === '/api/assessment/results') return { summaries: [], controls: [{ controlId: 'SYN-BOOT' }] };
@@ -936,7 +1106,7 @@ test('background refresh shows a running or completed assessment without moving 
     expectStep(d, 6, null);
   }
   let failing = false;
-  const d = assessmentDashboard((url) => {
+  const d = await assessmentDashboard((url) => {
     if (url === '/api/state') return connectedState();
     if (url === '/api/assessment') return failing ? { done: true, error: 'Synthetic report failure.' } : {};
     return {};
@@ -954,7 +1124,7 @@ test('admission moves to results with focus and New assessment waits for the run
   let status = 409;
   let started = false;
   let running = false;
-  const d = assessmentDashboard((url, r) => {
+  const d = await assessmentDashboard((url, r) => {
     if (url === '/api/state') return connectedState();
     if (url === '/api/assessment' && r.method === 'POST') {
       if (status === 409) return { httpStatus: 409, body: { error: 'An export is already running.' } };
@@ -1000,7 +1170,7 @@ test('admission moves to results with focus and New assessment waits for the run
 });
 
 test('clearing the workspace returns to step 1 and clears the import summary, review and warning', async () => {
-  const d = assessmentDashboard((url) => (url === '/api/state' ? connectedState() : {}));
+  const d = await assessmentDashboard((url) => (url === '/api/state' ? connectedState() : {}));
   await selectAll(d);
   click(d, 'btnAssessPlatformsNext');
   click(d, 'btnAssessBaselinesNext');
@@ -1017,8 +1187,8 @@ test('clearing the workspace returns to step 1 and clears the import summary, re
   assert.equal(isHidden(d, 'assessmentContextWarning'), true);
 });
 
-test('pack rows outside the selected platforms or profile are hidden, with an empty state and scoped Select all/none', () => {
-  const d = assessmentDashboard();
+test('pack rows outside the selected platforms or profile are hidden, with an empty state and scoped Select all/none', async () => {
+  const d = await assessmentDashboard();
   renderCatalog(d);
   const rowsHidden = () => d.element('assessmentPacks').children.map((row) => row.classList.contains('hidden'));
   const checked = () => boxes(d, 'assessmentPacks').map((b) => b.checked);
@@ -1049,12 +1219,12 @@ test('pack rows outside the selected platforms or profile are hidden, with an em
   assert.deepEqual(checked(), [false, false, false, false]);
   assert.equal(d.element('assessmentPacksEmpty').textContent, empty);
   assert.equal(isHidden(d, 'assessmentPacksEmpty'), false);
-  const html = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
+  const html = withoutTranslationSpans(fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8'));
   assert.match(html, /<div id="assessmentPacks" class="assessment-packs"><\/div>\s*<p id="assessmentPacksEmpty"/);
 });
 
-test('context shows only the selected platforms\' fields and warns while the Windows 11 build is blank', () => {
-  const d = assessmentDashboard();
+test('context shows only the selected platforms\' fields and warns while the Windows 11 build is blank', async () => {
+  const d = await assessmentDashboard();
   renderCatalog(d);
   const fields = {
     windows11: ['assessmentContextWindows11'],
@@ -1097,7 +1267,7 @@ test('context shows only the selected platforms\' fields and warns while the Win
 });
 
 test('the structured review connects each platform pack set with its exact context and source', async () => {
-  const d = assessmentDashboard((url) => (url === '/api/state' ? connectedState() : {}));
+  const d = await assessmentDashboard((url) => (url === '/api/state' ? connectedState() : {}));
   await selectAll(d);
   d.element('assessmentOsMacos').value = ' 14.0 ';
   d.element('assessmentEnrollment').value = 'corporateOwnedWorkProfile';
@@ -1121,7 +1291,7 @@ test('the structured review connects each platform pack set with its exact conte
   click(d, 'btnAssessContextNext');
   assert.match(d.element('assessmentReview').innerHTML, /Windows 11 — OS version: 10\.0\.22631/);
   assert.equal(d.element('assessmentReview').innerHTML.includes('Windows policies targeting'), false);
-  const html = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
+  const html = withoutTranslationSpans(fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8'));
   for (const select of ['assessmentEnrollment', 'assessmentIosOwnership']) {
     const options = html.match(new RegExp(`id="${select}">([\\s\\S]*?)</select>`))[1];
     const labelled = [...options.matchAll(/<option value="(\w+)">([^<]+)<\/option>/g)];
@@ -1139,11 +1309,11 @@ test('the structured review connects each platform pack set with its exact conte
 const importTypeMessage = 'Choose a JSON rule pack (at most 10 MiB) or a ZIP archive (at most 32 MiB).';
 const importedNotice = 'Select the platforms and packs to assess; imports are never selected automatically.';
 
-test('the import card accepts JSON and ZIP files and the catalog note names the supported formats', () => {
-  const html = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
+test('the import card accepts JSON and ZIP files and the catalog note names the supported formats', async () => {
+  const html = withoutTranslationSpans(fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8'));
   assert.match(html,
     /id="assessmentImportFile" multiple accept="\.json,\.zip,application\/json,application\/zip,application\/x-zip-compressed"/);
-  const d = assessmentDashboard();
+  const d = await assessmentDashboard();
   renderCatalog(d);
   const note = d.element('assessmentCatalogNote').textContent;
   for (const phrase of ['never bundled', 'licensed CIS Intune build-kit ZIP', 'schema-1 JSON rule pack',
@@ -1159,7 +1329,7 @@ test('ZIP import posts base64, lists the result and merges packs without selecti
     sha256: 'c'.repeat(64), origin: 'imported', framework: 'CIS', profile: 'Level 1', controlCount: 1, added: true };
   const skipped = Array.from({ length: 12 }, (_, i) => ({
     entry: `kit/<extra-${i}>.json`, reason: 'Not a Settings Catalog policy or rule pack.' }));
-  const d = assessmentDashboard((url, r) => (url === '/api/assessment/packs' && r.method === 'POST'
+  const d = await assessmentDashboard((url, r) => (url === '/api/assessment/packs' && r.method === 'POST'
     ? { httpStatus: 201, body: { packs: [present, created], added: 1, skipped, skippedCount: 14, ignored: 3,
       archive: { sha256: 'd'.repeat(64) } } }
     : {}));
@@ -1179,7 +1349,7 @@ test('ZIP import posts base64, lists the result and merges packs without selecti
     { archive: Buffer.from(bytes).toString('base64') });
   const summary = d.element('assessmentImportSummary').innerHTML;
   for (const text of ['<b>1</b> Added', '<b>1</b> Already present', '<b>14</b> Skipped',
-    '<b>3</b> Ignored files', 'synthetic-kit-level-1', '1 checks', '2 checks',
+    '<b>3</b> Ignored files', 'synthetic-kit-level-1', '1 control', '2 controls',
     '2 additional reasons not returned', 'imports are never selected automatically',
     'kit/&lt;extra-11&gt;.json']) assert.ok(summary.toLowerCase().includes(text.toLowerCase()), text);
   assert.doesNotMatch(summary, /kit\/<extra-/);
@@ -1194,7 +1364,7 @@ test('ZIP import posts base64, lists the result and merges packs without selecti
 });
 
 test('import checks the file type and size before reading, and a reset during a ZIP read sends nothing', async () => {
-  const d = assessmentDashboard();
+  const d = await assessmentDashboard();
   let reads = 0;
   const read = async () => { reads++; return new ArrayBuffer(1); };
   const zipMessage = 'Choose a nonempty ZIP archive, at most 32 MiB.';
@@ -1234,7 +1404,7 @@ test('import checks the file type and size before reading, and a reset during a 
 
 test('an archive with nothing importable shows the error and the skipped and ignored files, and imports nothing', async () => {
   let response;
-  const d = assessmentDashboard((url, r) => (url === '/api/assessment/packs' && r.method === 'POST' ? response : {}));
+  const d = await assessmentDashboard((url, r) => (url === '/api/assessment/packs' && r.method === 'POST' ? response : {}));
   renderCatalog(d);
   response = { httpStatus: 400, body: {
     error: 'The archive contains no importable rule packs or Settings Catalog policies. ' +
@@ -1266,7 +1436,7 @@ test('an archive with nothing importable shows the error and the skipped and ign
 });
 
 test('a multi-file queue removes pending rows, retains partial successes and escapes every failure reason', async () => {
-  const d = assessmentDashboard((url, r) => {
+  const d = await assessmentDashboard((url, r) => {
     if (url === '/api/assessment/packs' && r.method === 'POST') {
       if (r.payload.content === 'bad') return { httpStatus: 400, body: { error: '<script>invalid</script>' } };
       return { httpStatus: 201, body: { pack: { ...syntheticPacks()[0], id: 'synthetic-queued',
@@ -1298,7 +1468,7 @@ test('a multi-file queue removes pending rows, retains partial successes and esc
 
 test('native folder cancellation keeps the report path and selected folders update it through the protected route', async () => {
   let selected = false;
-  const d = assessmentDashboard((url) => {
+  const d = await assessmentDashboard((url) => {
     if (url === '/api/folders/picker') return { status: selected ? 'selected' : 'cancelled', path: 'C:\\SyntheticChosen' };
     return {};
   });
@@ -1312,7 +1482,7 @@ test('native folder cancellation keeps the report path and selected folders upda
 });
 
 test('offline Assessment admission posts the selected reference and context without authentication', async () => {
-  const d = assessmentDashboard((url, r) => {
+  const d = await assessmentDashboard((url, r) => {
     if (url === '/api/state') return { auth: { connected: false }, export: { running: false },
       policies: { status: 'ready', source: { kind: 'offline' }, families: [], issues: [] } };
     if (url === '/api/assessment' && r.method === 'POST') return { httpStatus: 202, body: { started: true } };

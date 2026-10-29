@@ -317,6 +317,7 @@ Describe 'Explicit policy sources and portable snapshots' {
         $app = Join-Path $TestDrive 'offline-workers\app'
         [void][IO.Directory]::CreateDirectory((Join-Path $app 'baselines'))
         Copy-Item (Join-Path $script:root 'lib') $app -Recurse
+        Copy-Item (Join-Path $script:root 'locales') $app -Recurse
         Add-Content (Join-Path $app 'lib\Graph.ps1') @'
 function Initialize-IdsGraph { throw 'Offline Graph initialization forbidden' }
 function Invoke-IdsGraph { throw 'Offline Graph read forbidden' }

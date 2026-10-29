@@ -1,6 +1,8 @@
+. (Join-Path $PSScriptRoot 'Localization.ps1')
+
 function Show-IdsNativeFolderDialog {
     param([hashtable]$Holder, [string]$InitialPath)
-    if (-not $IsWindows) { throw 'Native folder selection is available only on Windows. Enter a host folder path instead.' }
+    if (-not $IsWindows) { throw (Get-IdsText -Key 'text.native_folder_selection_is_available_only_on_windows_enter_a_host_folder_path_instead') }
     Add-Type -AssemblyName System.Windows.Forms
     if (-not ('Ids.FolderDialogNative' -as [type])) {
         Add-Type -TypeDefinition @'
@@ -63,7 +65,7 @@ namespace Ids {
         $owner.TopMost = $true
         $owner.Show()
         [Ids.FolderDialogNative]::Activate($owner.Handle)
-        $dialog.Description = 'Intune Docs Studio - Choose a folder'
+        $dialog.Description = (Get-IdsText -Key 'text.intune_docs_studio_choose_a_folder')
         $dialog.UseDescriptionForTitle = $true
         if ($InitialPath -and [IO.Directory]::Exists($InitialPath)) { $dialog.SelectedPath = $InitialPath }
         # The shell creates its window inside ShowDialog; activate that window once it exists.
@@ -83,25 +85,27 @@ function Start-IdsFolderPicker {
     param([hashtable]$State, [string]$Root, [string]$InitialPath, [scriptblock]$Dialog)
     Sync-IdsFolderPicker $State
     if ($State.FolderPicker.status -eq 'running' -or $State.FolderPicker.job) { return $false }
-    $holder = [hashtable]::Synchronized(@{ status = 'running'; path = $null; error = $null; threadId = 0; job = $null })
+    $holder = [hashtable]::Synchronized(@{ status = 'running'; path = $null; error = $null; threadId = 0; job = $null; locale = (Get-IdsLocale) })
     $State.FolderPicker = $holder
     $worker = {
-        param($Root, $Holder, $InitialPath, $DialogScript)
+        param($Root, $Holder, $InitialPath, $DialogScript, $Locale)
         $ErrorActionPreference = 'Stop'
         try {
+            . (Join-Path $Root 'lib\Localization.ps1')
+            Set-IdsLocale -Locale $Locale
             . (Join-Path $Root 'lib\LocalFolders.ps1')
             $result = if ($DialogScript) { & ([scriptblock]::Create($DialogScript)) $InitialPath } else { Show-IdsNativeFolderDialog $Holder $InitialPath }
-            if ($result.status -notin @('selected', 'cancelled')) { throw 'Folder picker returned an invalid result.' }
+            if ($result.status -notin @('selected', 'cancelled')) { throw (Get-IdsText -Key 'text.folder_picker_returned_an_invalid_result') }
             if ($result.status -eq 'selected') {
                 if (-not [IO.Path]::IsPathFullyQualified($result.path) -or -not [IO.Directory]::Exists($result.path)) {
-                    throw 'The selected folder is no longer available. Enter a host folder path instead.'
+                    throw (Get-IdsText -Key 'text.the_selected_folder_is_no_longer_available_enter_a_host_folder_path_instead')
                 }
                 $Holder.path = $result.path
             }
             $Holder.status = $result.status
         } catch {
             $Holder.status = 'failed'
-            $Holder.error = 'Could not open or complete the native folder picker. Enter a folder path on the application host instead. ' + $_.Exception.Message
+            $Holder.error = (Get-IdsText -Key 'text.could_not_open_or_complete_the_native_folder_picker_enter_a_folder_path_on_the_application_host_inst') + $_.Exception.Message
         }
     }
     $rs = $null; $ps = $null
@@ -110,12 +114,12 @@ function Start-IdsFolderPicker {
         $rs.ApartmentState = 'STA'; $rs.ThreadOptions = 'ReuseThread'; $rs.Open()
         $ps = [powershell]::Create(); $ps.Runspace = $rs
         $dialogScript = if ($Dialog) { $Dialog.ToString() } else { $null }
-        [void]$ps.AddScript($worker).AddArgument($Root).AddArgument($holder).AddArgument($InitialPath).AddArgument($dialogScript)
+        [void]$ps.AddScript($worker).AddArgument($Root).AddArgument($holder).AddArgument($InitialPath).AddArgument($dialogScript).AddArgument($holder.locale)
         $holder.job = @{ ps = $ps; runspace = $rs; handle = $ps.BeginInvoke() }
         return $true
     } catch {
         if ($ps) { $ps.Dispose() }; if ($rs) { $rs.Dispose() }
-        $holder.status = 'failed'; $holder.error = 'Could not start folder selection. Enter the host folder path manually.'
+        $holder.status = 'failed'; $holder.error = (Get-IdsText -Key 'text.could_not_start_folder_selection_enter_the_host_folder_path_manually')
         return $false
     }
 }
@@ -125,7 +129,7 @@ function Sync-IdsFolderPicker {
     $job = $State.FolderPicker.job
     if (-not $job -or -not $job.handle.IsCompleted) { return }
     try { [void]$job.ps.EndInvoke($job.handle) } catch {
-        $State.FolderPicker.status = 'failed'; $State.FolderPicker.error = 'Folder selection ended unexpectedly; enter the path manually.'
+        $State.FolderPicker.status = 'failed'; $State.FolderPicker.error = (Get-IdsText -Key 'text.folder_selection_ended_unexpectedly_enter_the_path_manually' -Locale $State.FolderPicker.locale)
     } finally { $job.ps.Dispose(); $job.runspace.Dispose(); $State.FolderPicker.job = $null }
 }
 

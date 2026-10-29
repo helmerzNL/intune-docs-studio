@@ -104,7 +104,7 @@ Describe 'PowerShell runtime requirements' {
                 param([string]$Name, $Metadata, [scriptblock]$Check, [scriptblock]$Configure)
                 $folder = Join-Path $TestDrive $Name
                 [void](New-Item -ItemType Directory -Path $folder)
-                foreach ($item in 'IntuneDocsStudio.ps1', 'VERSION', 'lib', 'web', 'baselines') {
+                foreach ($item in 'IntuneDocsStudio.ps1', 'VERSION', 'lib', 'web', 'baselines', 'locales') {
                     Copy-Item -LiteralPath (Join-Path $repo $item) -Destination $folder -Recurse
                 }
                 if ($Configure) { & $Configure $folder }
@@ -153,6 +153,30 @@ Describe 'PowerShell runtime requirements' {
                 $version.channel | Should -Be 'stable'
                 $version.commit | Should -Be ('c' * 40)
                 (Invoke-RestMethod "$base/api/state").build.channel | Should -Be 'stable'
+            }
+        }
+
+        It 'validates per-request locale and serves only allowlisted language assets without changing the source' {
+            Invoke-LocalServer -Name 'localization' -Check {
+                param($base)
+                $english = Invoke-RestMethod "$base/api/state"
+                $dutch = Invoke-RestMethod "$base/api/state" -Headers @{ 'X-Ids-Locale' = 'nl-NL' }
+                $english.sections[0].key | Should -BeExactly $dutch.sections[0].key
+                $english.sections[0].label | Should -Not -BeExactly $dutch.sections[0].label
+                $dutch.auth.connected | Should -BeFalse
+                $dutch.auth.connected | Should -Be $english.auth.connected
+                $dutch.policies.status | Should -Be $english.policies.status
+                $dutch.policies.count | Should -Be $english.policies.count
+                (Invoke-RestMethod "$base/api/state").sections[0].label | Should -BeExactly $english.sections[0].label
+                foreach ($invalid in @('nl-nl', '../nl-NL', 'nl-NL,fr-FR', 'nn-NO')) {
+                    $response = Invoke-WebRequest "$base/api/state" -Headers @{ 'X-Ids-Locale' = $invalid } -SkipHttpErrorCheck
+                    $response.StatusCode | Should -Be 400
+                    ($response.Content | ConvertFrom-Json).error | Should -Match 'locale'
+                }
+                (Invoke-RestMethod "$base/locales/nl-NL.json").server.'text.overview' | Should -BeExactly '## Overzicht'
+                (Invoke-WebRequest "$base/flags/nl-NL.svg").Headers.'Content-Type' | Should -Match 'image/svg'
+                (Invoke-WebRequest "$base/i18n.js").StatusCode | Should -Be 200
+                (Invoke-WebRequest "$base/locales/nn-NO.json" -SkipHttpErrorCheck).StatusCode | Should -Be 404
             }
         }
 
@@ -365,7 +389,7 @@ function Invoke-IdsGraphRaw {
         It 'refuses to start with inconsistent package metadata' {
             $folder = Join-Path $TestDrive 'bad'
             [void](New-Item -ItemType Directory -Path $folder)
-            foreach ($item in 'IntuneDocsStudio.ps1', 'VERSION', 'lib', 'web') {
+            foreach ($item in 'IntuneDocsStudio.ps1', 'VERSION', 'lib', 'web', 'locales') {
                 Copy-Item -LiteralPath (Join-Path $repo $item) -Destination $folder -Recurse
             }
             Set-Content -LiteralPath (Join-Path $folder 'build-info.json') -Value '{"version":"9.9.9","channel":"stable","commit":"aaaaaaa"}'
@@ -378,7 +402,7 @@ function Invoke-IdsGraphRaw {
         It 'releases the listener when the server pipeline is stopped like Ctrl+C' {
             $folder = Join-Path $TestDrive 'pipeline-stop'
             [void](New-Item -ItemType Directory $folder)
-            foreach ($item in 'IntuneDocsStudio.ps1', 'VERSION', 'lib', 'web', 'baselines') {
+            foreach ($item in 'IntuneDocsStudio.ps1', 'VERSION', 'lib', 'web', 'baselines', 'locales') {
                 Copy-Item "$repo\$item" $folder -Recurse
             }
             Add-Content "$folder\lib\Auth.ps1" @'

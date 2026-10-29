@@ -64,6 +64,23 @@ code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-
 .assessment-pack > span { flex: 1; min-width: 0; }
 .pack-remove { align-self: flex-start; }
 
+.locale-picker { position: relative; display: grid; gap: 4px; font-size: 12px; min-width: 0; }
+.locale-control { display: flex; align-items: center; gap: 8px; font: inherit; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; text-align: start; cursor: pointer; }
+.locale-control img { display: block; flex-shrink: 0; object-fit: cover; border-radius: 2px; }
+.locale-options { position: absolute; z-index: 20; inset-inline-end: 0; top: 100%; min-width: 100%; width: max-content; max-width: 90vw; max-height: min(440px, 65vh); overflow-y: auto; margin: 4px 0; padding: 4px; list-style: none; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+.locale-options[hidden] { display: none; }
+.locale-options li { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 4px; cursor: pointer; }
+.locale-options img { width: 24px; height: 16px; flex-shrink: 0; }
+.locale-options li:hover, .locale-options li[data-active="true"] { background: var(--surface-3); outline: 1px solid var(--border-strong); }
+.locale-options li[aria-selected="true"] { font-weight: 700; }
+.locale-warning { margin: 12px 24px; padding: 12px; border: 1px solid var(--warn); color: var(--warn); }
+.topbar, .topright, .appnav { flex-wrap: wrap; }
+.appnav a, .btn { white-space: normal; }
+@media (max-width: 640px) {
+  .locale-control { max-width: min(300px, 90vw); }
+  .topright { width: 100%; }
+}
+
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;

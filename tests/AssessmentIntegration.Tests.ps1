@@ -8,7 +8,7 @@ BeforeAll {
         param([string]$Platform, [object[]]$Policies)
         $folder = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         [void][IO.Directory]::CreateDirectory("$folder\app")
-        Copy-Item "$repo\lib", "$repo\baselines" "$folder\app" -Recurse
+        Copy-Item "$repo\lib", "$repo\baselines", "$repo\locales" "$folder\app" -Recurse
         $payload = ConvertTo-Json -InputObject @{ value = @($Policies) } -Depth 20 -Compress
         Add-Content "$folder\app\lib\Graph.ps1" (@'
 function Invoke-IdsGraphRaw {
