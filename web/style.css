@@ -437,6 +437,14 @@ table.counts td:last-child { text-align: right; color: var(--muted); }
 
 /* --- Assessment --------------------------------------------------------- */
 
+.policy-load-card { max-width: 820px; }
+.policy-load-card .phase { display: flex; align-items: center; gap: 12px; }
+.policy-load-card .spinner { width: 18px; height: 18px; flex: none; }
+.policy-load-card .btn { margin-top: 16px; }
+.policy-families { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 12px; }
+#policySummary, #policyLoadTenant { overflow-wrap: anywhere; }
+#policyLimitations { white-space: pre-line; overflow-wrap: anywhere; }
+
 #assessmentError { margin: 0 0 20px; }
 #assessmentCatalogNote { margin: 0 0 16px; }
 .assessment-pack-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }

@@ -228,14 +228,32 @@ function Resolve-IdsGroupNames {
 
 # --- Section collectors -----------------------------------------------------------------
 
+function Get-IdsExportPolicyDocuments {
+    param($Ctx, [string]$Family)
+    $collection = $Ctx.PolicySnapshot.collection
+    if (-not $collection.documentation.ContainsKey($Family)) { throw 'Loaded policy family is unavailable. Reload policies.' }
+    if (@($collection.issues + $collection.documentationIssues | Where-Object family -EQ $Family).Count) {
+        # A partial inventory must never erase previously generated policy pages.
+        throw 'Loaded policy evidence is incomplete for this family. Reload policies after resolving the collection warnings.'
+    }
+    return $collection.documentation[$Family]
+}
+
 function Export-IdsSettingsCatalog {
     param($Ctx)
-    $policies = Invoke-IdsGraph -Path '/deviceManagement/configurationPolicies?$expand=assignments' -All -Tolerant
+    $documents = @()
+    $policies = if ($Ctx.PolicySnapshot) {
+        $documents = @(Get-IdsExportPolicyDocuments $Ctx 'settingsCatalog')
+        @($documents | ForEach-Object policy)
+    } else { Invoke-IdsGraph -Path '/deviceManagement/configurationPolicies?$expand=assignments' -All -Tolerant }
     if (-not $policies) { return 0 }
     $policies = @($policies)
 
     # Pull every policy's settings (with inline definitions) in batches of 20.
     $settingsById = @{}
+    if ($Ctx.PolicySnapshot) {
+        foreach ($document in $documents) { $settingsById[$document.policy.id] = $document.settings }
+    } else {
     for ($i = 0; $i -lt $policies.Count; $i += 20) {
         $slice = $policies[$i..([Math]::Min($i + 19, $policies.Count - 1))]
         $reqs = @()
@@ -244,6 +262,7 @@ function Export-IdsSettingsCatalog {
         }
         $res = Invoke-IdsGraphBatch -Requests $reqs
         foreach ($p in $slice) { $settingsById[$p.id] = Get-IdsBatchValues $res[$p.id] }
+    }
     }
 
     foreach ($p in ($policies | Sort-Object name)) {
@@ -287,7 +306,9 @@ function Export-IdsSettingsCatalog {
 
 function Export-IdsDeviceConfigurations {
     param($Ctx)
-    $items = Invoke-IdsGraph -Path '/deviceManagement/deviceConfigurations?$expand=assignments' -All -Tolerant
+    $items = if ($Ctx.PolicySnapshot) {
+        @(Get-IdsExportPolicyDocuments $Ctx 'deviceConfiguration' | ForEach-Object policy)
+    } else { Invoke-IdsGraph -Path '/deviceManagement/deviceConfigurations?$expand=assignments' -All -Tolerant }
     if (-not $items) { return 0 }
     $items = @($items)
     foreach ($c in ($items | Sort-Object displayName)) {
@@ -335,11 +356,18 @@ function Export-IdsDeviceConfigurations {
 
 function Export-IdsAdministrativeTemplates {
     param($Ctx)
-    $items = Invoke-IdsGraph -Path '/deviceManagement/groupPolicyConfigurations?$expand=assignments' -All -Tolerant
+    $settingsById = @{}
+    $items = if ($Ctx.PolicySnapshot) {
+        foreach ($document in @(Get-IdsExportPolicyDocuments $Ctx 'admx')) {
+            $settingsById[$document.policy.id] = $document.settings
+            $document.policy
+        }
+    } else { Invoke-IdsGraph -Path '/deviceManagement/groupPolicyConfigurations?$expand=assignments' -All -Tolerant }
     if (-not $items) { return 0 }
     $items = @($items)
     foreach ($g in ($items | Sort-Object displayName)) {
         $defValues = @()
+        if ($Ctx.PolicySnapshot) { $defValues = @($settingsById[$g.id]) } else {
         try {
             $defValues = @(Invoke-IdsGraph -Path "/deviceManagement/groupPolicyConfigurations('$($g.id)')/definitionValues?`$expand=definition" -All -Tolerant)
             $reqs = @()
@@ -354,6 +382,7 @@ function Export-IdsAdministrativeTemplates {
                 }
             }
         } catch { Add-IdsWarning $Ctx "ADMX values for '$($g.displayName)': $($_.Exception.Message)" }
+        }
 
         $md = New-IdsDocument `
             -Title $g.displayName -Description $g.description `
@@ -380,10 +409,14 @@ function Export-IdsAdministrativeTemplates {
 
 function Export-IdsCompliance {
     param($Ctx)
+    if ($Ctx.PolicySnapshot) {
+        $items = @(Get-IdsExportPolicyDocuments $Ctx 'compliance' | ForEach-Object policy)
+    } else {
     $path = '/deviceManagement/deviceCompliancePolicies?$expand=assignments,scheduledActionsForRule($expand=scheduledActionConfigurations)'
     $items = Invoke-IdsGraph -Path $path -All -Tolerant
     if (-not $items) {
         $items = Invoke-IdsGraph -Path '/deviceManagement/deviceCompliancePolicies?$expand=assignments' -All -Tolerant
+    }
     }
     if (-not $items) { return 0 }
     $items = @($items)
@@ -425,20 +458,31 @@ function Export-IdsCompliance {
 
 function Export-IdsEndpointSecurity {
     param($Ctx)
-    $items = Invoke-IdsGraph -Path '/deviceManagement/intents?$expand=assignments' -All -Tolerant
+    $templates = @{}
+    $settingsById = @{}
+    $items = if ($Ctx.PolicySnapshot) {
+        foreach ($document in @(Get-IdsExportPolicyDocuments $Ctx 'intent')) {
+            $settingsById[$document.policy.id] = $document.settings
+            if ($document.policy.templateId) { $templates[$document.policy.templateId] = $document.template }
+            $document.policy
+        }
+    } else { Invoke-IdsGraph -Path '/deviceManagement/intents?$expand=assignments' -All -Tolerant }
     if (-not $items) { return 0 }
     $items = @($items)
 
-    $templates = @{}
+    if (-not $Ctx.PolicySnapshot) {
     try {
         foreach ($t in @(Invoke-IdsGraph -Path '/deviceManagement/templates?$select=id,displayName,templateType,platformType' -All -Tolerant)) {
             if ($t -and $t.id) { $templates[$t.id] = $t }
         }
     } catch { }
+    }
 
     foreach ($intent in ($items | Sort-Object displayName)) {
         $settings = @()
-        try { $settings = @(Invoke-IdsGraph -Path "/deviceManagement/intents/$($intent.id)/settings" -All -Tolerant) } catch { }
+        if ($Ctx.PolicySnapshot) { $settings = @($settingsById[$intent.id]) } else {
+            try { $settings = @(Invoke-IdsGraph -Path "/deviceManagement/intents/$($intent.id)/settings" -All -Tolerant) } catch { }
+        }
 
         $rows = @()
         foreach ($s in $settings) {
@@ -917,6 +961,7 @@ function Write-IdsReadme {
     $lines += "| Exported by | $($Meta.account) |"
     $lines += "| Sign-in method | $($Meta.method) |"
     $lines += "| Generated | $generated |"
+    if ($Meta.policiesCapturedAt) { $lines += "| Policies loaded | $($Meta.policiesCapturedAt) |" }
     $lines += "| Objects documented | $($Meta.totalObjects) |"
     $lines += ''
     $lines += '## Contents'
@@ -1367,7 +1412,7 @@ function Get-IdsSectionCatalog {
 
 function Start-IdsExport {
     <#  Entry point used by both the dashboard runspace and the CLI. #>
-    param([hashtable]$State, [hashtable]$Options)
+    param([hashtable]$State, [hashtable]$Options, $PolicySnapshot)
 
     $State.Export.running = $true
     $State.Export.done = $false
@@ -1388,6 +1433,7 @@ function Start-IdsExport {
         }
 
         $ctx = New-IdsContext -Root $root -Options $Options -State $State
+        $ctx.PolicySnapshot = $PolicySnapshot
         Write-IdsLog -State $State -Message "Output folder: $root"
 
         if ($Options.GitCommit) {
@@ -1395,7 +1441,13 @@ function Start-IdsExport {
             Initialize-IdsGitRepository -Ctx $ctx
         }
 
-        $conn = Test-IdsGraphConnection
+        $conn = if ($PolicySnapshot) {
+            if (-not $State.Auth -or ($State.Auth.tenant_id -and $State.Auth.tenant_id -ne $PolicySnapshot.tenant.id)) {
+                throw 'Loaded policies do not belong to the current tenant.'
+            }
+            Write-IdsLog -State $State -Message "Using policies loaded at $($PolicySnapshot.capturedAt). Other selected data is collected now."
+            @{ tenantId = $PolicySnapshot.tenant.id; organization = $PolicySnapshot.tenant.name }
+        } else { Test-IdsGraphConnection }
         $ctx.TenantId = $conn.tenantId
         $ctx.TenantName = $conn.organization
 
@@ -1411,6 +1463,7 @@ function Start-IdsExport {
             account      = $State.Auth.account
             method       = $State.Auth.method
             generated    = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm') + ' UTC'
+            policiesCapturedAt = $PolicySnapshot.capturedAt
             totalObjects = 0
         }
 

@@ -28,7 +28,7 @@ function Copy-IdsReportRecord {
     param($InputObject, [string]$Kind)
     $schema = switch -CaseSensitive ($Kind) {
         Result { [ordered]@{
-            schemaVersion = 'number'; runId = 'text'; generatedAt = 'text'; tenant = 'Tenant'; context = 'Context'
+            schemaVersion = 'number'; runId = 'text'; generatedAt = 'text'; policySnapshotAt = 'text'; tenant = 'Tenant'; context = 'Context'
             packs = 'Pack[]'; summaries = 'Summary[]'; controls = 'Control[]'; policies = 'Policy[]'
             collectionIssues = 'Issue[]'; sources = 'Source[]'
         } }
@@ -207,7 +207,7 @@ function ConvertTo-IdsProjectedAssessmentMarkdown {
     $lines.Add('## Run identity and user-selected context')
     $lines.Add((Format-IdsReportRecord ([pscustomobject]@{
         schemaVersion = $Result.schemaVersion; runId = $Result.runId; generatedAt = $Result.generatedAt
-        tenant = $Result.tenant; context = $Result.context
+        policySnapshotAt = $Result.policySnapshotAt; tenant = $Result.tenant; context = $Result.context
     })))
     foreach ($section in @(
         @{ title = 'Pack identity, sources and coverage boundaries'; field = 'packs'; heading = 'id' }

@@ -259,6 +259,7 @@ test('import bounds files before reading and checks decoded UTF-8 bytes before s
 
 const connectedState = (tenantId = 'synthetic-tenant') => ({
   auth: { connected: true, tenantId, account: 'synthetic@example.invalid', scopes: [] },
+  policies: { status: 'ready', count: 0, families: [], issues: [] },
   export: { running: false }
 });
 async function selectAll(d) {

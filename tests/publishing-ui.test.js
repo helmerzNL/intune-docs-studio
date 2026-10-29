@@ -31,7 +31,8 @@ function dashboard(respond = () => ({})) {
     URLSearchParams,
     fetch: async (url, options) => {
       requests.push({ url, payload: options && JSON.parse(options.body) });
-      return { ok: true, status: 200, json: async () => respond(url) };
+      return { ok: true, status: 200, json: async () => url === '/api/state' ?
+        { auth: { connected: true, scopes: [] }, policies: { status: 'ready' }, ...respond(url) } : respond(url) };
     },
     setInterval() {}, clearInterval() {}, setTimeout() {},
     alert(message) { throw new Error(message); }
@@ -42,6 +43,7 @@ function dashboard(respond = () => ({})) {
 
 test('export sends the selected Azure DevOps repository and branch and commits when pushing', async () => {
   const { element, requests } = dashboard();
+  await new Promise(setImmediate);
   element('gitRemoteUrl').value = ' https://dev.azure.com/org/project/_git/docs ';
   element('gitBranch').value = ' docs/update ';
   element('optPush').checked = true;

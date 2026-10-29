@@ -155,13 +155,46 @@
     </div>
   </section>
 
-  <!-- Home (signed in) -->
+  <section id="viewPolicies" class="view hidden" aria-labelledby="policyLoadTitle">
+    <header class="page-head">
+      <p class="eyebrow">Connected &middot; preparing your workspace</p>
+      <h2 id="policyLoadTitle" tabindex="-1">Loading your Intune policies</h2>
+      <p id="policyLoadTenant" class="muted"></p>
+    </header>
+    <div class="card policy-load-card">
+      <p>First we read your current policies, settings and assignments from Microsoft Graph.
+        Then choose to document them or compare them with a security baseline.</p>
+      <div class="progress" id="policyLoadProgress" role="progressbar" aria-label="Policy loading"
+        aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div class="bar" id="policyLoadBar"></div>
+      </div>
+      <p class="phase" role="status"><span id="policyLoadSpinner" class="spinner" aria-hidden="true"></span>
+        <span id="policyLoadPhase">Preparing to load policies</span></p>
+      <p class="muted">Read-only. Kept in memory for this sign-in, never saved as a local cache.
+        Loading does not change any policies in Intune.</p>
+      <p id="policyLoadError" class="error hidden" role="alert"></p>
+      <button id="btnRetryPolicies" class="btn primary hidden">Retry loading policies</button>
+    </div>
+  </section>
+
+  <!-- Home (signed in, policies loaded) -->
   <section id="viewHome" class="view hidden" aria-labelledby="homeTitle">
     <header class="page-head">
-      <p class="eyebrow">Signed in</p>
+      <p class="eyebrow">Policies loaded &middot; choose your next step</p>
       <h2 id="homeTitle" tabindex="-1"><span id="homeGreeting">Welcome</span></h2>
       <p id="homeTenant" class="muted"></p>
     </header>
+
+    <section class="card" aria-labelledby="policyInventoryTitle">
+      <h3 id="policyInventoryTitle" class="card-title">Your policy snapshot</h3>
+      <p id="policySummary" class="muted"></p>
+      <div id="policyFamilies" class="policy-families"></div>
+      <p id="policyLimitations" class="notice hidden" role="status"></p>
+      <p class="muted">Both workflows use these loaded policies. Refresh to include changes made in Intune.
+        Other documentation categories, such as apps and scripts, are read when you export.</p>
+      <button id="btnRefreshPolicies" class="btn">Refresh policies</button>
+      <p id="policyRefreshError" class="error hidden" role="alert"></p>
+    </section>
 
     <div class="paths">
       <a class="path-card" id="homeDocument" href="#/document">
