@@ -484,17 +484,6 @@ function Export-IdsEndpointSecurity {
             try { $settings = @(Invoke-IdsGraph -Path "/deviceManagement/intents/$($intent.id)/settings" -All -Tolerant) } catch { }
         }
 
-        $rows = @()
-        foreach ($s in $settings) {
-            if (-not $s) { continue }
-            $name = Get-IdsPrettyId ([string]$s.definitionId)
-            $val = '-'
-            foreach ($cand in @('value', 'valueJson')) {
-                if ($s.PSObject.Properties[$cand] -and $null -ne $s.$cand) { $val = $s.$cand; break }
-            }
-            if ($val -is [string] -and $val -eq 'null') { $val = '-' }
-            $rows += , @($name, $val)
-        }
         $tpl = $null
         if ($intent.templateId -and $templates.ContainsKey($intent.templateId)) { $tpl = $templates[$intent.templateId] }
         $category = 'general'
@@ -516,7 +505,7 @@ function Export-IdsEndpointSecurity {
                 'Scope tags'    = (Format-IdsScopeTags $intent.roleScopeTagIds)
                 'Intune id'     = $intent.id
             }) `
-            -Sections ([ordered]@{ 'Settings' = (New-IdsTable -Headers @('Setting', 'Value') -Rows ($rows | Sort-Object { $_[0] }) -EmptyText '_No settings configured._') }) `
+            -Sections ([ordered]@{ 'Settings' = (Format-IdsIntentSettings -Settings $settings) }) `
             -Assignments $intent.assignments -Raw $intent
 
         Save-IdsDoc -Ctx $Ctx -Section 'Endpoint security' -Folder "endpoint-security/$category" `

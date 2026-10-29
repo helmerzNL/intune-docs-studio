@@ -124,7 +124,7 @@ function Start-IdsAssessmentJob {
         $ErrorActionPreference = 'Stop'
         $a = $State.Assessment
         try {
-            foreach ($module in 'Auth', 'Graph', 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'AssessmentRules', 'AssessmentReports', 'PolicyInventory') {
+            foreach ($module in 'Auth', 'Graph', 'Render', 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'AssessmentRules', 'AssessmentReports', 'PolicyInventory') {
                 . (Join-Path $Root "lib\$module.ps1")
             }
             if ($Auth.transport -eq 'mggraph') { Import-Module Microsoft.Graph.Authentication -ErrorAction Stop }
@@ -155,8 +155,10 @@ function Start-IdsAssessmentJob {
             }
             $a.phase = 'Normalizing'; $a.percent = 50
             $snapshot = ConvertTo-IdsAssessmentSnapshot -Collection $collection
+            Add-IdsAssessmentPolicyPresentation -Collection $collection -Snapshot $snapshot
             $a.phase = 'Evaluating'; $a.percent = 65
             $evaluation = Compare-IdsAssessment -Packs $Options.packs -Snapshot $snapshot -Context $Options.context
+            Add-IdsAssessmentEvidencePresentation -Collection $collection -Evaluation $evaluation
             $result = ConvertTo-IdsReportProjection ([pscustomobject]@{
                 schemaVersion = 1; runId = $RunId; generatedAt = [datetime]::UtcNow.ToString('o')
                 policySnapshotAt = $LoadedPolicies.capturedAt

@@ -1203,6 +1203,29 @@ $('btnAssessmentImport').addEventListener('click', async () => {
   }
 });
 
+function renderAssessmentPolicySettings(policy) {
+  const tables = (policy.settingsTables || []).map((table) => `
+    ${table.title ? `<h4>${escapeHtml(table.title)}</h4>` : ''}
+    <div class="assessment-settings-wrap"><table class="assessment-settings">
+      <thead><tr>${(table.headers || []).map((header) => `<th scope="col">${escapeHtml(header)}</th>`).join('')}</tr></thead>
+      <tbody>${(table.rows || []).map((row) =>
+        `<tr>${(row.cells || []).map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table></div>`).join('');
+  return `<p class="muted">${escapeHtml(policy.settingsNote || 'Readable settings are unavailable for this saved result. See technical evidence.')}</p>${tables}`;
+}
+
+function renderAssessmentTypedValues(records, expected) {
+  if (!Array.isArray(records)) return assessmentText(records);
+  if (!records.length) return 'No mapped values';
+  return records.map((record) => {
+    const name = record.displayName || record.property || record.settingId || 'Unmapped setting';
+    const raw = expected ? record.expected : record.value;
+    const value = record.displayValue ?? (!expected && (record.secret === true || record.supported === false)
+      ? 'Unavailable (secret or unsupported evidence)' : JSON.stringify(raw));
+    return `<p><strong>${escapeHtml(name)}</strong>: ${expected ? escapeHtml(record.operator || '') + ' ' : ''}${escapeHtml(value)}</p>`;
+  }).join('');
+}
+
 function renderAssessmentResult(result) {
   assessmentResult = result;
   $('assessmentLimitations').textContent = assessmentLimits;
@@ -1224,7 +1247,10 @@ function renderAssessmentResult(result) {
     <div class="assessment-pack"><strong>${escapeHtml(p.name || p.key)}</strong>
       <p>${p.assignmentsComplete !== true ? 'Assignment evidence incomplete'
         : !(p.assignments || []).length ? 'Unassigned' : 'Assignment targets present — effective targeting not resolved'}</p>
-      <pre class="assessment-text">${assessmentText(p)}</pre></div>`).join('');
+      ${renderAssessmentPolicySettings(p)}
+      <details><summary>Technical policy and assignment evidence</summary>
+        <pre class="assessment-text">${assessmentText({ ...p, settingsTables: undefined, settingsNote: undefined })}</pre>
+      </details></div>`).join('');
   renderAssessmentEvidence();
 }
 
@@ -1244,15 +1270,22 @@ function renderAssessmentEvidence() {
           <p>${escapeHtml(p.policyKey)} · ${escapeHtml(policy.family)} · ${escapeHtml(policy.policyType)}</p>
           <p>${escapeHtml(assessmentStatuses[p.status] || p.status)}: ${escapeHtml(p.reason)}</p>
           <p>${assignment}</p>
-          <pre>${assessmentText(policy.assignments || [])}</pre>
-          <p>Expected: ${assessmentText(p.expected || [])}</p>
-          <p>Configured: ${assessmentText(p.observed || [])}</p></div>`;
+          <details><summary>Readable policy settings</summary>${renderAssessmentPolicySettings(policy)}</details>
+          <details><summary>Exact mappings and assignment evidence</summary>
+            <pre>${assessmentText(policy.assignments || [])}</pre>
+            <p>Expected: ${assessmentText(p.expected || [])}</p>
+            <p>Configured: ${assessmentText(p.observed || [])}</p>
+          </details></div>`;
       }).join('');
       return `<tr><td><strong>${escapeHtml(c.controlId)} ${escapeHtml(c.title)}</strong>
         <p>${escapeHtml(c.packId)} @ ${escapeHtml(c.packVersion)} · ${escapeHtml(c.platform)} · ${escapeHtml(c.profile)}</p>
         <details><summary>Framework references</summary><pre>${assessmentText(c.references || [])}</pre></details></td>
         <td><strong>${escapeHtml(assessmentStatuses[c.status] || c.status)}</strong><p>${escapeHtml(c.reason)}</p></td>
-        <td><p>Expected: ${assessmentText(c.expected)}</p><p>Configured: ${assessmentText(c.observed || [])}</p></td>
+        <td><strong>Expected</strong>${renderAssessmentTypedValues(c.expected, true)}
+          <strong>Configured</strong>${renderAssessmentTypedValues(c.observed || [], false)}
+          <details><summary>Exact typed evidence</summary>
+            <p>Expected: ${assessmentText(c.expected)}</p><p>Configured: ${assessmentText(c.observed || [])}</p>
+          </details></td>
         <td>${evidence || 'No policy evidence'}</td></tr>`;
     }).join('');
 }

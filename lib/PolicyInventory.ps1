@@ -123,11 +123,12 @@ function Start-IdsPolicyLoad {
             Initialize-IdsGraph $holder
             $tenant = Get-IdsPolicyTenant $Auth
             $Inventory.phase = 'Loading policies'
-            $collection = Get-IdsAssessmentCollection -AllPolicies -IncludeDocumentation -ProgressCallback {
+            $progress = {
                 param($Phase, $Percent)
                 $Inventory.phase = "Loading $Phase"
                 $Inventory.percent = $Percent
-            }
+            }.GetNewClosure()
+            $collection = Get-IdsAssessmentCollection -AllPolicies -IncludeDocumentation -ProgressCallback $progress
             $issues = @($collection.issues) + @($collection.documentationIssues)
             if (@($issues | Where-Object { $_.statusCode -eq 401 -or $_.authenticationFailure }).Count) {
                 throw 'Policy authentication failed.'
@@ -203,6 +204,9 @@ function Stop-IdsPolicyLoad {
 function Sync-IdsPolicyLoad {
     param([hashtable]$State, [string]$Root)
     Clear-IdsPolicyLoadJob $State
+    if ($State.Policies.status -ne 'idle' -and -not (Test-IdsPolicyOwner $State $State.Policies)) {
+        Stop-IdsPolicyLoad $State
+    }
     if ($State.Auth -and $State.Policies.status -eq 'idle' -and -not (Test-IdsWorkActive $State)) {
         [void](Start-IdsPolicyLoad $State $Root)
     }

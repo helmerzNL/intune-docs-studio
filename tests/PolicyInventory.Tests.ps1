@@ -5,6 +5,8 @@ BeforeAll {
         if (Test-Path $file) { . $file }
     }
 
+}
+
     Describe 'Policy loading worker' {
         BeforeAll {
             . (Join-Path $PSScriptRoot 'TestHelpers\Assessment.ps1')
@@ -47,15 +49,17 @@ BeforeAll {
             }) }
         }
         if ($Uri -match '/deviceConfigurations$') {
-            return [pscustomobject]@{ value = @([pscustomobject]@{
+            $policy = [pscustomobject]@{
                 id = 'synthetic-policy'; displayName = 'Synthetic policy'
                 '@odata.type' = '#microsoft.graph.windows10EndpointProtectionConfiguration'
-                smartScreenEnableInShell = $true; wifiPreSharedKey = 'SYNTHETIC-PRIVATE'
-            }) }
+                smartScreenEnableInShell = $true
+            }
+            if ('__MODE__' -ne 'assessment') { $policy | Add-Member NoteProperty wifiPreSharedKey 'SYNTHETIC-PRIVATE' }
+            return [pscustomobject]@{ value = @($policy) }
         }
         return [pscustomobject]@{ value = @() }
     }
-    '@).Replace('__MODE__', $Mode)
+'@).Replace('__MODE__', $Mode)
                 $state = [hashtable]::Synchronized(@{
                     Auth = @{ transport = 'token'; tenant_id = 'synthetic-tenant'; access_token = 'SYNTHETIC-TOKEN' }
                     Export = @{ running = $false }; Browser = @{ running = $false }
@@ -142,7 +146,7 @@ BeforeAll {
         }
 
         It 'evaluates and reports the loaded policy without another Graph read' {
-            $fixture = New-PolicyWorkerFixture
+            $fixture = New-PolicyWorkerFixture 'assessment'
             try {
                 Start-IdsPolicyLoad $fixture.state $fixture.root | Should -BeTrue
                 Wait-PolicyWorker $fixture.state
@@ -154,14 +158,50 @@ BeforeAll {
                 $fixture.state.Assessment.job | Should -BeNullOrEmpty
                 $fixture.state.Assessment.error | Should -BeNullOrEmpty
                 $fixture.state.Assessment.result.controls[0].status | Should -Be 'aligned'
+                $fixture.state.Assessment.result.controls[0].observed[0].displayName | Should -Be 'Smart Screen Enable In Shell'
+                $fixture.state.Assessment.result.controls[0].observed[0].displayValue | Should -Be 'Yes'
                 $fixture.state.Assessment.result.policySnapshotAt | Should -Be $fixture.state.Policies.snapshot.capturedAt
                 [IO.File]::ReadAllText($fixture.state.Assessment.reportPaths.jsonPath) |
                     Should -Not -Match 'SYNTHETIC-PRIVATE|SYNTHETIC-TOKEN|rawSettings|documentation'
             } finally { Stop-IdsAssessmentJob $fixture.state; Stop-IdsPolicyLoad $fixture.state }
         }
-    }
-}
 
+        It 'retries a failed load and replaces the snapshot on refresh' {
+            $fixture = New-PolicyWorkerFixture 'failed'
+            try {
+                Start-IdsPolicyLoad $fixture.state $fixture.root | Should -BeTrue
+                Wait-PolicyWorker $fixture.state
+                $fixture.state.Policies.status | Should -Be 'failed'
+                Add-Content "$($fixture.root)\lib\Graph.ps1" @'
+function Invoke-IdsGraphRaw {
+    param($Uri)
+    if ($Uri -match '/organization') { return @{ value = @(@{ id = 'synthetic-tenant'; displayName = 'Synthetic' }) } }
+    return @{ value = @() }
+}
+'@
+                Start-IdsPolicyLoad $fixture.state $fixture.root | Should -BeTrue
+                Wait-PolicyWorker $fixture.state
+                $first = Get-IdsLoadedPolicies $fixture.state
+                $fixture.state.Policies.status | Should -Be 'ready'
+                Start-IdsPolicyLoad $fixture.state $fixture.root | Should -BeTrue
+                Wait-PolicyWorker $fixture.state
+                [object]::ReferenceEquals($first, (Get-IdsLoadedPolicies $fixture.state)) | Should -BeFalse
+            } finally { Stop-IdsPolicyLoad $fixture.state }
+        }
+
+        It 'starts a fresh load after a stale tenant worker is discarded' {
+            $fixture = New-PolicyWorkerFixture 'slow'
+            try {
+                Start-IdsPolicyLoad $fixture.state $fixture.root | Should -BeTrue
+                $fixture.state.Auth.tenant_id = 'another-synthetic-tenant'
+                Sync-IdsPolicyLoad $fixture.state $fixture.root
+                $fixture.state.Policies.identity | Should -Be (Get-IdsPolicyIdentity $fixture.state)
+                $fixture.state.Policies.snapshot | Should -BeNullOrEmpty
+                Wait-PolicyWorker $fixture.state
+                $fixture.state.Policies.status | Should -Be 'failed'
+            } finally { Stop-IdsPolicyLoad $fixture.state }
+        }
+    }
 Describe 'Shared policy collection' {
     BeforeEach {
         Mock Invoke-IdsGraph {
@@ -194,6 +234,7 @@ Describe 'Shared policy collection' {
         @($collection.sources | Where-Object { -not $_.complete }).Count | Should -Be 0
         $collection.policies.Count | Should -Be 1
         $collection.policies[0].rawSettings[0].passwordRequired | Should -BeFalse
+        $collection.policies[0].name | Should -Be 'Synthetic compliance'
         $document = $collection.documentation.compliance[0]
         $document.policy.passwordRequired | Should -BeFalse
         ($document.policy.assignments -is [array]) | Should -BeTrue

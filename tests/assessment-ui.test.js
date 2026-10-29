@@ -82,6 +82,36 @@ test('assessment rendering treats imported control names as text', () => {
   assert.match(element('assessmentResults').innerHTML, /&lt;script&gt;/);
 });
 
+test('readable policy tables show shared documentation formatting and escape every cell', () => {
+  const d = assessmentDashboard();
+  d.run(`renderAssessmentResult({
+    policies: [{ key: 'settingsCatalog:synthetic', name: 'Firewall policy', assignmentsComplete: true,
+      settingsNote: 'Supported evidence only', settingsTables: [{
+        title: '<Security>', headers: ['Setting', 'Value'],
+        rows: [{ cells: ['Enable firewall', 'Enabled'] }, { cells: ['<script>bad()</script>', 'No'] }]
+      }] }],
+    controls: [{ controlId: 'SYN-1', title: 'Firewall check',
+      expected: [{ settingId: 'synthetic_enableFirewall', expected: 'synthetic_enableFirewall_1',
+        operator: 'eq', displayName: 'Enable firewall', displayValue: 'Enabled' }],
+      observed: [{ settingId: 'synthetic_enableFirewall', value: 'synthetic_enableFirewall_1',
+        displayName: 'Enable firewall', displayValue: 'Enabled' }],
+      policyResults: [{ policyKey: 'settingsCatalog:synthetic', status: 'aligned', reason: 'Matches' }] }]
+  })`);
+  for (const id of ['assessmentPolicies', 'assessmentResults']) {
+    const html = d.element(id).innerHTML;
+    assert.match(html, /<th scope="col">Setting<\/th>/);
+    assert.match(html, /<td>Enable firewall<\/td><td>Enabled<\/td>/);
+    assert.match(html, /&lt;Security&gt;/);
+    assert.match(html, /&lt;script&gt;/);
+    assert.doesNotMatch(html, /<script>/);
+  }
+  assert.match(d.element('assessmentPolicies').innerHTML, /<details><summary>Technical policy/);
+  const primary = d.element('assessmentResults').innerHTML.replace(/<details>.*?<\/details>/gs, '');
+  assert.match(primary, /<strong>Enable firewall<\/strong>: eq Enabled/);
+  assert.doesNotMatch(primary, /synthetic_enableFirewall_1/);
+  assert.match(d.element('assessmentResults').innerHTML, /Exact typed evidence/);
+});
+
 test('evidence shows every status, typed values, assignment limits, sources and filters without compliance claims', () => {
   const { element, run } = assessmentDashboard();
   const statuses = ['aligned', 'misaligned', 'missing', 'potentialConflict', 'notApplicable', 'notAssessed'];

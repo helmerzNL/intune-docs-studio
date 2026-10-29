@@ -238,7 +238,7 @@ function Copy-IdsAssessmentEvidence {
             $secretIds -ccontains (Get-IdsAssessmentMember $Value 'settingDefinitionId')
         foreach ($name in $names) {
             if ($name -eq 'assignments') { continue }
-            if ($name -match '^(password|secret|sharedSecret|preSharedKey|accessToken|refreshToken|token|privateKey|pfxCertificate|certificateContent|payload|script|scriptContent|customConfigurationXml|encryptedValue)$' -or
+            if ($name -match '^(password|secret|sharedSecret|preSharedKey|wifiPreSharedKey|accessToken|refreshToken|token|privateKey|pfxCertificate|certificateContent|payload|script|scriptContent|customConfigurationXml|encryptedValue)$' -or
                 ($secretNode -and $name -match '^(value|valueJson)$')) {
                 $copy[$name] = $null
                 $copy['assessmentRedacted'] = $true
@@ -254,8 +254,8 @@ function Copy-IdsAssessmentEvidence {
 function Get-IdsAssessmentCollection {
     [CmdletBinding(DefaultParameterSetName = 'Selected')]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'Selected')][AllowEmptyCollection()][object[]]$Packs,
-        [Parameter(Mandatory, ParameterSetName = 'Selected')][hashtable]$Context,
+        [Parameter(Mandatory, Position = 0, ParameterSetName = 'Selected')][AllowEmptyCollection()][object[]]$Packs,
+        [Parameter(Mandatory, Position = 1, ParameterSetName = 'Selected')][hashtable]$Context,
         [Parameter(Mandatory, ParameterSetName = 'All')][switch]$AllPolicies,
         [Parameter(ParameterSetName = 'All')][switch]$IncludeDocumentation,
         [scriptblock]$ProgressCallback
@@ -397,7 +397,7 @@ function Get-IdsAssessmentCollection {
                 # evidence. Neither payload is exposed by the inventory status API.
                 $documentPolicy = [ordered]@{}
                 $names = if ($raw -is [Collections.IDictionary]) { @($raw.Keys) } else { @($raw.PSObject.Properties.Name) }
-                foreach ($name in $names) { $documentPolicy[$name] = Get-IdsAssessmentMember $raw $name }
+                foreach ($propertyName in $names) { $documentPolicy[$propertyName] = Get-IdsAssessmentMember $raw $propertyName }
                 $documentPolicy['assignments'] = @($assignments.items)
                 if ($family -eq 'compliance') {
                     $documentPolicy['scheduledActionsForRule'] = @($reads.actions.items)

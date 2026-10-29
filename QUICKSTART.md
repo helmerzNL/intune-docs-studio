@@ -43,8 +43,18 @@ That window closes by itself once the tool has what it needs — usually within 
 **Choose the right account.** If you are asked which account to use, pick the administrator
 for the tenant you want to document — not your everyday account, if those differ.
 
-After sign-in, Home shows the signed-in account and tenant and two paths:
-**Document policies** and **Assess policies**.
+After sign-in, policies load automatically with progress. When loading finishes,
+Home shows the signed-in account, tenant, policy counts and collection time, and
+two paths: **Document policies** and **Assess policies**. Both use the same
+tenant-scoped in-memory policy snapshot. Use **Refresh policies** on Home to
+collect changes; this also clears active assessment results. Sign-out or shutdown
+discards the snapshot. Other selected documentation areas are collected on export.
+
+If loading fails, use **Retry loading** or check permissions and sign in again.
+Partial loads show warnings: assessment keeps incomplete evidence explicit, and
+documentation skips incomplete policy families, preserving their previous pages
+and raw files without pruning. Sign-out and Stop server can cancel policy loading;
+wait for exports and assessments to finish before signing out or stopping.
 
 ## 4. Choose what to document
 
@@ -164,6 +174,7 @@ _raw/                  the underlying JSON, for diffing
 
 ## Running it again
 
+Refresh policies on Home before documenting tenant changes in the same session.
 Re-run it against the same folder whenever you want. Only what actually changed in Intune is
 rewritten — if nothing changed, nothing is written and no commit is made. In a Git folder,
 `git diff` then shows exactly what changed in your tenant and nothing else.

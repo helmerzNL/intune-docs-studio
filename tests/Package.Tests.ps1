@@ -66,6 +66,7 @@ BeforeAll {
         'lib\Export.ps1'
         'lib\Graph.ps1'
         'lib\Http.ps1'
+        'lib\PolicyInventory.ps1'
         'lib\Render.ps1'
         'lib\Version.ps1'
         'web\app.js'

@@ -96,7 +96,19 @@ not assessed. Known unrelated policy types retain global diagnostics without
 blocking mappings that explicitly exclude their type; unknown types and relevant
 or unlocalizable failures still block.
 
-Only one export or assessment can run. Wait for work to finish before resetting,
+Policy loading starts automatically after sign-in. Home exposes the snapshot time,
+family counts and limitations. Documentation and assessment reuse that same
+tenant-owned in-memory snapshot; reference lookups and other documentation areas
+remain export-time reads. Refresh policies on Home to pick up tenant changes;
+refresh invalidates active assessment results. Retry failed loading after checking
+access, or sign out and sign in again. Partial family reads never justify pruning:
+documentation skips those families and preserves previous pages/raw files and
+manifest entries. Assessment retains incomplete sources rather than claiming absence.
+Sign-out, tenant reset and shutdown discard the snapshot, which is not backed up.
+The command-line export remains a direct collection path.
+
+Only one policy load, export or assessment can run. Sign-out and Stop server can
+cancel policy loading. For exports and assessments, wait for work to finish before resetting,
 switching identity, forgetting a profile, stopping, or updating the app. A healthy
 listener is not evidence that an assessment succeeded. Check progress/errors,
 then read both reports and the dashboard's policy/assignment and collection

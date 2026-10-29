@@ -24,6 +24,89 @@ function Get-IdsReportMember {
     }
 }
 
+function Add-IdsAssessmentPolicyPresentation {
+    param($Collection, $Snapshot)
+    foreach ($policy in $Snapshot.policies) {
+        $inputPolicy = @($Collection.policies | Where-Object key -CEQ $policy.key)[0]
+        $tables = @()
+        $note = 'Readable settings are limited to supported assessment evidence; exact mappings and typed values remain in control evidence.'
+        if ($policy.settingsComplete -eq $true) {
+            $settings = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject @($inputPolicy.rawSettings) -Depth 64) -Depth 64 -NoEnumerate
+            $tables = @(switch -CaseSensitive ($policy.family) {
+                settingsCatalog { Format-IdsSettingsCatalog $settings -AsData }
+                admx { Format-IdsAdmxSettings $settings -AsData }
+                intent { Format-IdsIntentSettings $settings -AsData }
+                { $_ -cin @('deviceConfiguration', 'compliance') } {
+                    # Only allowlisted, supported properties enter reports, not the
+                    # original documentation payload or its arbitrary properties.
+                    $properties = [ordered]@{}
+                    foreach ($observation in $Snapshot.observations | Where-Object {
+                        $_.policyKey -ceq $policy.key -and $_.supported -eq $true -and $_.secret -eq $false
+                    }) { $properties[$observation.property] = $observation.value }
+                    Format-IdsTemplateSettings ([pscustomobject]$properties) -AsData
+                }
+            })
+        } else {
+            $note = 'Readable settings withheld because evidence is incomplete, secret or unsupported. Review collection limitations and exact mapped evidence; this is not an empty-policy finding.'
+        }
+        $policy | Add-Member NoteProperty settingsTables @($tables) -Force
+        $policy | Add-Member NoteProperty settingsNote $note -Force
+    }
+}
+
+function Set-IdsAssessmentEvidencePresentation {
+    param($Record, $Definitions, [switch]$Expected)
+    $name = if ($Record.family -cin @('deviceConfiguration', 'compliance')) {
+        Get-IdsPrettyId $Record.property
+    } else { Get-IdsSettingName -DefMap $Definitions -Id $Record.settingId }
+    $value = if ($Expected) { $Record.expected } else { $Record.value }
+    $display = if (-not $Expected -and ($Record.secret -ne $false -or $Record.supported -ne $true)) {
+        'Unavailable (secret or unsupported evidence)'
+    } elseif (-not $Expected -and $Record.configured -ne $true) {
+        'Not configured'
+    } else {
+        $formatted = @(foreach ($item in @($value)) {
+            if ($item -is [string] -and $Record.settingId) {
+                Get-IdsOptionText -DefMap $Definitions -DefId $Record.settingId -Value $item
+            } else { Format-IdsCell $item -PlainText }
+        })
+        if ($formatted.Count) { $formatted -join ', ' } else { Format-IdsCell $null -PlainText }
+    }
+    $Record | Add-Member NoteProperty displayName ([string]$name) -Force
+    $Record | Add-Member NoteProperty displayValue ([string]$display) -Force
+}
+
+function Add-IdsAssessmentEvidencePresentation {
+    param($Collection, $Evaluation)
+    $byPolicy = @{}
+    $allDefinitions = @{}
+    foreach ($policy in $Collection.policies) {
+        $settings = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject @($policy.rawSettings) -Depth 64) -Depth 64 -NoEnumerate
+        $definitions = New-IdsDefinitionMap $settings
+        if ($policy.family -ceq 'admx') {
+            foreach ($setting in $settings) {
+                if ($setting.definition.id) { $definitions[$setting.definition.id] = $setting.definition }
+            }
+        }
+        $byPolicy[$policy.key] = $definitions
+        foreach ($id in $definitions.Keys) {
+            if (-not $allDefinitions.ContainsKey($id)) { $allDefinitions[$id] = $definitions[$id] }
+        }
+    }
+    foreach ($control in $Evaluation.controls) {
+        foreach ($mapping in $control.expected) { Set-IdsAssessmentEvidencePresentation $mapping $allDefinitions -Expected }
+        foreach ($observation in $control.observed) {
+            Set-IdsAssessmentEvidencePresentation $observation $byPolicy[$observation.policyKey]
+        }
+        foreach ($result in $control.policyResults) {
+            foreach ($mapping in $result.expected) { Set-IdsAssessmentEvidencePresentation $mapping $byPolicy[$result.policyKey] -Expected }
+            foreach ($observation in $result.observed) {
+                Set-IdsAssessmentEvidencePresentation $observation $byPolicy[$result.policyKey]
+            }
+        }
+    }
+}
+
 function Copy-IdsReportRecord {
     param($InputObject, [string]$Kind)
     $schema = switch -CaseSensitive ($Kind) {
@@ -58,10 +141,12 @@ function Copy-IdsReportRecord {
         Mapping { [ordered]@{
             family = 'text'; policyTypes = 'text[]'; settingId = 'text'; property = 'text'; instancePath = 'text'
             valueType = 'text'; operator = 'text'; caseSensitive = 'boolean'
+            displayName = 'text'; displayValue = 'text'
         } }
         Observation { [ordered]@{
             policyKey = 'text'; family = 'text'; settingId = 'text'; property = 'text'; instancePath = 'text'
             valueType = 'text'; configured = 'boolean'; secret = 'boolean'; supported = 'boolean'
+            displayName = 'text'; displayValue = 'text'
         } }
         PolicyResult { [ordered]@{
             policyKey = 'text'; status = 'status'; reason = 'text'; expected = 'Mapping[]'; observed = 'Observation[]'
@@ -72,7 +157,10 @@ function Copy-IdsReportRecord {
             template = 'Template'; osMin = 'text'; osMax = 'text'; enrollmentMode = 'text'
             windowsFamily = 'boolean'; osApplicabilityRule = 'OsApplicabilityRule'; unsupportedApplicability = 'boolean'
             assignments = 'Assignment[]'; settingsComplete = 'boolean'; assignmentsComplete = 'boolean'
+            settingsTables = 'SettingTable[]'; settingsNote = 'text'
         } }
+        SettingTable { [ordered]@{ title = 'text'; headers = 'text[]'; rows = 'SettingRow[]' } }
+        SettingRow { [ordered]@{ cells = 'text[]' } }
         Template { [ordered]@{
             id = 'text'; templateId = 'text'; displayName = 'text'; templateDisplayName = 'text'
             templateFamily = 'text'; templateType = 'text'; platformType = 'text'
@@ -100,7 +188,10 @@ function Copy-IdsReportRecord {
             $itemType = $type.Substring(0, $type.Length - 2)
             $record[$field] = @(foreach ($item in $value) {
                 if ($null -ne $item) { Copy-IdsReportField $item $itemType }
-            }) | Sort-Object { ConvertTo-Json -InputObject $_ -Depth 64 -Compress } -CaseSensitive
+            })
+            if ($Kind -cnotin @('SettingTable', 'SettingRow')) {
+                $record[$field] = $record[$field] | Sort-Object { ConvertTo-Json -InputObject $_ -Depth 64 -Compress } -CaseSensitive
+            }
             $record[$field] = @($record[$field])
         } else {
             $record[$field] = Copy-IdsReportField $value $type
@@ -190,6 +281,26 @@ function Format-IdsReportRecord {
     return ($lines -join "`n")
 }
 
+function Format-IdsReadableAssessmentEvidence {
+    param($Expected, $Observed)
+    $lines = [Collections.Generic.List[string]]::new()
+    $lines.Add('| Evidence | Setting | Value | Operator / policy |')
+    $lines.Add('| --- | --- | --- | --- |')
+    foreach ($entry in @(@{ kind = 'Expected'; records = $Expected }, @{ kind = 'Configured'; records = $Observed })) {
+        foreach ($record in $entry.records) {
+            $name = if ($record.displayName) { $record.displayName }
+                elseif ($record.property) { $record.property } else { $record.settingId }
+            $value = if ($null -ne $record.displayValue) { $record.displayValue } else {
+                $raw = if ($entry.kind -ceq 'Expected') { $record.expected } else { $record.value }
+                ConvertTo-Json -InputObject $raw -Depth 64 -Compress
+            }
+            $scope = if ($entry.kind -ceq 'Expected') { $record.operator } else { $record.policyKey }
+            $lines.Add("| $($entry.kind) | $(ConvertTo-IdsReportText $name) | $(ConvertTo-IdsReportText $value) | $(ConvertTo-IdsReportText $scope) |")
+        }
+    }
+    return $lines -join "`n"
+}
+
 function ConvertTo-IdsProjectedAssessmentMarkdown {
     param($Result)
     $lines = [Collections.Generic.List[string]]::new()
@@ -222,7 +333,38 @@ function ConvertTo-IdsProjectedAssessmentMarkdown {
         foreach ($record in $Result.($section.field)) {
             $lines.Add('')
             $lines.Add("### $(ConvertTo-IdsReportText $record.($section.heading))")
-            $lines.Add((Format-IdsReportRecord $record))
+            if ($section.field -ceq 'controls') {
+                $lines.Add("**$(ConvertTo-IdsReportText $record.title)**")
+                $lines.Add("$(ConvertTo-IdsReportText $record.status): $(ConvertTo-IdsReportText $record.reason)")
+                $lines.Add('')
+                $lines.Add((Format-IdsReadableAssessmentEvidence $record.expected $record.observed))
+                $lines.Add('')
+                $lines.Add('<details><summary>Exact mappings, typed values and assignment evidence</summary>')
+                $lines.Add('')
+                $lines.Add((Format-IdsReportRecord $record))
+                $lines.Add('')
+                $lines.Add('</details>')
+            } elseif ($section.field -ceq 'policies') {
+                $lines.Add("**$(ConvertTo-IdsReportText $record.name)**")
+                $lines.Add((ConvertTo-IdsReportText $record.settingsNote))
+                foreach ($table in $record.settingsTables) {
+                    $lines.Add('')
+                    if ($table.title) { $lines.Add("**$(ConvertTo-IdsReportText $table.title)**") }
+                    $lines.Add('| ' + (($table.headers | ForEach-Object { ConvertTo-IdsReportText $_ }) -join ' | ') + ' |')
+                    $lines.Add('| ' + (($table.headers | ForEach-Object { '---' }) -join ' | ') + ' |')
+                    foreach ($row in $table.rows) {
+                        $lines.Add('| ' + (($row.cells | ForEach-Object { ConvertTo-IdsReportText $_ }) -join ' | ') + ' |')
+                    }
+                }
+                $lines.Add('')
+                $lines.Add('<details><summary>Technical policy and assignment evidence</summary>')
+                $lines.Add('')
+                $lines.Add((Format-IdsReportRecord ($record | Select-Object -Property * -ExcludeProperty settingsTables, settingsNote)))
+                $lines.Add('')
+                $lines.Add('</details>')
+            } else {
+                $lines.Add((Format-IdsReportRecord $record))
+            }
         }
         if (@($Result.($section.field)).Count -eq 0) { $lines.Add('No entries supplied.') }
     }

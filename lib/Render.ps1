@@ -94,7 +94,7 @@ function ConvertTo-IdsJson {
 
 function Format-IdsCell {
     <#  Escapes a value for use inside a Markdown table cell. #>
-    param($Value, [int]$MaxLength = 400)
+    param($Value, [int]$MaxLength = 400, [switch]$PlainText)
     if ($null -eq $Value) { return '-' }
     if ($Value -is [bool]) { if ($Value) { return 'Yes' } else { return 'No' } }
     if ($Value -is [array]) {
@@ -106,6 +106,10 @@ function Format-IdsCell {
         else { $Value = [string]$Value }
     }
     if ($Value -eq '') { return '-' }
+    if ($PlainText) {
+        if ($Value.Length -gt $MaxLength) { return $Value.Substring(0, $MaxLength) + '…' }
+        return $Value
+    }
     $t = $Value -replace '\|', '\|'
     $t = $t -replace "`r`n", '<br>'
     $t = $t -replace "`n", '<br>'
@@ -149,8 +153,18 @@ function New-IdsTable {
     param(
         [string[]]$Headers,
         [object[]]$Rows,
-        [string]$EmptyText = '_None_'
+        [string]$EmptyText = '_None_',
+        [switch]$AsData,
+        [string]$Title = ''
     )
+    if ($AsData) {
+        return [pscustomobject]@{
+            title = $Title; headers = @($Headers)
+            rows = @(foreach ($r in $Rows) {
+                [pscustomobject]@{ cells = @(foreach ($c in $r) { Format-IdsCell $c -PlainText }) }
+            })
+        }
+    }
     if (-not $Rows -or $Rows.Count -eq 0) { return $EmptyText }
     $out = @()
     $out += '| ' + ($Headers -join ' | ') + ' |'
@@ -529,8 +543,11 @@ function Expand-IdsSettingInstance {
 }
 
 function Format-IdsSettingsCatalog {
-    param($Settings)
-    if (-not $Settings -or @($Settings).Count -eq 0) { return '_No settings configured._' }
+    param($Settings, [switch]$AsData)
+    if (-not $Settings -or @($Settings).Count -eq 0) {
+        if ($AsData) { return }
+        return '_No settings configured._'
+    }
     $defMap = New-IdsDefinitionMap -Settings $Settings
     $rows = @()
     foreach ($s in @($Settings)) {
@@ -538,19 +555,28 @@ function Format-IdsSettingsCatalog {
             $rows += Expand-IdsSettingInstance -Instance $s.settingInstance -DefMap $defMap
         }
     }
-    if ($rows.Count -eq 0) { return '_No settings configured._' }
+    if ($rows.Count -eq 0) {
+        if ($AsData) { return }
+        return '_No settings configured._'
+    }
 
     $out = @()
     $grouped = $rows | Group-Object Category | Sort-Object Name
     foreach ($g in $grouped) {
         $title = $g.Name
         if (-not $title) { $title = 'General' }
+        if ($AsData) {
+            New-IdsTable -Title $title -Headers @('Setting', 'Value') -AsData -Rows @(
+                foreach ($r in ($g.Group | Sort-Object Setting)) { , @($r.Setting, $r.Value) })
+            continue
+        }
         $out += "**$title**"
         $out += ''
         $out += New-IdsTable -Headers @('Setting', 'Value') -Rows @(
             foreach ($r in ($g.Group | Sort-Object Setting)) { , @($r.Setting, $r.Value) })
         $out += ''
     }
+    if ($AsData) { return }
     $out += "_$($rows.Count) settings configured._"
     return ($out -join "`n")
 }
@@ -558,7 +584,7 @@ function Format-IdsSettingsCatalog {
 # --- Legacy / template profiles ---------------------------------------------------------
 
 function Format-IdsOmaSettings {
-    param($OmaSettings)
+    param($OmaSettings, [switch]$AsData)
     if (-not $OmaSettings -or @($OmaSettings).Count -eq 0) { return $null }
     $rows = @()
     foreach ($o in @($OmaSettings | Sort-Object omaUri)) {
@@ -572,13 +598,13 @@ function Format-IdsOmaSettings {
         }
         $rows += , @($o.displayName, $o.omaUri, (Format-IdsOdataType $o.'@odata.type'), $val)
     }
-    return (New-IdsTable -Headers @('Name', 'OMA-URI', 'Data type', 'Value') -Rows $rows)
+    return (New-IdsTable -Headers @('Name', 'OMA-URI', 'Data type', 'Value') -Rows $rows -AsData:$AsData)
 }
 
 function Format-IdsTemplateSettings {
     <#  Legacy deviceConfiguration objects carry their settings as ordinary top-level
         properties. We render every configured scalar, skipping envelope noise. #>
-    param($Config)
+    param($Config, [switch]$AsData)
     $skip = @('id', 'displayName', 'description', 'createdDateTime', 'lastModifiedDateTime', 'version',
         'roleScopeTagIds', 'supportsScopeTags', 'assignments', 'omaSettings', '@odata.type',
         'deviceManagementApplicabilityRuleOsEdition', 'deviceManagementApplicabilityRuleOsVersion',
@@ -598,12 +624,15 @@ function Format-IdsTemplateSettings {
         $label = $label.Substring(0, 1).ToUpperInvariant() + $label.Substring(1)
         $rows += , @($label, $v)
     }
-    return (New-IdsTable -Headers @('Setting', 'Value') -Rows $rows -EmptyText '_No settings configured._')
+    return (New-IdsTable -Headers @('Setting', 'Value') -Rows $rows -EmptyText '_No settings configured._' -AsData:$AsData)
 }
 
 function Format-IdsAdmxSettings {
-    param($DefinitionValues)
-    if (-not $DefinitionValues -or @($DefinitionValues).Count -eq 0) { return '_No ADMX settings configured._' }
+    param($DefinitionValues, [switch]$AsData)
+    if (-not $DefinitionValues -or @($DefinitionValues).Count -eq 0) {
+        if ($AsData) { return }
+        return '_No ADMX settings configured._'
+    }
     $rows = @()
     foreach ($d in @($DefinitionValues)) {
         if (-not $d) { continue }
@@ -632,8 +661,24 @@ function Format-IdsAdmxSettings {
         }
         $rows += , @($category, $name, $class, $state, ($values -join '; '))
     }
-    $sorted = $rows | Sort-Object { $_[0] }, { $_[1] }
-    return (New-IdsTable -Headers @('Category', 'Setting', 'Scope', 'State', 'Value') -Rows $sorted)
+    $sorted = @($rows | Sort-Object { $_[0] }, { $_[1] })
+    return (New-IdsTable -Headers @('Category', 'Setting', 'Scope', 'State', 'Value') -Rows $sorted -AsData:$AsData)
+}
+
+function Format-IdsIntentSettings {
+    param($Settings, [switch]$AsData)
+    $rows = @()
+    foreach ($s in $Settings) {
+        if (-not $s) { continue }
+        $name = Get-IdsPrettyId ([string]$s.definitionId)
+        $val = '-'
+        foreach ($candidate in @('value', 'valueJson')) {
+            if ($s.PSObject.Properties[$candidate] -and $null -ne $s.$candidate) { $val = $s.$candidate; break }
+        }
+        if ($val -is [string] -and $val -eq 'null') { $val = '-' }
+        $rows += , @($name, $val)
+    }
+    return (New-IdsTable -Headers @('Setting', 'Value') -Rows @($rows | Sort-Object { $_[0] }) -EmptyText '_No settings configured._' -AsData:$AsData)
 }
 
 function Format-IdsComplianceActions {

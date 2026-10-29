@@ -56,7 +56,8 @@ Describe 'Documentation from loaded policy evidence' {
         $fixture.state.Export.summary.meta.totalObjects | Should -Be 5
         $readme = [IO.File]::ReadAllText((Join-Path $fixture.options.OutputPath 'README.md'))
         $readme | Should -Match 'Policies loaded.*2026-10-29T10:00:00Z'
-        $compliance = Get-ChildItem (Join-Path $fixture.options.OutputPath 'compliance') -Recurse -Filter *.md | Select-Object -First 1
+        $compliance = Get-ChildItem (Join-Path $fixture.options.OutputPath 'compliance') -Recurse -Filter synthetic-compliance.md |
+            Select-Object -First 1
         [IO.File]::ReadAllText($compliance.FullName) | Should -Match 'PasswordRequired|24'
         Should -Invoke Invoke-IdsGraph -Times 0
         Should -Invoke Invoke-IdsGraphBatch -Times 0
@@ -66,9 +67,11 @@ Describe 'Documentation from loaded policy evidence' {
     It 'skips incomplete families and never prunes their earlier documentation' {
         $fixture = New-SnapshotExportFixture
         Start-IdsExport $fixture.state $fixture.options $fixture.snapshot
-        $files = @(Get-ChildItem (Join-Path $fixture.options.OutputPath 'compliance') -Recurse -File)
+        $files = @(Get-ChildItem (Join-Path $fixture.options.OutputPath 'compliance') -Recurse -File -Filter synthetic-compliance.md)
         $files.Count | Should -BeGreaterThan 0
         $original = [IO.File]::ReadAllText($files[0].FullName)
+        $rawPath = Join-Path $fixture.options.OutputPath '_raw\compliance\windows\synthetic-compliance.json'
+        $raw = [IO.File]::ReadAllText($rawPath)
         $fixture.snapshot.collection.documentation.compliance = @()
         $fixture.snapshot.collection.issues = @(@{ family = 'compliance'; stage = 'inventory'; reason = 'Synthetic denied' })
         Start-IdsExport $fixture.state $fixture.options $fixture.snapshot
@@ -76,6 +79,15 @@ Describe 'Documentation from loaded policy evidence' {
         $fixture.state.Export.summary.complete | Should -BeFalse
         $fixture.state.Export.summary.failed | Should -Contain 'Compliance policies'
         [IO.File]::ReadAllText($files[0].FullName) | Should -BeExactly $original
+        [IO.File]::ReadAllText($rawPath) | Should -BeExactly $raw
+        $manifest = Get-Content (Join-Path $fixture.options.OutputPath '.intune-docs-manifest.json') -Raw | ConvertFrom-Json
+        $manifest.files | Should -Contain 'compliance/windows/synthetic-compliance.md'
+        $manifest.files | Should -Contain '_raw/compliance/windows/synthetic-compliance.json'
+        $fixture.snapshot.collection.issues = @()
+        Start-IdsExport $fixture.state $fixture.options $fixture.snapshot
+        $fixture.state.Export.summary.complete | Should -BeTrue
+        Test-Path $files[0].FullName | Should -BeFalse
+        Test-Path $rawPath | Should -BeFalse
         Should -Invoke Invoke-IdsGraph -Times 0
     }
 
