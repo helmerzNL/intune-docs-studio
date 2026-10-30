@@ -19,9 +19,10 @@ chosen output folder. It is not a hosted service.
 - App-managed tokens and normal dashboard state live in process memory; the
   app does not write its token state to disk. Portal-session sign-in reads a
   token from the browser's MSAL cache. Its separate browser profile under
-  `%LOCALAPPDATA%\IntuneDocsStudio\browser-profile` may persist cookies and
-  other cached authentication material. Do not back up, copy, or restore that
-  profile as application data. Sign in again after restoring or moving an
+  `%LOCALAPPDATA%\IntuneDocsStudio\browser-profile` (Edge) or
+  `%LOCALAPPDATA%\IntuneDocsStudio\browser-profile-chrome` (Chrome) may persist cookies and
+  other cached authentication material. Do not back up, copy, or restore those
+  profiles as application data. Sign in again after restoring or moving an
   installation.
 - The default export destination is `Documents\intune-docs`; operators can
   select another folder, which the exporter resolves before writing. The export writes

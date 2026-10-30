@@ -518,14 +518,34 @@ $('btnBrowser').addEventListener('click', async () => {
   $('browserStatus').classList.remove('hidden');
   localizeText($('bsText'), () => t("text.starting_browser"));
 
-  await post('/api/signin/browser', {
-    tenant: $('tenant').value.trim(),
-    forcePicker: $('optForcePicker').checked
-  });
+  try {
+    const r = await post('/api/signin/browser', {
+      tenant: $('tenant').value.trim(),
+      forcePicker: $('optForcePicker').checked,
+      browser: $('portalBrowser').value
+    });
+    if (!r.ok || !r.body || !r.body.started) {
+      throw new Error(r.body && r.body.error ? r.body.error : t('text.portal_start_failed'));
+    }
+  } catch (e) {
+    btn.disabled = false;
+    $('browserStatus').classList.add('hidden');
+    showSigninError(e.message);
+    return;
+  }
 
   const timer = setInterval(async () => {
-    const r = await api('/api/signin/browser/status');
-    if (!r.body) return;
+    let r;
+    try {
+      r = await api('/api/signin/browser/status');
+      if (!r.ok || !r.body) throw new Error(t('text.portal_status_failed'));
+    } catch (e) {
+      clearInterval(timer);
+      btn.disabled = false;
+      $('browserStatus').classList.add('hidden');
+      showSigninError(e.message);
+      return;
+    }
     if (r.body.status) writeText($('bsText'), r.body.status);
     if (r.body.error) {
       clearInterval(timer);
@@ -545,9 +565,18 @@ $('btnBrowser').addEventListener('click', async () => {
 
 $('btnForget').addEventListener('click', async () => {
   clearAssessment();
-  await post('/api/signin/browser/forget');
+  showSigninError(null);
+  try {
+    const r = await post('/api/signin/browser/forget');
+    if (!r.ok || !r.body || !r.body.ok) {
+      throw new Error(r.body && r.body.error ? r.body.error : t('text.portal_forget_failed'));
+    }
+  } catch (e) {
+    showSigninError(e.message);
+    return;
+  }
   await refreshState();
-  localizeText($('bsText'), () => t("text.saved_browser_session_cleared"));
+  localizeText($('bsText'), () => t("text.portal_sessions_cleared"));
   $('browserStatus').classList.remove('hidden');
   setTimeout(() => $('browserStatus').classList.add('hidden'), 2500);
 });

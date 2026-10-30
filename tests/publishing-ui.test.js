@@ -7,9 +7,10 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { installI18n, withoutTranslationSpans } = require('./i18n-test-helpers');
 
-async function dashboard(respond = () => ({})) {
+async function dashboard(respond = () => ({}), { httpOk = true, httpStatus = 200 } = {}) {
   const elements = new Map();
   const requests = [];
+  const timers = [];
   function element(id) {
     if (!elements.has(id)) elements.set(id, {
       value: '', checked: false, children: [], options: [], handlers: {},
@@ -32,15 +33,17 @@ async function dashboard(respond = () => ({})) {
     URLSearchParams,
     fetch: async (url, options) => {
       requests.push({ url, payload: options?.body && JSON.parse(options.body) });
-      return { ok: true, status: 200, json: async () => url === '/api/state' ?
-        { auth: { connected: true, scopes: [] }, policies: { status: 'ready' }, ...respond(url) } : respond(url) };
+      const body = respond(url);
+      return { ok: httpOk, status: httpStatus, json: async () => url === '/api/state' ?
+        { auth: { connected: true, scopes: [] }, policies: { status: 'ready' }, ...body } : body };
     },
-    setInterval() {}, clearInterval() {}, setTimeout() {},
+    setInterval(callback) { timers.push(callback); return timers.length; },
+    clearInterval(id) { timers[id - 1] = null; }, setTimeout() {},
     alert(message) { throw new Error(message); }
   });
   await installI18n(context).ready;
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'web', 'app.js'), 'utf8'), context);
-  return { element, requests, context };
+  return { element, requests, context, timers };
 }
 
 test('export sends the selected Azure DevOps repository and branch and commits when pushing', async () => {
@@ -113,4 +116,77 @@ test('refreshing state displays the build identity reported by the server', asyn
   assert.equal(element('appName').textContent, 'Intune Docs Studio (beta)');
   assert.equal(context.document.title, 'Intune Docs Studio (beta)');
   assert.match(element('buildInfo').textContent, /0\.2\.0/);
+});
+
+test('portal sign-in sends the selected browser and account picker preference', async () => {
+  const { element, requests, timers } = await dashboard(() => ({ started: true }));
+  element('portalBrowser').value = 'chrome';
+  element('tenant').value = ' organizations ';
+  element('optForcePicker').checked = true;
+  await element('btnBrowser').handlers.click();
+  const request = requests.find((r) => r.url === '/api/signin/browser');
+  assert.deepEqual(request.payload, { tenant: 'organizations', forcePicker: true, browser: 'chrome' });
+  assert.equal(timers.length, 1);
+});
+
+test('portal browser markup defaults to automatic and includes explicit choices', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
+  const select = html.match(/<select id="portalBrowser"[^>]*>([\s\S]*?)<\/select>/)[1];
+  assert.deepEqual([...select.matchAll(/value="([^"]+)"/g)].map((m) => m[1]), ['auto', 'edge', 'chrome']);
+});
+
+test('a rejected portal start displays the server error and does not poll or change browsers', async () => {
+  const { element, requests, timers } = await dashboard(() => ({ error: 'Select auto, edge or chrome.' }),
+    { httpOk: false, httpStatus: 400 });
+  element('portalBrowser').value = 'invalid';
+  await element('btnBrowser').handlers.click();
+  assert.equal(element('btnBrowser').disabled, false);
+  assert.equal(element('signinError').textContent, 'Select auto, edge or chrome.');
+  assert.equal(timers.length, 0);
+  assert.equal(requests.filter((r) => r.url === '/api/signin/browser').length, 1);
+  assert.equal(element('portalBrowser').value, 'invalid');
+});
+
+test('policy diagnostics from the sign-in worker are shown as text without browser fallback', async () => {
+  const message = 'RemoteDebuggingAllowed at HKLM: disabled. Check edge://policy. <not HTML>';
+  const { element, requests, timers } = await dashboard((url) =>
+    url === '/api/signin/browser/status' ? { running: false, error: message } : { started: true });
+  element('portalBrowser').value = 'edge';
+  await element('btnBrowser').handlers.click();
+  await timers[0]();
+  assert.equal(element('signinError').textContent, message);
+  assert.equal(element('btnBrowser').disabled, false);
+  assert.equal(element('portalBrowser').value, 'edge');
+  assert.equal(timers[0], null);
+  assert.equal(requests.filter((r) => r.url === '/api/signin/browser').length, 1);
+});
+
+test('a network failure starting portal sign-in restores the button and displays the error', async () => {
+  const { element, timers } = await dashboard((url) => {
+    if (url === '/api/signin/browser') throw new Error('Network unavailable');
+    return {};
+  });
+  await element('btnBrowser').handlers.click();
+  assert.equal(element('btnBrowser').disabled, false);
+  assert.equal(element('signinError').textContent, 'Network unavailable');
+  assert.equal(timers.length, 0);
+});
+
+test('a status network failure stops polling and restores the sign-in button', async () => {
+  const { element, timers } = await dashboard((url) => {
+    if (url === '/api/signin/browser/status') throw new Error('Status unavailable');
+    return { started: true };
+  });
+  await element('btnBrowser').handlers.click();
+  await timers[0]();
+  assert.equal(element('btnBrowser').disabled, false);
+  assert.equal(element('signinError').textContent, 'Status unavailable');
+  assert.equal(timers[0], null);
+});
+
+test('forget saved sessions surfaces deletion errors instead of claiming success', async () => {
+  const { element } = await dashboard(() => ({ error: 'Profile is locked' }), { httpOk: false, httpStatus: 400 });
+  await element('btnForget').handlers.click();
+  assert.equal(element('signinError').textContent, 'Profile is locked');
+  assert.notEqual(element('bsText').textContent, 'Saved Edge and Chrome sessions cleared.');
 });

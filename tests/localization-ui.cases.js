@@ -67,7 +67,7 @@ test('flags are exactly the ten packaged, local SVG files and both scripts load 
 test('every static app-owned text node, placeholder, title and accessible label is explicitly tagged', () => {
   const stack = [];
   const voidTags = new Set(['meta', 'link', 'input', 'img', 'br', 'hr', 'path', 'rect']);
-  const technicalText = new Set(['Intune Docs Studio', 'English']);
+  const technicalText = new Set(['Intune Docs Studio', 'English', 'Microsoft Edge', 'Google Chrome']);
   const codeText = new Set(['_raw', 'organizations', '.order']);
   for (const token of html.split(/(<!--[\s\S]*?-->|<[^>]*>)/g)) {
     if (token.startsWith('<!--') || token.startsWith('<!')) continue;
