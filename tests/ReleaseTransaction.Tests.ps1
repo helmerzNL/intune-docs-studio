@@ -98,7 +98,7 @@ Live Azure DevOps and Intune authentication were not exercised.
                     merge_commit_sha = $script:Fixture.Promotion
                     base = @{ ref = 'main' }
                     head = @{ ref = 'beta'; sha = $script:Fixture.BetaHead; repo = @{ full_name = 'fixture/repository' } }
-                    labels = @(@{ name = 'version:minor' })
+                    labels = @($script:PromotionLabels | ForEach-Object { @{ name = $_ } })
                 }) | ConvertTo-Json -Depth 10 -Compress
             }
             if ($endpoint -match '/check-runs') {
@@ -171,7 +171,9 @@ Live Azure DevOps and Intune authentication were not exercised.
     }
 
     function Initialize-PreparedReleaseFixture {
-        $script:Fixture = New-IdsReleaseTransactionFixture -Root (Join-Path $script:ReleaseScratch ([guid]::NewGuid().ToString('N'))) -IncludeNotes
+        param([switch]$DocsOnly)
+        $script:Fixture = New-IdsReleaseTransactionFixture -Root (Join-Path $script:ReleaseScratch ([guid]::NewGuid().ToString('N'))) -IncludeNotes -DocsOnly:$DocsOnly
+        if ($DocsOnly) { $script:PromotionLabels += 'release:required' }
         Set-ReleaseFixtureGitHub
         $script:Prepared = Invoke-IdsStableRelease -Root $script:Fixture.Root -Before $script:Fixture.Before `
             -PromotionSha $script:Fixture.Promotion -Repository 'fixture/repository' -PrepareOnly
@@ -205,6 +207,7 @@ Describe 'Stable release transaction safety' {
         $env:IDS_STABLE_RELEASE_TOKEN = 'synthetic-release-token'
         $env:GH_TOKEN = 'synthetic-release-token'
         $script:GitHubCalls = @()
+        $script:PromotionLabels = @('version:minor')
         $script:ReadHead = $null
         $script:ReadHeadFailure = $null
         $script:RecordedArtifacts = @()
@@ -255,6 +258,67 @@ Describe 'Stable release transaction safety' {
         $result.required | Should -BeFalse
         (& git -C $script:Fixture.Root rev-parse HEAD).Trim() | Should -Be $script:Fixture.Promotion
         @($script:GitHubCalls | Where-Object { $_ -match '/git/ref/tags|/releases/tags|release create' }) | Should -BeNullOrEmpty
+    }
+
+    It 'prepares a single version commit for an explicitly requested documentation-only release' {
+        $script:Fixture = New-IdsReleaseTransactionFixture `
+            -Root (Join-Path $script:ReleaseScratch ([guid]::NewGuid().ToString('N'))) -DocsOnly -IncludeNotes
+        $script:PromotionLabels = @('release:required', 'version:minor')
+        $script:ReadHead = $script:Fixture.Promotion
+        Set-ReleaseFixtureGitHub
+        $result = Invoke-IdsStableRelease -Root $script:Fixture.Root -Before $script:Fixture.Before `
+            -PromotionSha $script:Fixture.Promotion -Repository 'fixture/repository' -PrepareOnly
+
+        $result.version | Should -Be '0.2.0'
+        (Get-IdsRemoteBranchHead -Root $script:Fixture.Root -Branch main) | Should -Be $result.commit
+        Invoke-ReleaseFixtureGit -Root $script:Fixture.Root -Arguments @('rev-parse', 'HEAD^') |
+            Should -Be $script:Fixture.Promotion
+        Invoke-ReleaseFixtureGit -Root $script:Fixture.Root -Arguments @('diff', '--name-only', 'HEAD^', 'HEAD') |
+            Should -Be 'VERSION'
+        Invoke-ReleaseFixtureGit -Root $script:Fixture.Root -Arguments @('log', '-1', '--format=%B') |
+            Should -Match "Release-Promotion: $($script:Fixture.Promotion)"
+        @($script:GitHubCalls | Where-Object { $_ -contains 'create' }) | Should -BeNullOrEmpty
+    }
+
+    It 'does not bypass release prerequisites for an explicit documentation-only release: <Case>' -ForEach @(
+        @{ Case = 'missing notes'; IncludeNotes = $false; Error = '*release notes*' }
+        @{ Case = 'missing credential'; IncludeNotes = $true; Error = '*IDS_STABLE_RELEASE_TOKEN*' }
+        @{ Case = 'existing tag'; IncludeNotes = $true; Error = '*Refusing to overwrite*' }
+        @{ Case = 'failed beta check'; IncludeNotes = $true; Error = '*quality*' }
+        @{ Case = 'fork promotion'; IncludeNotes = $true; Error = '*same-repository*' }
+    ) {
+        $script:Fixture = New-IdsReleaseTransactionFixture `
+            -Root (Join-Path $script:ReleaseScratch ([guid]::NewGuid().ToString('N'))) -DocsOnly -IncludeNotes:$IncludeNotes
+        $script:PromotionLabels = @('release:required', 'version:minor')
+        $script:ReadHead = $script:Fixture.Promotion
+        Set-ReleaseFixtureGitHub
+        switch ($Case) {
+            'missing credential' { Remove-Item Env:IDS_STABLE_RELEASE_TOKEN }
+            'existing tag' {
+                Mock Invoke-IdsGitHub { return '{"object":{"type":"commit","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}' } `
+                    -ParameterFilter { ($Arguments -join ' ') -match '/git/ref/tags/' }
+            }
+            'failed beta check' {
+                Mock Invoke-IdsGitHub { return '{"check_runs":[{"name":"quality","conclusion":"failure","started_at":"2026-10-28T00:00:00Z"}]}' } `
+                    -ParameterFilter { ($Arguments -join ' ') -match '/check-runs' }
+            }
+            'fork promotion' {
+                Mock Invoke-IdsGitHub {
+                    return ConvertTo-Json -InputObject @(@{
+                        merged_at = '2026-10-28T00:00:00Z'; merge_commit_sha = $script:Fixture.Promotion
+                        base = @{ ref = 'main' }
+                        head = @{ ref = 'beta'; repo = @{ full_name = 'untrusted/fork' } }
+                        labels = @(@{ name = 'release:required' })
+                    }) -Depth 10 -Compress
+                } -ParameterFilter { ($Arguments -join ' ') -match '/commits/.+/pulls' }
+            }
+        }
+        {
+            Invoke-IdsStableRelease -Root $script:Fixture.Root -Before $script:Fixture.Before `
+                -PromotionSha $script:Fixture.Promotion -Repository 'fixture/repository' -PrepareOnly
+        } | Should -Throw $Error
+        (& git -C $script:Fixture.Root rev-parse HEAD).Trim() | Should -Be $script:Fixture.Promotion
+        (Get-IdsRemoteBranchHead -Root $script:Fixture.Root -Branch main) | Should -Be $script:Fixture.Promotion
     }
 
     It 'fails closed for docs-only planning when the read API is stale or unavailable' -ForEach @(
@@ -396,8 +460,10 @@ Describe 'Stable release transaction safety' {
         (& git -C $script:Fixture.Root rev-parse HEAD).Trim() | Should -Be $script:Prepared.commit
     }
 
-    It 'publishes prepared bytes verifies the release and back-merges the version to the real beta remote' {
-        Initialize-PreparedReleaseFixture
+    It 'publishes immutable bytes and back-merges with docs-only opt-in: <DocsOnly>' -ForEach @(
+        @{ DocsOnly = $false }; @{ DocsOnly = $true }
+    ) {
+        Initialize-PreparedReleaseFixture -DocsOnly:$DocsOnly
         Invoke-ReleaseFixtureGit -Root $script:Fixture.Root -Arguments @('config', 'user.name', '') | Out-Null
         Invoke-ReleaseFixtureGit -Root $script:Fixture.Root -Arguments @('config', 'user.email', '') | Out-Null
         New-FixtureStableArtifact -Directory $script:ArtifactDirectory
@@ -562,11 +628,18 @@ Describe 'Stable release transaction safety' {
         @($script:GitHubCalls | Where-Object { $_ -contains 'release' -and $_ -contains 'create' }) | Should -BeNullOrEmpty
     }
 
-    It 'does not call GitHub publication when the main version push is rejected' {
-        $script:Fixture = New-IdsReleaseTransactionFixture -Root (Join-Path $script:ReleaseScratch ([guid]::NewGuid().ToString('N'))) -IncludeNotes
+    It 'does not publish when the version push is rejected for docs-only opt-in: <DocsOnly>' -ForEach @(
+        @{ DocsOnly = $false }; @{ DocsOnly = $true }
+    ) {
+        $script:Fixture = New-IdsReleaseTransactionFixture -Root (Join-Path $script:ReleaseScratch ([guid]::NewGuid().ToString('N'))) -IncludeNotes -DocsOnly:$DocsOnly
+        if ($DocsOnly) { $script:PromotionLabels += 'release:required' }
         Set-ReleaseFixtureGitHub
         $hook = Join-Path $script:Fixture.Remote 'hooks\pre-receive'
         Set-Content -LiteralPath $hook -Value "#!/bin/sh`nexit 1`n" -NoNewline
+        if (-not $IsWindows) {
+            & chmod +x $hook
+            if ($LASTEXITCODE -ne 0) { throw 'Could not make fixture rejection hook executable.' }
+        }
         $remoteBefore = (Invoke-ReleaseFixtureGit -Root $script:Fixture.Root -Arguments @('ls-remote', 'origin', 'refs/heads/main')) -split '\s+' | Select-Object -First 1
 
         {

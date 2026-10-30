@@ -76,6 +76,12 @@ by default, or the selected minor/major increment). Policy and workflow checks
 are implemented locally; GitHub enforcement is not active until the required
 remote protection and credentials are configured and read back.
 
+Documentation-only promotions normally do not publish a stable release.
+Only when the owner explicitly requests one, add `release:required` to the
+same-repository `beta` to `main` promotion PR before merging. It selects the
+normal next version and retains all release checks; it is not permission to
+overwrite an existing tag, change `VERSION`, or skip owner review.
+
 **Promoting `beta` to `main`** follows App-Guidance's
 [`shared/guidelines/promotion-runbook.md`](https://github.com/Flux76HQ/App-Guidance/blob/main/shared/guidelines/promotion-runbook.md);
 the steps as applied here are in `docs/promotion-runbook.md`. Per-app choices:
@@ -83,7 +89,12 @@ the release notes are `docs/releases/vX.Y.Z.md`; the owner merges the
 promotion; the full test command is the set of checks listed in that runbook
 under *Checks and operator update*.
 
-**Every release has release notes.** They are written and reviewed before the
+**Every release has release notes in both Dutch and English.** Keep both
+language versions in `docs/releases/vX.Y.Z.md` so the published release includes
+both. They must convey the same changes, update guidance, risks and limitations;
+neither language may be only a shortened summary. The agent writes both versions
+as part of preparing the release, without a separate reminder.
+They are written and reviewed before the
 promotion merges, in a normal pull request into `beta` that is merged first, and
 they cover everything since the previous stable version, not only the last
 change. The stable pipeline refuses to release without them.
