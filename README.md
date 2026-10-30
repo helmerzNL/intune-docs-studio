@@ -1,11 +1,290 @@
+<div align="center">
+
 # Intune Docs Studio
 
-Turn a Microsoft Intune tenant into a structured Markdown repository — **without creating an
-Entra ID app registration.**
+### Your Intune tenant. Finally, an open book.
 
+Turn complex configurations into clear, structured documentation.<br>
+From your tenant to a Git-ready Markdown repository — without a new app registration.
+
+**Windows** &nbsp; / &nbsp; **PowerShell 7+** &nbsp; / &nbsp; **Local-first** &nbsp; / &nbsp; **Beta**
+
+[**Get the beta build →**](https://github.com/helmerzNL/intune-docs-studio/actions/workflows/beta.yml) &nbsp; · &nbsp;
+[Quick start](#quick-start) &nbsp; · &nbsp;
+[Explore the output](#output-structure) &nbsp; · &nbsp;
+[Setup guide](QUICKSTART.md)
+
+*Nederlandse versie: [README.nl.md](README.nl.md).
+The setup guide [QUICKSTART.md](QUICKSTART.md) and the documents in `docs/` are available in English only.*
+
+</div>
+
+---
+
+## Less documenting. More understanding.
+
+For assessments, handovers, and the moment someone asks, **“How is this actually configured?”**
+
+| No new app. No new secret. | The details, connected. | A history you can read. |
+|---|---|---|
+| Use an existing sign-in method with read-only access. No new Entra ID app registration or client secret to rotate. | Document policies, apps, scripts, and enrollment, with resolved assignment groups and filter rules alongside the settings. | Export Markdown into your Git working folder. Re-run, review the diff, and publish through your own repository. |
+
+Your tenant configuration stays read-only. Your documentation lives in an output folder you
+choose. Git publishing is optional; generated tenant documentation should be treated as sensitive.
+
+> **Beta, not a production release.** Validate beta packages before operational use.
+> Beta builds are available as ZIP artifacts from successful
+> [Beta workflow runs](https://github.com/helmerzNL/intune-docs-studio/actions/workflows/beta.yml).
+> GitHub sign-in and access to this private repository are required.
+> Stable packages built through the authorized `beta`-to-`main` promotion and release process
+> use the `stable` channel; the *beta* marker then disappears from the title bar and app name.
+
+## Quick start
+
+**You need:** Windows and [PowerShell 7 or later](#requirements). Git is optional and only
+needed for commit/push functionality.
+
+1. Open a successful [Beta workflow run](https://github.com/helmerzNL/intune-docs-studio/actions/workflows/beta.yml)
+   and download its ZIP artifact. Extract the artifact, then extract the included
+   `IntuneDocsStudio.zip` application package.
+2. Double-click **`Start-IntuneDocs.cmd`** in the extracted application folder.
+   The dashboard opens at <http://localhost:7654>.
+3. **Sign in** — the landing page opens first. Choose **Sign in via the Intune portal**,
+   or open **Advanced sign-in options** for the other methods. Sign in as an administrator
+   with access to the Intune areas you want to document.
+4. **Choose a policy source** — after sign-in, choose **Load policies** or
+   **Not now**. Declining opens Home without collecting; both workflows stay
+   disabled until you load or import policies. Alternatively, use **Import an
+   existing policy export** on the landing page without signing in.
+5. **Document policies** — choose your output folder and which areas to document, click
+   **Generate documentation**, watch the live progress, inspect the Markdown, and optionally
+   commit and push under **Git publishing**.
+
+![The Intune Docs Studio sign-in page in Dutch](docs/images/aanmelden.png)
+
+Already have the source or an extracted application package? Open PowerShell 7 in that
+folder and run:
+
+```powershell
+.\Start-IntuneDocs.cmd
 ```
-Start-IntuneDocs.cmd   →   http://localhost:7654   →   sign in   →   pick areas   →   Markdown tree
-```
+
+| 01 · Sign in | 02 · Document | 03 · Assess |
+|---|---|---|
+| Your tenant, your sign-in. Read only what your account is allowed to see. | Choose the areas and an output folder you control, separate from the application. Re-run when things change, then review the difference. | Compare configured policies with versioned rule packs. Read-only evidence, not a compliance score. |
+
+> **Before you connect:** Standard delegated Graph sign-in needs administrator consent.
+> The optional portal-session method has different limitations and is not a supported
+> Microsoft integration pattern. Read the [sign-in guidance](#which-sign-in-method-should-the-customer-use)
+> before choosing a method.
+
+The listener is bound to `localhost` only and requires no elevation. To stop the tool,
+use **Stop server** in the dashboard or press Ctrl+C in the console window.
+Ctrl+C may leave cmd.exe asking *“Terminate batch job (Y/N)?”*; the server has already
+stopped, so either answer is fine.
+
+For a guided walkthrough, see [QUICKSTART.md](QUICKSTART.md). For safe updates, runtime
+identity checks, and output backup/restore, see [the operator guide](docs/operations.md).
+
+### The Home page
+
+After sign-in and policy loading, Home shows the active tenant, collection time and policy
+counts per family. Both workflows — documentation and assessment — use the same snapshot.
+
+![The Home page with a policy snapshot, shown in Dutch](docs/images/startpagina.png)
+
+> The screenshots in both READMEs show the real web interface in Dutch with **synthetic
+> demonstration data**. They contain no real tenant, account or policy.
+> The English interface offers the same workflows.
+
+## Languages
+
+The header language selector is available before and after sign-in. Bundled SVG
+flags and native language names identify Danish, German, English, Spanish, French,
+Italian, Dutch, Norwegian Bokmål, European Portuguese and Swedish, listed
+alphabetically by native name. On the first visit the app matches the browser
+language when it is supported and otherwise defaults to English;
+a saved choice in this browser takes precedence. Selection works with the keyboard
+and updates the current screen in place without clearing the policy source,
+sign-in, wizard entries, import queue or active job.
+
+![The language selector with languages listed alphabetically](docs/images/taalkiezer.png)
+
+The selected language also applies to newly started documentation and Assessment
+jobs. Each job captures its language at admission: switching the interface later
+does not mix languages within its generated output. Existing saved files are not
+rewritten just by changing language. Technical JSON keys, identifiers, typed
+policy values, customer names, Microsoft-provided setting labels and external
+benchmark/control wording remain unchanged. The Windows folder dialog's own
+buttons and identity-provider pages follow the OS/provider language; app-owned
+titles and messages follow the selected language. Contributor documentation and
+developer logs are not translated.
+
+For command-line exports, pass an explicit locale, for example
+`.\IntuneDocsStudio.ps1 -Export -Locale fr-FR -OutputPath C:\IntuneDocs\example-fr`.
+Headless exports default to `en-GB`; the browser preference does not change them.
+
+Translations and flag artwork ship with the application; there are no runtime
+translation-service or CDN requests. See [the language operating notes](docs/operations.md#language-settings-and-output)
+for settings, output and troubleshooting boundaries.
+
+## Assess configured policies
+
+After policy loading or import, the **Assess policies** path compares read-only policy evidence with
+versioned Microsoft rules and locally imported customer packs. It does not change
+Intune, determine effective targeting, certify a benchmark, or measure device compliance.
+
+![Step 3 of the assessment wizard: reference baselines, shown in Dutch](docs/images/beoordelen.png)
+
+The dashboard loads Settings Catalog, configuration profiles, compliance policies,
+administrative templates, and endpoint-security intents into a tenant-scoped,
+in-memory snapshot. Home shows its collection time and family counts. Both
+workflows reuse that snapshot without collecting those policies again; other
+selected documentation areas and reference lookups are collected during export.
+Use **Refresh policies** on Home after tenant changes. Refresh and source replacement
+clear active assessment results, not saved reports. Live snapshots clear on sign-out
+or tenant switches. Imported offline sources remain independent of sign-in and are
+never silently replaced by live data. All active snapshots clear on shutdown.
+The command-line export still collects directly.
+
+### Offline policy sets
+
+The landing page accepts an Intune Docs Studio JSON folder, that same folder
+zipped, or an older export containing usable `_raw` policy JSON. Markdown-only
+exports and other tools' formats are not supported. Home displays the active
+environment, source, timestamps, family counts and completeness. Failed imports
+leave the current source unchanged; replacing a loaded source requires confirmation.
+
+**Export policy set** writes a new uniquely named JSON subfolder, never overwriting
+an existing export. Its version-1 `policyset.json` manifest lists SHA-256 hashes for
+five `families/*.json` files and `references.json`. Available settings, definitions,
+templates, assignments, names, original collection time and completeness survive
+re-import. Authentication objects, tokens, cookies, browser profiles and recognized
+secret values are excluded/redacted. Treat the remaining configuration as sensitive
+customer data; this is not a credential backup.
+
+Both workflows operate offline with **no Graph/authentication requests**. Offline
+documentation supports only the five policy families; apps, scripts and other live
+sections are disabled. Missing settings/names stay explicitly unknown. Incomplete
+families preserve existing pages/raw files and never justify pruning; newly
+documented offline policies show their limitations. Legacy `_raw` inventories are
+always incomplete and their collection date remains unknown.
+
+Inputs are bounded to 32 MiB ZIP, 1,000 entries, 500 JSON files, 10 MiB per JSON,
+64 MiB total JSON and 64 JSON levels (folder nesting: 16). Unsafe paths, links,
+duplicates and invalid manifests/hashes are rejected. **Choose folder** opens a
+Windows dialog on the **application host**, not an upload browser; cancellation
+keeps the previous path. Editable host paths remain available if the dialog fails.
+
+If loading fails, use **Retry loading** or sign out and check access. A partial
+load shows explicit collection limitations and still permits both workflows:
+assessment retains incomplete evidence as such, while documentation skips
+incomplete policy families, preserves their previous pages/raw files, and skips
+pruning for that run. It does not interpret denied or truncated reads as deletion.
+
+> **Only five checks across four partial Microsoft packs ship today.** Windows 11
+> has two Windows 26H2 **baseline** shell SmartScreen checks; macOS has one FileVault
+> **recommendation**. Both map only legacy Endpoint Protection properties over
+> **Graph beta**, not equivalent Settings Catalog or modern endpoint-security settings.
+> The macOS template is deprecated for creating profiles. iOS/iPadOS has one
+> **personal-only** passcode recommendation; Android Enterprise has one
+> **personally-owned work-profile-only** encryption *compliance-policy requirement*
+> recommendation. Requiring encryption is not proof of device encryption/compliance.
+> None is a complete baseline, full benchmark assessment, or compliance score.
+> **Missing** means absent/not configured only in the rule's completely read mapped
+> families/policy types, **not absent throughout the tenant**.
+
+The assessment is a six-step wizard: **Platforms**, **Import packs**, **Baselines**, **Context**,
+**Review & run** and **Results**. **Next** checks each step, and errors appear
+below the stepper.
+
+1. Sign in, confirm the tenant on Home, and open **Assess policies**. On
+   **Platforms**, select at least one target platform.
+2. Press **Next** to open **Import packs**. Queue multiple files or host folders,
+   removing unwanted queue rows with the trash button, then click **Import**.
+   Each item shows real loading/completion/error status; independent failures
+   preserve earlier successes. Read the Added/Already present/Skipped/Failed
+   summary and expandable reasons, or continue with existing library packs.
+   Select the licensed CIS Intune build-kit ZIP you downloaded from
+   CIS (at most 32 MiB) or one licensed, reviewed **schema-1 JSON** rule pack (at
+   most 10 MiB), then click **Import pack**. The build-kit ZIP is read in memory,
+   and its Settings Catalog policies become local rule packs. The card lists
+   packs, skipped entries with reasons and ignored-file counts. Imported packs
+   are never selected automatically. A single JSON file must be a schema-1 rule
+   pack; Settings Catalog JSON is converted from a build-kit ZIP or an extracted
+   build-kit folder, including its subfolders. Converted
+   packs are labeled CIS without verifying the source, so import only your licensed
+   download. The build-kit layout is unverified; review the defensive converter's
+   summary. PDFs, Excel, XCCDF/OVAL, Group Policy and OMA-URI content are not
+   supported; CIS content is neither bundled nor downloaded. See the
+   [import reference](docs/assessment-rule-packs.md) for all fields, supported
+   operators, named limits, and build-kit ZIP conversion rules. Select **Policy
+   set as custom reference** to convert a *separate reference* export into
+   supported typed expected values; importing a target alone does not create a
+   baseline. Unsupported, incomplete, secret or conflicting settings are skipped.
+   Custom references are never labeled CIS or certified.
+3. On **Baselines**, select 1–64 exact rule-pack versions/profiles, with an
+   applicable pack for every selected platform. Read their classification,
+   partial coverage, source revisions, and SHA-256 identities. Profile labels
+   include the baseline set and imported/bundled origin. Technical details are
+   expandable. Imported library packs can be removed after confirmation; bundled
+   packs and saved reports are protected.
+4. On **Context**, enter known OS versions (Windows uses a build version such as
+   `10.0.22000`) and Android enrollment mode; only fields for the selected
+   platforms appear. Explicitly select iOS/iPadOS **Personally owned** only for
+   that comparison scope; ownership defaults to **Unknown**. Unknown applicability
+   remains **not assessed**. These are user-selected comparison context, not
+   discovered inventory, ownership, or effective assignment. A Windows 11 build
+   can scope compatible unrestricted Windows-family profiles; real policy
+   include/exclude rules still apply. Unsupported conditions block. If the
+   Windows 11 build is blank, a non-blocking warning explains that Windows
+   policies targeting Windows 10 and later, such as those that CIS build-kit
+   packs check, stay **not assessed**.
+5. On **Review & run**, check the summary. Choose an absolute
+   **assessment report destination**, separate from both the installation and
+   documentation export folders, then **Assess selected policies**. One export or
+   assessment can run at a time; wait before sign-out, reset, or stop.
+6. On **Results**, read the summary, filter evidence by status, inspect
+   policy/assignment evidence, collection issues and reasons, then open the
+   displayed `assessment.md` and `assessment.json` paths. Each run creates a new
+   report subdirectory. **New assessment** returns to **Platforms** and keeps your
+   choices; it is disabled while an assessment runs.
+
+**Assessment coverage** concerns assessed listed controls, not the entire source
+benchmark. **Configuration alignment** concerns aligned versus assessed controls.
+Unknown/manual/unsupported or incomplete evidence is **not assessed**, not a pass
+or missing result. Unassigned aligned policies do not demonstrate deployment;
+potential conflicts are differing configured values, not proven targeting overlap.
+Groups, exclusions, and filters are evidence, not effective membership resolution.
+
+Policy settings in the dashboard and reports use the documentation writer's
+readable tables and expected/configured summaries: Settings Catalog definition/option names, spaced legacy property
+labels, ADMX labels/states, and endpoint-security setting names. Exact identifiers,
+typed comparisons and assignment metadata remain available as technical evidence.
+Readable tables do not change evaluation or expand supported mappings; incomplete,
+secret or unsupported policy evidence is withheld from those tables with an
+explicit note. Reports never receive the original documentation payload.
+
+Imported files persist in `%LOCALAPPDATA%\IntuneDocsStudio\AssessmentPacks` across
+application updates; packs generated from a build-kit ZIP are stored there too.
+The build-kit ZIP itself is not kept, so keep your licensed download. Active
+tenant results clear on session reset. Reports go only to your chosen report
+root. Treat packs and reports as customer-owned data, separate from exports and
+their Git history. Assessment does not upload data, commit, or push reports
+automatically. See [operator procedures](docs/operations.md) for backup, update,
+and failure handling; never back up tokens or browser profiles.
+
+### Find your way
+
+[Sign-in and permissions](#which-sign-in-method-should-the-customer-use) ·
+[Requirements](#requirements) ·
+[Output structure](#output-structure) ·
+[Policy assessments](#assess-configured-policies) ·
+[Tracking changes](#the-point-of-re-running-it) ·
+[Azure DevOps publishing](#publishing-to-azure-devops) ·
+[Command line](#unattended--command-line) ·
+[Security](#security-notes) ·
+[Troubleshooting](#troubleshooting)
 
 ---
 
@@ -51,6 +330,10 @@ appears in the directory.
 
 Practical notes, learned the hard way:
 
+- **Choose the portal browser** in the dashboard: Automatic prefers Edge and uses Chrome only
+  if Edge is not installed. An explicit Edge or Chrome choice never falls back to another
+  browser. Policy or connection failures never trigger a browser switch. Use only a browser
+  approved by your IT administrator.
 - **Windows SSO is deliberately disabled** in that window. Without this, Edge silently signs in
   with the machine's own work account, which is usually a *different tenant* than the one being
   documented — and the export then finds nothing. You will be asked to pick an account; choose
@@ -61,15 +344,47 @@ Practical notes, learned the hard way:
   all keep working — WebAuthn is not tied to a browser profile. The trade-off is that the
   sign-in is not remembered for the next run.
 - **The sign-in is remembered** in a profile under `%LOCALAPPDATA%\IntuneDocsStudio`, so this
-  is a one-time step. The browser is closed cleanly over CDP so Chromium flushes its cookies
+  is a one-time step per browser. Edge keeps `browser-profile`; Chrome uses the separate
+  `browser-profile-chrome` folder. The browser is closed cleanly over CDP so Chromium flushes its cookies
   to disk, and session restore is enabled so the sign-in survives whether or not you tick
-  Azure AD's *Stay signed in?* prompt. Use *forget saved session* to switch accounts.
+  Azure AD's *Stay signed in?* prompt. Use *forget saved sessions* to clear both app-managed
+  browser profiles. Finish or close an active portal sign-in before clearing them.
 - **The token cannot be renewed** — the refresh token stays inside the portal. Its lifetime is
   set by tenant policy and varies widely (an hour in some tenants, close to a day in others);
-  the dashboard shows the actual expiry. When it lapses, sign in again. For anything recurring,
-  prefer a method above that can refresh.
+  the dashboard shows the actual expiry. Loading live policies checks the Graph sign-in; if the
+  token is no longer valid, sign in again. For anything recurring, prefer a method above that
+  can refresh.
 - This depends on the admin center's current behaviour and is not a supported Microsoft
   integration pattern. It is excellent for an assessment; it is not a pipeline foundation.
+
+#### Managed browsers and portal-session diagnostics
+
+This method starts its own browser instance and isolated profile; it does not attach to your
+everyday Edge/Chrome session. An isolated profile still inherits applicable enterprise policy.
+Before launch, the app reads relevant mandatory local policies from both `HKLM` and `HKCU`
+under `SOFTWARE\Policies\Microsoft\Edge` or `SOFTWARE\Policies\Google\Chrome`. It stops on:
+
+| Policy | Local blocker |
+|---|---|
+| `RemoteDebuggingAllowed` | `0`: CDP/remote debugging disabled |
+| `DeveloperToolsAvailability` | `2`: developer tools disabled |
+| `InPrivateModeAvailability` (Edge) / `IncognitoModeAvailability` (Chrome) | `1`: private browsing disabled, when **Force account picker** is selected |
+| `UserDataDir` | A nonempty managed directory overrides the app's isolated profile |
+
+An unreadable policy key is reported as an error, not treated as permission to proceed.
+These checks are conservative local diagnostics, not a complete evaluation of effective
+browser policy: cloud policy, policy precedence, extensions and endpoint protection can still
+affect the browser. Inspect `edge://policy` or `chrome://policy` on the affected workstation,
+including the source/status of each policy. The app also checks the local CDP HTTP endpoint
+and WebSocket connection before capturing a token, with distinct timeout/connection errors.
+If these checks pass but no usable token is found, check the sign-in, Conditional Access,
+Intune permissions and portal behaviour rather than assuming a debugging-policy problem.
+
+The app never edits policies, disables endpoint protection, copies an everyday browser
+profile or retries with another browser to get around a restriction. Ask IT for a narrowly
+scoped, approved exception or a compliant management workstation; CDP can access sensitive
+session material. If CDP is prohibited, use standard Graph sign-in with one-time admin consent.
+An approved exception does not make portal-token reuse a Microsoft-supported integration.
 
 ### Permissions requested
 
@@ -122,6 +437,10 @@ A source checkout with no `build-info.json` identifies itself as **beta / develo
 `build-info.json` containing exactly `version`, `channel` and `commit`. Its ZIP contents and
 timestamps are normalized so repeated builds from unchanged inputs are byte-identical.
 
+The title bar and app name show **(beta)** while the package channel is `beta`.
+A `stable`-channel package built through the authorized promotion and release process
+does not show that marker. The package's channel, not the checkout's branch name, determines it.
+
 For a local development package, the defaults are beta/development:
 
 ```powershell
@@ -139,25 +458,6 @@ Stable packages require both `-Channel stable` and an explicit full source SHA; 
 development identity cannot be labeled stable. The package includes the publishing guide
 and includes `docs/operations.md` only when that guide exists. Contributor/agent instructions,
 tests, build scripts, workflows, and design specifications are never shipped.
-
----
-
-## Quick start
-
-1. Double-click **`Start-IntuneDocs.cmd`**.
-2. The dashboard opens at <http://localhost:7654>.
-3. **Connect** — sign in as an Intune administrator.
-4. **Configure** — choose the output folder and which areas to document.
-5. **Generate documentation** — watch the live progress, then browse the result.
-
-To stop the tool, use **Stop server** in the dashboard, or press Ctrl+C in the console window.
-(Ctrl+C leaves cmd.exe asking *"Terminate batch job (Y/N)?"* — the server has already stopped
-by then, so either answer is fine. The Stop button avoids the question.)
-
-The listener is bound to `localhost` only and requires no elevation.
-
-For safe updates, runtime identity checks, and output backup/restore, see
-[`docs/operations.md`](docs/operations.md).
 
 ---
 
@@ -203,6 +503,8 @@ collapsed `<details>` block.
 Where an assignment uses an assignment filter, the filter's **rule is written out beneath the
 assignment tables**, so you can see which devices are actually targeted without opening
 another page. Filter pages list every assignment that uses them in return.
+
+![Generating documentation: choosing sections and an output folder, shown in Dutch](docs/images/documenteren.png)
 
 ---
 
@@ -283,6 +585,7 @@ Re-running the export and pushing updates the wiki in place. See
 |---|---|
 | `-Export` | Run headless, no dashboard |
 | `-Method` | `interactive` (default), `browser`, `devicecode`, `azurecli`, `mggraph` |
+| `-PortalBrowser` | Portal-session browser for `-Export -Method browser`: `auto` (default), `edge`, `chrome`. The browser still requires interactive sign-in. |
 | `-Client` | `graphcli` (default), `azurecli`, `intuneps` |
 | `-Tenant` | Tenant id or domain; defaults to `organizations` |
 | `-OutputPath` | Target folder |
@@ -307,7 +610,8 @@ much more common case where one is unwelcome.
 
 - Generated documentation is written to the chosen output folder. Portal-session
   sign-in reads a token from the browser's MSAL cache; its separate profile under
-  `%LOCALAPPDATA%\IntuneDocsStudio\browser-profile` may persist cookies and other
+  `%LOCALAPPDATA%\IntuneDocsStudio\browser-profile` (Edge) or
+  `%LOCALAPPDATA%\IntuneDocsStudio\browser-profile-chrome` (Chrome) may persist cookies and other
   cached authentication material.
 - App-managed tokens and normal dashboard state live in process memory; the app
   does not write its token state to disk. Do not back up, copy, or restore browser
@@ -321,6 +625,8 @@ much more common case where one is unwelcome.
 - Operator update, backup, and restore procedures are documented in
   [`docs/operations.md`](docs/operations.md).
 
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md); do not use public issues.
+
 ---
 
 ## Troubleshooting
@@ -331,6 +637,9 @@ much more common case where one is unwelcome.
 | Sign-in window opens as the wrong account | Tick **Force account picker** and sign in again. That opens an InPrivate window with the session signed out, so Windows SSO cannot reuse your everyday account. Passkeys and security keys still work. |
 | Portal session asks me to sign in every time | Fixed in the current build: the browser is now closed cleanly so Chromium writes its cookies to disk. Note that **Force account picker** deliberately does not remember the session. |
 | Portal capture reports "no usable token" | The account signed in may hold no Intune role in that tenant, or the sign-in never completed. The status line lists the API hosts seen. |
+| Portal sign-in reports a policy blocker | Inspect the named policy/source in `edge://policy` or `chrome://policy`. Request an IT-approved exception/workstation or use standard Graph sign-in. Policies are not changed by the app. |
+| "Could not attach" or "CDP WebSocket connection failed" | Check effective browser policy, whether the selected browser opened, local loopback/WebSocket protection and conflicting debugging sessions with IT. Passing local registry checks does not prove access is allowed. |
+| Selected portal browser was not found | Select an installed, IT-approved Edge or Chrome. An explicit choice does not fall back to another browser. |
 | Assignments show `(deleted group …)` | Those assignments target groups that no longer exist in Entra ID. Genuine clean-up candidates — see `assignments/by-group.md`. |
 | Assignments show `(group … insufficient permission)` | The sign-in lacks `Group.Read.All`. Object pages are complete; only group *names* are missing. |
 | Some areas are empty and a warning appears | The signed-in account lacks the matching scope or Intune RBAC. The dashboard's permission list shows which. |
@@ -339,3 +648,17 @@ much more common case where one is unwelcome.
 | Port 7654 is in use | Start with `-Port 7655`. |
 | PowerShell 7 is missing or cannot start | Follow the launcher's installation/update instructions, reopen the terminal, and run again. Windows PowerShell 5.1 cannot run the tool. |
 | `git push` fails | Enter an Azure DevOps clone URL or configure a remote in the output checkout. Check Git credentials and repository/branch permissions. The local commit is retained; re-run to retry the push even if nothing changed. |
+
+---
+
+<div align="center">
+
+**Less guesswork. Better handovers.**
+
+[Setup guide](QUICKSTART.md) · [Publishing guide](docs/publishing.md) ·
+[Operator guide](docs/operations.md) · [Security policy](SECURITY.md)
+
+An independent project. Not affiliated with or endorsed by Microsoft.<br>
+Microsoft Intune is a Microsoft trademark.
+
+</div>

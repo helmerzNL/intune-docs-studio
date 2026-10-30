@@ -26,10 +26,12 @@ param(
     [string]$Tenant = 'organizations',
     [ValidateSet('graphcli', 'azurecli', 'intuneps')][string]$Client = 'graphcli',
     [switch]$NoBrowser,
+    [string]$Locale = 'en-GB',
 
     # Headless mode
     [switch]$Export,
     [ValidateSet('interactive', 'devicecode', 'azurecli', 'mggraph', 'browser')][string]$Method = 'interactive',
+    [ValidateSet('auto', 'edge', 'chrome')][string]$PortalBrowser = 'auto',
     [string[]]$Sections,
     [switch]$GitCommit,
     [switch]$GitPush,
@@ -46,6 +48,8 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 $Root = $PSScriptRoot
+. (Join-Path $Root 'lib\Localization.ps1')
+Set-IdsLocale -Locale (Resolve-IdsLocale -Locale $Locale -Strict)
 . (Join-Path $Root 'lib\Version.ps1')
 $Build = Get-IdsBuildInfo -Root $Root
 . (Join-Path $Root 'lib\Auth.ps1')
@@ -54,6 +58,9 @@ $Build = Get-IdsBuildInfo -Root $Root
 . (Join-Path $Root 'lib\Render.ps1')
 . (Join-Path $Root 'lib\Export.ps1')
 . (Join-Path $Root 'lib\Http.ps1')
+foreach ($module in 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'BaselineArchive', 'AssessmentRules', 'AssessmentReports', 'Assessment', 'AssessmentApi', 'PolicyInventory', 'PolicySnapshots', 'LocalFolders', 'PolicyApi', 'ReferencePacks') {
+    . (Join-Path $Root "lib\$module.ps1")
+}
 
 if (-not $OutputPath) { $OutputPath = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'intune-docs' }
 
@@ -73,15 +80,20 @@ $State = [hashtable]::Synchronized(@{
                 log     = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
                 summary = $null
             })
-        Config  = @{ Port = $Port; OutputPath = $OutputPath; DefaultOutputPath = $OutputPath; Root = $Root; Tenant = $Tenant; DefaultTenant = $Tenant }
+        Config  = @{ Port = $Port; OutputPath = $OutputPath; DefaultOutputPath = $OutputPath; Root = $Root; Tenant = $Tenant; DefaultTenant = $Tenant
+            ImportedPackRoot = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'IntuneDocsStudio\AssessmentPacks') }
     })
 
+Initialize-IdsAssessment $State
+if (-not $Export) { Initialize-IdsPolicyInventory $State }
 Initialize-IdsGraph -StateHolder $State
 
 function Get-IdsDefaultOptions {
     return @{
         OutputPath           = $State.Config.OutputPath
-        Sections             = @((Get-IdsSectionCatalog).Keys)
+        Sections             = @(if ($State.Policies.snapshot.source.kind -eq 'offline') {
+            'settingsCatalog', 'deviceConfigs', 'admx', 'compliance', 'endpointSecurity'
+        } else { (Get-IdsSectionCatalog).Keys })
         IncludeRaw           = $true
         IncludeRawFiles      = $true
         IncludeScriptContent = $true
@@ -93,6 +105,7 @@ function Get-IdsDefaultOptions {
         GitRemoteUrl         = ''
         GitBranch            = ''
         AllowTenantOverwrite = $false
+        Locale               = (Get-IdsLocale)
     }
 }
 
@@ -113,29 +126,38 @@ function Get-IdsFolderSuggestion {
 function Start-IdsExportJob {
     <#  Runs the export in its own runspace so the dashboard stays responsive. #>
     param([hashtable]$Options)
-    if ($State.Export.running) { return $false }
+    if ((Test-IdsWorkActive $State) -or $State.Browser.running) { return $false }
+    Clear-IdsFinishedJob
+    $Options = @{} + $Options
+    $Options.Locale = Resolve-IdsLocale -Locale $(if ($Options.Locale) { $Options.Locale } else { Get-IdsLocale }) -Strict
+    $State.Export.locale = $Options.Locale
+    $policySnapshot = Get-IdsLoadedPolicies $State
 
     $State.Export.log.Clear()
     $State.Export.summary = $null
     $State.Export.error = $null
     $State.Export.percent = 0
-    $State.Export.phase = 'Starting'
+    $State.Export.phase = (Get-IdsText -Key 'text.starting')
     $State.Export.running = $true
     $State.Export.done = $false
 
     $script = {
-        param($Root, $State, $Options)
+        param($Root, $State, $Options, $PolicySnapshot)
         try {
+            . (Join-Path $Root 'lib\Localization.ps1')
+            Set-IdsLocale -Locale $Options.Locale
             . (Join-Path $Root 'lib\Auth.ps1')
             . (Join-Path $Root 'lib\Graph.ps1')
             . (Join-Path $Root 'lib\Render.ps1')
             . (Join-Path $Root 'lib\Export.ps1')
-            if ($State.Auth -and $State.Auth.transport -eq 'mggraph') {
-                Import-Module Microsoft.Graph.Authentication -ErrorAction SilentlyContinue
+            if ($PolicySnapshot.source.kind -ne 'offline') {
+                if ($State.Auth -and $State.Auth.transport -eq 'mggraph') {
+                    Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
+                }
+                Initialize-IdsGraph -StateHolder $State
+                Reset-IdsGraphStats
             }
-            Initialize-IdsGraph -StateHolder $State
-            Reset-IdsGraphStats
-            Start-IdsExport -State $State -Options $Options
+            Start-IdsExport -State $State -Options $Options -PolicySnapshot $PolicySnapshot
         } catch {
             $State.Export.error = $_.Exception.Message
             $State.Export.running = $false
@@ -147,7 +169,7 @@ function Start-IdsExportJob {
     $runspace.Open()
     $ps = [powershell]::Create()
     $ps.Runspace = $runspace
-    [void]$ps.AddScript($script).AddArgument($Root).AddArgument($State).AddArgument($Options)
+    [void]$ps.AddScript($script).AddArgument($Root).AddArgument($State).AddArgument($Options).AddArgument($policySnapshot)
     $handle = $ps.BeginInvoke()
     $State.Job = @{ ps = $ps; handle = $handle; runspace = $runspace }
     return $true
@@ -156,37 +178,68 @@ function Start-IdsExportJob {
 function Start-IdsBrowserSignIn {
     <#  Runs the browser capture in its own runspace: it blocks for as long as the sign-in
         takes, and the dashboard must keep serving requests meanwhile. #>
-    param([string]$TenantId, [bool]$ForcePicker = $false)
-    if ($State.Browser.running) { return $false }
+    param(
+        [string]$TenantId,
+        [bool]$ForcePicker = $false,
+        [ValidateSet('auto', 'edge', 'chrome')][string]$Browser = 'auto'
+    )
+    if ((Test-IdsWorkActive $State) -or $State.Browser.running) { return $false }
+    Clear-IdsFinishedJob
+    Reset-IdsSessionState
+    $epoch = $State.Assessment.epoch
+    $jobLocale = Get-IdsLocale
+    $State.Browser.locale = $jobLocale
     $State.Browser.running = $true
     $State.Browser.error = $null
-    $State.Browser.status = 'Starting browser…'
+    $State.Browser.status = (Get-IdsText -Key 'text.starting_browser')
 
     $script = {
-        param($Root, $State, $TenantId, $ForcePicker)
+        param($Root, $State, $TenantId, $ForcePicker, $Epoch, $Locale, $Browser)
         try {
+            . (Join-Path $Root 'lib\Localization.ps1')
+            Set-IdsLocale -Locale $Locale
             . (Join-Path $Root 'lib\Auth.ps1')
             . (Join-Path $Root 'lib\BrowserSession.ps1')
             $cb = { param($m) $State.Browser.status = $m }.GetNewClosure()
-            $auth = Get-IdsTokenFromBrowser -Tenant $TenantId -StatusCallback $cb -ForceAccountPicker:$ForcePicker
-            $State.Auth = $auth
-            $State.Browser.status = 'Connected'
+            $auth = Get-IdsTokenFromBrowser -Tenant $TenantId -StatusCallback $cb -ForceAccountPicker:$ForcePicker -Browser $Browser
+            if ($State.Assessment.epoch -eq $Epoch) {
+                $State.Auth = $auth
+                $State.Browser.status = (Get-IdsText -Key 'text.connected')
+            }
         } catch {
             $State.Browser.error = $_.Exception.Message
         } finally {
             $State.Browser.running = $false
         }
     }
-    $rs = [runspacefactory]::CreateRunspace()
-    $rs.Open()
-    $ps = [powershell]::Create()
-    $ps.Runspace = $rs
-    [void]$ps.AddScript($script).AddArgument($Root).AddArgument($State).AddArgument($TenantId).AddArgument($ForcePicker)
-    [void]$ps.BeginInvoke()
+    $rs = $null; $ps = $null
+    try {
+        $rs = [runspacefactory]::CreateRunspace()
+        $rs.Open()
+        $ps = [powershell]::Create()
+        $ps.Runspace = $rs
+        [void]$ps.AddScript($script).AddArgument($Root).AddArgument($State).AddArgument($TenantId).AddArgument($ForcePicker).AddArgument($epoch).AddArgument($jobLocale).AddArgument($Browser)
+        $handle = $ps.BeginInvoke()
+        $State.Browser.job = @{ ps = $ps; handle = $handle; runspace = $rs }
+    } catch {
+        if ($ps) { $ps.Dispose() }
+        if ($rs) { $rs.Dispose() }
+        $State.Browser.running = $false
+        throw
+    }
     return $true
 }
 
 function Clear-IdsFinishedJob {
+    Sync-IdsPolicyTransfer $State
+    Sync-IdsFolderPicker $State
+    Clear-IdsAssessmentJob $State
+    Clear-IdsPolicyLoadJob $State
+    if ($State.Browser.job -and $State.Browser.job.handle.IsCompleted) {
+        $job = $State.Browser.job
+        try { [void]$job.ps.EndInvoke($job.handle) } catch { }
+        try { $job.ps.Dispose() } finally { $job.runspace.Dispose(); $State.Browser.job = $null }
+    }
     if (-not $State.Job) { return }
     if ($State.Job.handle.IsCompleted) {
         try { [void]$State.Job.ps.EndInvoke($State.Job.handle) } catch { }
@@ -201,8 +254,19 @@ function Reset-IdsSessionState {
         signs in next — confusing at best, and a disclosure of another customer's estate at
         worst. The stale folder is also actively dangerous now that the exporter refuses to
         overwrite a different tenant's documentation. #>
+    if ((Test-IdsWorkActive $State) -or $State.Browser.running) { throw (Get-IdsText -Key 'text.an_export_assessment_or_sign_in_is_still_running') }
+    $offline = if ($State.Policies.sourceKind -eq 'offline') { $State.Policies.snapshot } else { $null }
+    Reset-IdsAssessment $State
+    Stop-IdsPolicyLoad $State
     $State.Auth = $null
     $State.Pending = $null
+    $State.PolicyConsent = $null
+    if ($offline) {
+        $State.Policies.sourceKind = 'offline'; $State.Policies.snapshot = $offline
+        $State.Policies.epoch = $State.Assessment.epoch
+        $State.Policies.status = if (@($offline.collection.issues).Count -or @($offline.collection.documentationIssues).Count) { 'partial' } else { 'ready' }
+        $State.Policies.percent = 100
+    }
 
     $State.Export.log.Clear()
     $State.Export.summary = $null
@@ -282,18 +346,18 @@ function Invoke-IdsInteractiveSignIn {
         $ctx = $listener.GetContext()
         $q = Get-IdsQuery -Query $ctx.Request.Url.Query
         if ($q['error']) {
-            Send-IdsText -Response $ctx.Response -Text "Sign-in failed: $($q['error_description'])" -ContentType 'text/html; charset=utf-8'
-            throw "Sign-in failed: $($q['error']) - $($q['error_description'])"
+            Send-IdsText -Response $ctx.Response -Text (Get-IdsHtmlText 'auth.failed' -Arguments @{ detail = $q['error_description'] }) -ContentType 'text/html; charset=utf-8'
+            throw (Get-IdsText -Key 'text.sign_in_failed_arg0_arg1' -Arguments @{ arg0 = ($q['error']); arg1 = ($q['error_description']) })
         }
         if ($q['state'] -ne $stateNonce) {
-            Send-IdsText -Response $ctx.Response -Text 'State mismatch.' -ContentType 'text/html; charset=utf-8'
-            throw 'OAuth state mismatch - aborting.'
+            Send-IdsText -Response $ctx.Response -Text (Get-IdsHtmlText 'text.oauth_state_mismatch_aborting') -ContentType 'text/html; charset=utf-8'
+            throw (Get-IdsText -Key 'text.oauth_state_mismatch_aborting')
         }
-        Send-IdsText -Response $ctx.Response -ContentType 'text/html; charset=utf-8' -Text @'
-<!doctype html><meta charset="utf-8"><title>Signed in</title>
+        Send-IdsText -Response $ctx.Response -ContentType 'text/html; charset=utf-8' -Text @"
+<!doctype html><meta charset="utf-8"><title>$(Get-IdsHtmlText 'auth.signed_in')</title>
 <body style="font-family:Segoe UI,sans-serif;padding:3rem;background:#0f1115;color:#e6e8ee">
-<h2>Signed in.</h2><p>You can close this tab and return to the console.</p></body>
-'@
+<h2>$(Get-IdsHtmlText 'auth.signed_in').</h2><p>$(Get-IdsHtmlText 'auth.close_tab')</p></body>
+"@
         return (Complete-IdsAuthCode -Tenant $TenantId -ClientId $ClientId -Code $q['code'] -Verifier $pkce.verifier -RedirectUri $redirect)
     } finally {
         try { $listener.Stop(); $listener.Close() } catch { }
@@ -304,7 +368,7 @@ if ($Export) {
     $clientId = (Get-IdsClient $Client).id
     switch ($Method) {
         'interactive' { $State.Auth = Invoke-IdsInteractiveSignIn -ListenPort $Port -TenantId $Tenant -ClientId $clientId }
-        'browser'     { $State.Auth = Get-IdsTokenFromBrowser -Tenant $Tenant }
+        'browser'     { $State.Auth = Get-IdsTokenFromBrowser -Tenant $Tenant -Browser $PortalBrowser }
         'azurecli'    { $State.Auth = Get-IdsTokenFromAzureCli }
         'mggraph'     { $State.Auth = Connect-IdsMgGraph -Tenant $Tenant }
         'devicecode'  {
@@ -321,9 +385,9 @@ if ($Export) {
                 if ($r.status -eq 'ok') { $State.Auth = $r.auth; break }
                 if ($r.status -eq 'slowdown') { $interval += 5; continue }
                 if ($r.status -eq 'pending') { continue }
-                throw "Device code sign-in failed: $($r.status) $($r.message)"
+                throw (Get-IdsText -Key 'text.device_code_sign_in_failed_arg0_arg1' -Arguments @{ arg0 = ($r.status); arg1 = ($r.message) })
             }
-            if (-not $State.Auth) { throw 'Device code sign-in timed out.' }
+            if (-not $State.Auth) { throw (Get-IdsText -Key 'text.device_code_sign_in_timed_out') }
         }
     }
     Write-Host "Signed in as $($State.Auth.account)" -ForegroundColor Green
@@ -380,7 +444,7 @@ try {
 while ($running -and $listener.IsListening) {
     $context = Wait-IdsHttpContext -Waiter $waiter -TimeoutMs 250
     # No request within the timeout: loop so Ctrl+C and job cleanup get a turn.
-    if (-not $context) { Clear-IdsFinishedJob; continue }
+    if (-not $context) { Clear-IdsFinishedJob; Sync-IdsPolicyLoad $State $Root; continue }
 
     $req = $context.Request
     $res = $context.Response
@@ -390,12 +454,52 @@ while ($running -and $listener.IsListening) {
     Clear-IdsFinishedJob
 
     try {
+        Set-IdsLocale -Locale 'en-GB'
+        try { $requestLocale = Resolve-IdsLocale -Locale $req.Headers['X-Ids-Locale'] -Strict }
+        catch {
+            Send-IdsJson -Response $res -Object @{ error = $_.Exception.Message } -Status 400
+            continue
+        }
+        Set-IdsLocale -Locale $requestLocale
+        $localizedAsset = Resolve-IdsLocalizedStaticPath -Root $Root -Path $path
+        if ($req.HttpMethod -eq 'GET' -and $localizedAsset) {
+            Send-IdsStaticFile -Response $res -Path $localizedAsset
+            continue
+        }
+        Sync-IdsPolicyLoad $State $Root
+        if ($req.HttpMethod -eq 'POST' -and $path -in @('/api/signout', '/api/quit') -and
+            ($State.Policies.running -or $State.Policies.job)) {
+            Stop-IdsPolicyLoad $State
+        }
+        $identityMutation = ($req.HttpMethod -eq 'POST' -and $path -match '^/api/(signin/(interactive|devicecode|azurecli|mggraph|browser|browser/forget)|signout|quit)$') -or
+            ($req.HttpMethod -eq 'GET' -and $path -eq '/api/signin/devicecode/poll')
+        $oauthCallback = $req.HttpMethod -eq 'GET' -and $path -eq '/' -and ($query['code'] -or $query['error'])
+        if (($identityMutation -or $oauthCallback) -and ((Test-IdsWorkActive $State) -or $State.Browser.running)) {
+            if ($oauthCallback) { Send-IdsRedirect -Response $res -Location '/?signin=busy' }
+            else { Send-IdsJson -Response $res -Object @{ error = (Get-IdsText -Key 'text.an_export_assessment_or_sign_in_is_still_running') } -Status 409 }
+            continue
+        }
+        $policyRoute = Invoke-IdsPolicyRoute -Method $req.HttpMethod -Path $path -Request $req -State $State -Root $Root
+        if ($policyRoute.handled) {
+            Send-IdsJson -Response $res -Object $policyRoute.body -Status $policyRoute.status -Depth 64
+            continue
+        }
+        $assessmentRoute = Invoke-IdsAssessmentRoute -Method $req.HttpMethod -Path $path -Request $req -State $State -Root $Root
+        if ($assessmentRoute.handled) {
+            Send-IdsJson -Response $res -Object $assessmentRoute.body -Status $assessmentRoute.status -Depth 64
+            continue
+        }
         switch -Regex ("$($req.HttpMethod) $path") {
 
             '^GET /$' {
                 # Doubles as the OAuth redirect target.
                 if ($query['code'] -or $query['error']) {
                     $pending = $State.Pending
+                    if ($pending.locale) { Set-IdsLocale -Locale $pending.locale }
+                    if (-not $pending -or $pending.epoch -ne $State.Assessment.epoch) {
+                        Send-IdsRedirect -Response $res -Location '/?signin=state-mismatch'
+                        break
+                    }
                     if ($query['error']) {
                         $State.Pending = @{ error = "$($query['error']): $($query['error_description'])" }
                         Send-IdsRedirect -Response $res -Location '/?signin=failed'
@@ -406,9 +510,10 @@ while ($running -and $listener.IsListening) {
                         break
                     }
                     try {
-                        $State.Auth = Complete-IdsAuthCode -Tenant $pending.tenant -ClientId $pending.clientId `
+                        $auth = Complete-IdsAuthCode -Tenant $pending.tenant -ClientId $pending.clientId `
                             -Code $query['code'] -Verifier $pending.verifier -RedirectUri $pending.redirect
-                        $State.Pending = $null
+                        Reset-IdsSessionState
+                        $State.Auth = $auth
                         Send-IdsRedirect -Response $res -Location '/?signin=ok'
                     } catch {
                         $State.Pending = @{ error = $_.Exception.Message }
@@ -440,20 +545,50 @@ while ($running -and $listener.IsListening) {
                 Send-IdsJson -Response $res -Object @{
                     build      = $Build
                     auth       = (Get-IdsAuthSummary)
+                    policies   = (Get-IdsPolicySummary $State)
+                    transfer   = @{ running = [bool]$State.PolicyTransfer.running
+                        operation = $State.PolicyTransfer.operation; phase = $State.PolicyTransfer.phase }
                     outputPath = $State.Config.OutputPath
                     tenant     = $State.Config.Tenant
                     clients    = @(foreach ($k in (Get-IdsClientCatalog).Keys) {
                             @{ key = $k; name = (Get-IdsClientCatalog)[$k].name; note = (Get-IdsClientCatalog)[$k].note }
                         })
                     sections   = @(foreach ($k in (Get-IdsSectionCatalog).Keys) {
-                            @{ key = $k; label = (Get-IdsSectionCatalog)[$k].label }
+                            @{ key = $k; label = (Get-IdsSectionCatalog)[$k].label
+                                available = ($State.Policies.snapshot.source.kind -ne 'offline' -or
+                                    $k -in @('settingsCatalog', 'deviceConfigs', 'admx', 'compliance', 'endpointSecurity')) }
                         })
                     export     = @{
+                        locale = $exp.locale
                         running = $exp.running; done = $exp.done; error = $exp.error
                         percent = $exp.percent; phase = $exp.phase
                         summary = $exp.summary
                     }
                     pendingError = $(if ($State.Pending -and $State.Pending.error) { $State.Pending.error } else { $null })
+                }
+                break
+            }
+
+            '^POST /api/policies/reload$' {
+                if (-not $State.Auth) { Send-IdsJson -Response $res -Object @{ error = (Get-IdsText -Key 'text.not_signed_in') } -Status 401; break }
+                if ($req.Headers['Origin'] -cne $baseUrl -or $req.Headers['Host'] -cne ([uri]$baseUrl).Authority) {
+                    Send-IdsJson -Response $res -Object @{ error = (Get-IdsText -Key 'text.same_origin_request_required') } -Status 403; break
+                }
+                if ($req.ContentType -notmatch '^(?i:application/json)(?:\s*;\s*charset\s*=\s*(?i:utf-8))?\s*$') {
+                    Send-IdsJson -Response $res -Object @{ error = (Get-IdsText -Key 'text.content_type_must_be_application_json') } -Status 415; break
+                }
+                if (Test-IdsWorkActive $State) {
+                    Send-IdsJson -Response $res -Object @{ error = (Get-IdsText -Key 'text.policy_loading_export_assessment_or_sign_in_is_already_running') } -Status 409; break
+                }
+                $body = Read-IdsAssessmentRequestJson $req 4KB
+                if ($State.Policies.snapshot -and $body.replace -ne $true) {
+                    Send-IdsJson -Response $res -Object @{ error = (Get-IdsText -Key 'text.confirm_replacement_of_the_active_policy_source_before_loading_live_policies') } -Status 409; break
+                }
+                Reset-IdsAssessment $State
+                if (Start-IdsPolicyLoad $State $Root) {
+                    Send-IdsJson -Response $res -Object @{ started = $true } -Status 202
+                } else {
+                    Send-IdsJson -Response $res -Object @{ error = $State.Policies.error } -Status 500
                 }
                 break
             }
@@ -470,6 +605,8 @@ while ($running -and $listener.IsListening) {
                 $State.Pending = @{
                     verifier = $pkce.verifier; state = $nonce; tenant = $t
                     clientId = (Get-IdsClient $c).id; redirect = $redirect; error = $null
+                    epoch = $State.Assessment.epoch
+                    locale = (Get-IdsLocale)
                 }
                 $url = Get-IdsAuthorizeUrl -Tenant $t -ClientId $State.Pending.clientId -RedirectUri $redirect `
                     -CodeChallenge $pkce.challenge -State $nonce
@@ -489,6 +626,7 @@ while ($running -and $listener.IsListening) {
                     $State.Pending = @{
                         deviceCode = $dc.device_code; tenant = $t; clientId = $cid
                         interval = [int]$dc.interval; error = $null
+                        epoch = $State.Assessment.epoch
                     }
                     Send-IdsJson -Response $res -Object @{
                         userCode = $dc.user_code; verificationUri = $dc.verification_uri; message = $dc.message
@@ -500,12 +638,13 @@ while ($running -and $listener.IsListening) {
             }
 
             '^GET /api/signin/devicecode/poll$' {
-                if (-not $State.Pending -or -not $State.Pending.deviceCode) {
+                if (-not $State.Pending -or -not $State.Pending.deviceCode -or $State.Pending.epoch -ne $State.Assessment.epoch) {
                     Send-IdsJson -Response $res -Object @{ status = 'none' }
                     break
                 }
                 $r = Test-IdsDeviceCode -Tenant $State.Pending.tenant -ClientId $State.Pending.clientId -DeviceCode $State.Pending.deviceCode
                 if ($r.status -eq 'ok') {
+                    Reset-IdsSessionState
                     $State.Auth = $r.auth
                     $State.Pending = $null
                     Send-IdsJson -Response $res -Object @{ status = 'ok' }
@@ -517,7 +656,9 @@ while ($running -and $listener.IsListening) {
 
             '^POST /api/signin/azurecli$' {
                 try {
-                    $State.Auth = Get-IdsTokenFromAzureCli
+                    $auth = Get-IdsTokenFromAzureCli
+                    Reset-IdsSessionState
+                    $State.Auth = $auth
                     Send-IdsJson -Response $res -Object @{ ok = $true }
                 } catch {
                     Send-IdsJson -Response $res -Object @{ error = $_.Exception.Message } -Status 400
@@ -530,7 +671,9 @@ while ($running -and $listener.IsListening) {
                     $body = Read-IdsRequestJson -Request $req
                     $t = ''
                     if ($body.tenant) { $t = $body.tenant }
-                    $State.Auth = Connect-IdsMgGraph -Tenant $t
+                    $auth = Connect-IdsMgGraph -Tenant $t
+                    Reset-IdsSessionState
+                    $State.Auth = $auth
                     Send-IdsJson -Response $res -Object @{ ok = $true }
                 } catch {
                     Send-IdsJson -Response $res -Object @{ error = $_.Exception.Message } -Status 400
@@ -544,7 +687,18 @@ while ($running -and $listener.IsListening) {
                 if ($body.tenant) { $t = $body.tenant }
                 $force = $false
                 if ($body.PSObject.Properties['forcePicker']) { $force = [bool]$body.forcePicker }
-                [void](Start-IdsBrowserSignIn -TenantId $t -ForcePicker $force)
+                $browser = 'auto'
+                if ($body.PSObject.Properties['browser']) {
+                    if ($body.browser -isnot [string] -or $body.browser -notin 'auto', 'edge', 'chrome') {
+                        Send-IdsJson -Response $res -Object @{ error = (Get-IdsText 'portal.browser_choice') } -Status 400
+                        break
+                    }
+                    $browser = $body.browser
+                }
+                if (-not (Start-IdsBrowserSignIn -TenantId $t -ForcePicker $force -Browser $browser)) {
+                    Send-IdsJson -Response $res -Object @{ error = (Get-IdsText 'portal.busy') } -Status 409
+                    break
+                }
                 Send-IdsJson -Response $res -Object @{ started = $true }
                 break
             }
@@ -560,8 +714,13 @@ while ($running -and $listener.IsListening) {
             }
 
             '^POST /api/signin/browser/forget$' {
+                if ($State.Browser.running) {
+                    Send-IdsJson -Response $res -Object @{ error = (Get-IdsText 'portal.busy') } -Status 409
+                    break
+                }
                 try {
                     Clear-IdsBrowserProfile
+                    Reset-IdsSessionState
                     Send-IdsJson -Response $res -Object @{ ok = $true }
                 } catch {
                     Send-IdsJson -Response $res -Object @{ error = $_.Exception.Message } -Status 400
@@ -572,8 +731,8 @@ while ($running -and $listener.IsListening) {
             '^POST /api/signout$' {
                 # Never sign out mid-export: the running job still holds the token and would
                 # fail halfway, leaving a partial tree behind.
-                if ($State.Export.running) {
-                    Send-IdsJson -Response $res -Object @{ error = 'An export is still running. Wait for it to finish before signing out.' } -Status 409
+                if (Test-IdsWorkActive $State) {
+                    Send-IdsJson -Response $res -Object @{ error = (Get-IdsText -Key 'text.an_export_is_still_running_wait_for_it_to_finish_before_signing_out') } -Status 409
                     break
                 }
                 Reset-IdsSessionState
@@ -582,7 +741,7 @@ while ($running -and $listener.IsListening) {
             }
 
             '^GET /api/probe$' {
-                if (-not $State.Auth) { Send-IdsJson -Response $res -Object @{ error = 'Not signed in' } -Status 401; break }
+                if (-not $State.Auth) { Send-IdsJson -Response $res -Object @{ error = (Get-IdsText -Key 'text.not_signed_in') } -Status 401; break }
                 Send-IdsJson -Response $res -Object (Test-IdsGraphConnection)
                 break
             }
@@ -591,9 +750,10 @@ while ($running -and $listener.IsListening) {
                 $path = $query['path']
                 if (-not $path) { $path = $State.Config.OutputPath }
                 $result = @{ conflict = $null; suggestion = $null }
-                if ($State.Auth) {
+                if ($State.Policies.snapshot) {
                     try {
-                        $conn = Test-IdsGraphConnection
+                        $snapshot = Get-IdsLoadedPolicies $State
+                        $conn = @{ tenantId = $snapshot.tenant.id; organization = $snapshot.tenant.name }
                         $c = Test-IdsOutputFolderTenant -Root $path -TenantId $conn.tenantId -TenantName $conn.organization
                         if ($c) {
                             $result.conflict = $c
@@ -606,13 +766,24 @@ while ($running -and $listener.IsListening) {
             }
 
             '^POST /api/export$' {
-                if (-not $State.Auth) { Send-IdsJson -Response $res -Object @{ error = 'Not signed in' } -Status 401; break }
-                if ($State.Export.running) { Send-IdsJson -Response $res -Object @{ error = 'An export is already running' } -Status 409; break }
+                try { Assert-IdsLocalJsonRequest $req $State }
+                catch [UnauthorizedAccessException] { Send-IdsJson -Response $res -Object @{ error = $_.Exception.Message } -Status 403; break }
+                catch [NotSupportedException] { Send-IdsJson -Response $res -Object @{ error = $_.Exception.Message } -Status 415; break }
+                if (-not $State.Auth -and -not $State.Policies.snapshot) { Send-IdsJson -Response $res -Object @{ error = (Get-IdsText -Key 'text.load_or_import_policies_first') } -Status 401; break }
+                if ((Test-IdsWorkActive $State) -or $State.Browser.running) { Send-IdsJson -Response $res -Object @{ error = (Get-IdsText -Key 'text.an_export_assessment_or_sign_in_is_already_running') } -Status 409; break }
+                try { $null = Get-IdsLoadedPolicies $State } catch {
+                    Send-IdsJson -Response $res -Object @{ error = $_.Exception.Message } -Status 409; break
+                }
 
                 $body = Read-IdsRequestJson -Request $req
                 $options = Get-IdsDefaultOptions
                 if ($body.outputPath) { $options.OutputPath = [string]$body.outputPath; $State.Config.OutputPath = $options.OutputPath }
                 if ($body.sections) { $options.Sections = @($body.sections) }
+                if ($State.Policies.snapshot.source.kind -eq 'offline' -and @($options.Sections | Where-Object {
+                    $_ -notin @('settingsCatalog', 'deviceConfigs', 'admx', 'compliance', 'endpointSecurity')
+                }).Count) {
+                    Send-IdsJson -Response $res -Object @{ error = (Get-IdsText -Key 'text.offline_documentation_supports_only_the_five_policy_families_apps_scripts_and_other_live_sections_ar') } -Status 400; break
+                }
                 foreach ($pair in @(
                         @('includeRaw', 'IncludeRaw'), @('includeRaw', 'IncludeRawFiles'),
                         @('includeScriptContent', 'IncludeScriptContent'), @('frontMatter', 'FrontMatter'),
@@ -650,6 +821,7 @@ while ($running -and $listener.IsListening) {
                     done    = $State.Export.done
                     error   = $State.Export.error
                     summary = $State.Export.summary
+                    locale = $State.Export.locale
                 }
                 break
             }
@@ -666,7 +838,7 @@ while ($running -and $listener.IsListening) {
                 if ($State.Export.summary -and $State.Export.summary.root) { $rootPath = $State.Export.summary.root }
                 $full = Resolve-IdsSafePath -RootPath $rootPath -Relative $query['path']
                 if (-not $full -or -not (Test-Path -LiteralPath $full)) {
-                    Send-IdsJson -Response $res -Object @{ error = 'Not found' } -Status 404
+                    Send-IdsJson -Response $res -Object @{ error = (Get-IdsText -Key 'text.not_found') } -Status 404
                     break
                 }
                 Send-IdsJson -Response $res -Object @{ path = $query['path']; content = ([IO.File]::ReadAllText($full)) }
@@ -682,8 +854,8 @@ while ($running -and $listener.IsListening) {
             }
 
             '^POST /api/quit$' {
-                if ($State.Export.running) {
-                    Send-IdsJson -Response $res -Object @{ error = 'An export is still running.' } -Status 409
+                if (Test-IdsWorkActive $State) {
+                    Send-IdsJson -Response $res -Object @{ error = (Get-IdsText -Key 'text.an_export_is_still_running') } -Status 409
                     break
                 }
                 Send-IdsJson -Response $res -Object @{ ok = $true }
@@ -692,7 +864,7 @@ while ($running -and $listener.IsListening) {
             }
 
             default {
-                Send-IdsJson -Response $res -Object @{ error = 'Not found' } -Status 404
+                Send-IdsJson -Response $res -Object @{ error = (Get-IdsText -Key 'text.not_found') } -Status 404
             }
         }
     } catch {
@@ -702,6 +874,15 @@ while ($running -and $listener.IsListening) {
 } finally {
     # Runs on Ctrl+C as well as a normal exit, so the port is always released.
     Stop-IdsHttpListener -Listener $listener
+    try { Stop-IdsAssessmentJob $State } catch { }
+    try { Stop-IdsPolicyLoad $State } catch { }
+    try { Stop-IdsPolicyTransfer $State } catch { }
+    try { Stop-IdsFolderPicker $State } catch { }
+    if ($State.Browser.job) {
+        try { $State.Browser.job.ps.Stop() } catch { }
+        try { $State.Browser.job.ps.Dispose(); $State.Browser.job.runspace.Dispose() } catch { }
+        $State.Browser.job = $null
+    }
     if ($State.Job) {
         try { $State.Job.ps.Stop() } catch { }
         try { $State.Job.ps.Dispose(); $State.Job.runspace.Dispose() } catch { }

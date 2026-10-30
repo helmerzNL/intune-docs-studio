@@ -5,6 +5,61 @@ merge of this repository's `beta` into `main`; feature changes and beta builds
 never publish stable releases. Do not start a promotion unless the owner has
 reviewed the proposed changes and requested that exact promotion.
 
+This runbook applies App-Guidance's
+[promotion runbook](https://github.com/Flux76HQ/App-Guidance/blob/main/shared/guidelines/promotion-runbook.md)
+to this repository. Where the two differ, the stricter rule wins; the places
+that are specific to this app are release notes in `docs/releases/`, a ZIP
+package instead of container images, and a version number that the pipeline
+(not the promotion) increments.
+
+## Who does what
+
+- **A promotion happens when the owner asks for it** — never on an agent's own
+  initiative, and not because `beta` has been quiet for a while.
+- The agent **prepares** it: checks, release notes and the pull request. The
+  **owner merges** the promotion (and the release-notes pull request).
+- Merging uses a **merge commit**, never a squash or rebase.
+
+## Release notes come first
+
+Every release has release notes in `docs/releases/vX.Y.Z.md`. The stable release
+text is created once when the promotion merges and is not rewritten afterwards,
+so the notes must be right **before** the merge.
+
+- A promotion usually spans **several versions that only existed as a beta**. The
+  notes describe everything since the previous stable version, grouped by what a
+  user notices, not by commit or beta build.
+- Besides the sections the pipeline requires (see below), add above them:
+  - **Since the previous stable version (vA)** — what changes in total (omit
+    for the very first stable release and say so);
+  - **Good to know when updating** — behavior that changed on purpose, anything
+    to re-check after replacing the application files.
+- Make the notes a normal pull request **into `beta`** and merge it **before** the
+  promotion, so the promotion carries it. No `VERSION` change: this is
+  documentation.
+- Write only what is true. Do not describe a release as shipped before the
+  workflow has published it, and say plainly what was not verified.
+
+Skeleton for `docs/releases/vX.Y.Z.md`:
+
+```markdown
+# Intune Docs Studio X.Y.Z
+
+## Since the previous stable version (vA)
+
+## Good to know when updating
+
+## Changes and user-visible effects
+
+## Update instructions
+
+## Dependencies and runtime
+
+## Data implications
+
+## Unverified integrations
+```
+
 ## Before requesting the promotion
 
 1. Confirm `beta` is current and its `quality` and `only-from-beta` checks
@@ -23,6 +78,60 @@ reviewed the proposed changes and requested that exact promotion.
    creates the only version bump.
 4. Merge the same-repository `beta` → `main` pull request using a merge commit.
    Squash/rebase commits do not provide the required two-parent evidence.
+
+## The promotion pull request
+
+Base `main`, head `beta` of this same repository. Title:
+`Release vX.Y.Z: promotion from beta to production`, with the version the
+pipeline will select. There is no template; the body has these parts, in this
+order, because it is what the owner reads before merging:
+
+1. **What this is** — from which version to which, what the merge triggers
+   (stable release marked *latest*, ZIP and manifest), and that `beta` merges
+   cleanly.
+2. **Order** — name the release-notes pull request if it is not merged yet.
+3. **What changes for users of the previous stable version** — a short list; the
+   full text is in the release notes.
+4. **Risks and things to know** — runtime or dependency changes, data and
+   output implications, changed limits stated as numbers, and what has **not**
+   been verified (for example behavior that needs a real tenant).
+5. **Checked** — the checklist below with the real results, including any
+   failing test and whether it failed before this release. Do not write
+   "green" when it is not.
+6. **After merging** — the checks in the next section.
+
+Check before opening it, against the real branches: `VERSION` on `main` and
+`beta`; `git fetch origin main beta` then
+`git merge-tree --write-tree origin/main origin/beta` shows no conflicts and
+`git log origin/beta..origin/main` lists only earlier promotion merges; the
+`quality` and `only-from-beta` checks on the **latest** `beta` merge commit are
+green; no open pull request into `beta` still belongs in this release; and
+`git diff --stat origin/main origin/beta` has been read for anything an
+operator must act on.
+
+## After the merge
+
+Check, do not assume:
+
+- release `vX.Y.Z` exists, is **not** a prerelease, is marked *latest*, has the
+  ZIP and manifest attached, and its text is the reviewed notes;
+- the version commit carries the `Release-Promotion` trailer and the final
+  `main` → `beta` back-merge succeeded;
+- if something is missing, use the recovery procedure below; never overwrite an
+  existing tag or release.
+
+Then tell the owner what is live and what operators must do (download the
+verified ZIP and follow `QUICKSTART.md` / `docs/operations.md`).
+
+### Mistakes this runbook exists to prevent
+
+- **Pushing follow-up work to a branch whose pull request is already merged.**
+  Look the pull request up first; if it is merged, restart the branch from the
+  latest `beta` and open a new pull request.
+- **Release notes that only describe the last change** of a multi-version
+  promotion.
+- **"Tests pass" with a failing test left out.**
+- **Promoting from a `beta` whose last build is red or still running.**
 
 ## What the serialized workflow does
 
@@ -124,7 +233,7 @@ Run the local checks before requesting a promotion:
 
 ```powershell
 Invoke-Pester .\tests\*.Tests.ps1 -Output Detailed
-node --test .\tests\publishing-ui.test.js
+node --test .\tests\publishing-ui.test.js .\tests\assessment-ui.test.js .\tests\app-shell-ui.test.js
 pwsh -NoProfile -File .\scripts\Test-Repository.ps1
 pwsh -NoProfile -File .\Build-Package.ps1
 ```

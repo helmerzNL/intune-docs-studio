@@ -21,8 +21,9 @@ Microsoft 365 tenant. Understanding how it authenticates matters for reviewing i
 - **The HTTP listener binds to `localhost` only** and is not reachable from the network.
 
 The optional portal-session method reads a token from the browser's MSAL cache.
-Its browser profile under `%LOCALAPPDATA%\IntuneDocsStudio\browser-profile` may
-persist cookies and other cached authentication material. Treat that profile as sensitive:
+Its browser profiles under `%LOCALAPPDATA%\IntuneDocsStudio\browser-profile` (Edge) and
+`%LOCALAPPDATA%\IntuneDocsStudio\browser-profile-chrome` (Chrome) may
+persist cookies and other cached authentication material. Treat both profiles as sensitive:
 do not include it in application backups or restore it onto another installation.
 
 ## About the "Use my Intune portal session" sign-in method
@@ -37,6 +38,12 @@ This is worth being explicit about:
   credentials and obtains exactly the access they already have.
 - It requires **local access to the machine** and a browser instance this tool started.
   It cannot read tokens from any other browser, profile, session or user.
+- Browser choice is explicit; Automatic prefers Edge and uses Chrome only if Edge is absent.
+  Policy or CDP failures never switch browsers. Local mandatory policy blockers are reported
+  before launch, including a managed `UserDataDir` that would override profile isolation.
+  Cloud/effective policy still needs review in `edge://policy` or `chrome://policy`.
+  The tool does not modify enterprise policy or disable protection. If CDP is prohibited,
+  use standard Graph sign-in with admin consent or an IT-approved management workstation.
 - It is **unsupported and depends on current portal internals.** It may stop working when the
   Intune admin center changes. The other sign-in methods do not depend on this.
 

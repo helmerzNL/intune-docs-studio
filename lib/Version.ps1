@@ -1,3 +1,5 @@
+. (Join-Path $PSScriptRoot 'Localization.ps1')
+
 <#
     Version.ps1 - single source of build identity (version, channel, commit).
 

@@ -1,3 +1,5 @@
+. (Join-Path $PSScriptRoot 'Localization.ps1')
+
 <#
     Render.ps1 — Graph objects to Git-friendly Markdown.
 
@@ -11,13 +13,21 @@ $script:IdsCategoryMap = @{}
 $script:IdsGroupMap    = @{}
 $script:IdsFilterMap   = @{}
 $script:IdsScopeTagMap = @{}
-$script:IdsOptions     = @{ IncludeRaw = $true; IncludeScriptContent = $true; FrontMatter = $true }
+$script:IdsOptions     = @{ IncludeRaw = $true; IncludeScriptContent = $true; FrontMatter = $true; UnknownSettings = $false }
 
 function Set-IdsRenderOptions {
     param([hashtable]$Options)
+    if ($Options.ContainsKey('Locale')) { Set-IdsLocale -Locale (Resolve-IdsLocale $Options.Locale -Strict) }
     foreach ($k in $Options.Keys) { $script:IdsOptions[$k] = $Options[$k] }
 }
 function Get-IdsRenderOptions { return $script:IdsOptions }
+
+function Get-IdsEmptySettingsText {
+    param([switch]$Admx)
+    if ($script:IdsOptions.UnknownSettings) { return Get-IdsText 'doc.settings_unknown' }
+    if ($Admx) { return Get-IdsText 'text.no_admx_settings_configured' }
+    return Get-IdsText 'text.no_settings_configured'
+}
 
 # --- Primitives -------------------------------------------------------------------------
 
@@ -94,18 +104,25 @@ function ConvertTo-IdsJson {
 
 function Format-IdsCell {
     <#  Escapes a value for use inside a Markdown table cell. #>
-    param($Value, [int]$MaxLength = 400)
+    param($Value, [int]$MaxLength = 400, [switch]$PlainText)
     if ($null -eq $Value) { return '-' }
-    if ($Value -is [bool]) { if ($Value) { return 'Yes' } else { return 'No' } }
+    if ($Value -is [bool]) { if ($Value) { return (Get-IdsText -Key 'text.yes') } else { return (Get-IdsText -Key 'text.no') } }
     if ($Value -is [array]) {
         if ($Value.Count -eq 0) { return '-' }
         $Value = ($Value | ForEach-Object { [string]$_ }) -join ', '
     }
     if ($Value -isnot [string]) {
-        if ($Value -is [datetime]) { $Value = $Value.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss') + ' UTC' }
+        if ($Value -is [datetime]) {
+            $Value = if ((Get-IdsLocale) -eq 'en-GB') { $Value.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss') + ' UTC' }
+                else { (Format-IdsLocaleDate $Value -Format 'G') + ' UTC' }
+        }
         else { $Value = [string]$Value }
     }
     if ($Value -eq '') { return '-' }
+    if ($PlainText) {
+        if ($Value.Length -gt $MaxLength) { return $Value.Substring(0, $MaxLength) + '…' }
+        return $Value
+    }
     $t = $Value -replace '\|', '\|'
     $t = $t -replace "`r`n", '<br>'
     $t = $t -replace "`n", '<br>'
@@ -117,15 +134,18 @@ function Format-IdsCell {
 function Format-IdsDate {
     param($Value)
     if (-not $Value) { return '-' }
-    try { return ([datetime]$Value).ToUniversalTime().ToString('yyyy-MM-dd HH:mm') + ' UTC' } catch { return [string]$Value }
+    try {
+        if ((Get-IdsLocale) -eq 'en-GB') { return ([datetime]$Value).ToUniversalTime().ToString('yyyy-MM-dd HH:mm') + ' UTC' }
+        return (Format-IdsLocaleDate $Value) + ' UTC'
+    } catch { return [string]$Value }
 }
 
 function Format-IdsBytes {
     param($Bytes)
     if ($null -eq $Bytes -or $Bytes -eq 0) { return '-' }
-    if ($Bytes -ge 1GB) { return ('{0:N2} GB' -f ($Bytes / 1GB)) }
-    if ($Bytes -ge 1MB) { return ('{0:N2} MB' -f ($Bytes / 1MB)) }
-    if ($Bytes -ge 1KB) { return ('{0:N2} KB' -f ($Bytes / 1KB)) }
+    if ($Bytes -ge 1GB) { return (Format-IdsLocaleNumber ($Bytes / 1GB) -Format 'N2') + ' GB' }
+    if ($Bytes -ge 1MB) { return (Format-IdsLocaleNumber ($Bytes / 1MB) -Format 'N2') + ' MB' }
+    if ($Bytes -ge 1KB) { return (Format-IdsLocaleNumber ($Bytes / 1KB) -Format 'N2') + ' KB' }
     return "$Bytes B"
 }
 
@@ -137,7 +157,7 @@ function ConvertFrom-IdsBase64 {
 
 function Format-IdsOdataType {
     param([string]$Type)
-    if (-not $Type) { return 'unknown' }
+    if (-not $Type) { return (Get-IdsText -Key 'text.unknown') }
     $s = $Type -replace '#microsoft\.graph\.', ''
     $s = $s -creplace '([a-z0-9])([A-Z])', '$1 $2'
     if ($s.Length -gt 0) { $s = $s.Substring(0, 1).ToUpperInvariant() + $s.Substring(1) }
@@ -149,8 +169,18 @@ function New-IdsTable {
     param(
         [string[]]$Headers,
         [object[]]$Rows,
-        [string]$EmptyText = '_None_'
+        [string]$EmptyText = (Get-IdsText -Key 'text.none'),
+        [switch]$AsData,
+        [string]$Title = ''
     )
+    if ($AsData) {
+        return [pscustomobject]@{
+            title = $Title; headers = @($Headers)
+            rows = @(foreach ($r in $Rows) {
+                [pscustomobject]@{ cells = @(foreach ($c in $r) { Format-IdsCell $c -PlainText }) }
+            })
+        }
+    }
     if (-not $Rows -or $Rows.Count -eq 0) { return $EmptyText }
     $out = @()
     $out += '| ' + ($Headers -join ' | ') + ' |'
@@ -163,14 +193,14 @@ function New-IdsTable {
 }
 
 function New-IdsPropertyTable {
-    param([System.Collections.IDictionary]$Properties, [string]$EmptyText = '_None_')
+    param([System.Collections.IDictionary]$Properties, [string]$EmptyText = (Get-IdsText -Key 'text.none'))
     $rows = @()
     foreach ($k in $Properties.Keys) {
         $v = $Properties[$k]
         if ($null -eq $v -or ($v -is [string] -and $v -eq '')) { continue }
         $rows += , @($k, (Format-IdsCell $v))
     }
-    return (New-IdsTable -Headers @('Property', 'Value') -Rows $rows -EmptyText $EmptyText)
+    return (New-IdsTable -Headers @((Get-IdsText -Key 'text.property'), (Get-IdsText -Key 'text.value')) -Rows $rows -EmptyText $EmptyText)
 }
 
 # --- Lookup maps ------------------------------------------------------------------------
@@ -202,7 +232,7 @@ function Resolve-IdsGroup {
             if ($name) { $script:IdsGroupMap[$Id] = $name; return $name }
         } catch { }
     }
-    $script:IdsGroupMap[$Id] = "(unresolved group $Id)"
+    $script:IdsGroupMap[$Id] = (Get-IdsText -Key 'text.unresolved_group_arg0' -Arguments @{ arg0 = ($Id) })
     return $script:IdsGroupMap[$Id]
 }
 function Resolve-IdsFilterObject {
@@ -222,22 +252,32 @@ function Resolve-IdsFilter {
         if ($f -is [string]) { return $f }
         if ($f.PSObject.Properties['displayName'] -and $f.displayName) { return [string]$f.displayName }
     }
-    return "(filter $Id)"
+    return (Get-IdsText -Key 'text.filter_arg0' -Arguments @{ arg0 = ($Id) })
 }
 function Resolve-IdsScopeTag {
     param([string]$Id)
     if (-not $Id) { return $null }
     if ($script:IdsScopeTagMap.ContainsKey($Id)) { return $script:IdsScopeTagMap[$Id] }
-    return "(tag $Id)"
+    return (Get-IdsText -Key 'text.tag_arg0' -Arguments @{ arg0 = ($Id) })
 }
 
 function Format-IdsScopeTags {
     param($Ids)
-    if (-not $Ids -or @($Ids).Count -eq 0) { return 'Default' }
+    if (-not $Ids -or @($Ids).Count -eq 0) { return (Get-IdsText -Key 'text.default') }
     return (@($Ids | ForEach-Object { Resolve-IdsScopeTag ([string]$_) }) -join ', ')
 }
 
 # --- Assignments ------------------------------------------------------------------------
+
+function Format-IdsAssignmentMode {
+    param([string]$Mode)
+    switch -CaseSensitive ($Mode) {
+        Included { return Get-IdsText 'text.included' }
+        Excluded { return Get-IdsText 'text.excluded' }
+        Unassigned { return Get-IdsText 'text.unassigned_objects' }
+        default { return $Mode }
+    }
+}
 
 function ConvertTo-IdsAssignmentRows {
     <#  Normalises Graph assignment objects into flat rows. Shared by the object pages and
@@ -252,8 +292,8 @@ function ConvertTo-IdsAssignmentRows {
         $group = ''
         $mode = 'Included'
         switch -Wildcard ($type) {
-            '*allDevicesAssignmentTarget'       { $group = 'All devices' }
-            '*allLicensedUsersAssignmentTarget' { $group = 'All users' }
+            '*allDevicesAssignmentTarget'       { $group = (Get-IdsText -Key 'text.all_devices') }
+            '*allLicensedUsersAssignmentTarget' { $group = (Get-IdsText -Key 'text.all_users') }
             '*exclusionGroupAssignmentTarget'   { $group = (Resolve-IdsGroup $tgt.groupId); $mode = 'Excluded' }
             '*groupAssignmentTarget'            { $group = (Resolve-IdsGroup $tgt.groupId) }
             default                             { $group = (Format-IdsOdataType $type) }
@@ -326,26 +366,26 @@ function Format-IdsFilterRule {
 function Format-IdsAssignments {
     param($Assignments)
     $rows = ConvertTo-IdsAssignmentRows -Assignments $Assignments
-    if (-not $rows -or $rows.Count -eq 0) { return '> **Not assigned.** This object exists in the tenant but targets no group.' }
+    if (-not $rows -or $rows.Count -eq 0) { return (Get-IdsText -Key 'text.not_assigned_this_object_exists_in_the_tenant_but_targets_no_group') }
 
     $hasIntent = ($rows | Where-Object { $_.Intent }).Count -gt 0
     $included = @($rows | Where-Object { $_.Mode -eq 'Included' })
     $excluded = @($rows | Where-Object { $_.Mode -eq 'Excluded' })
 
     $out = @()
-    $out += '**Included**'
+    $out += (Get-IdsText -Key 'text.included')
     $out += ''
     if ($hasIntent) {
-        $out += New-IdsTable -Headers @('Group', 'Intent', 'Filter', 'Filter mode') -Rows @(
+        $out += New-IdsTable -Headers @((Get-IdsText -Key 'text.group'), (Get-IdsText -Key 'text.intent'), (Get-IdsText -Key 'text.filter'), (Get-IdsText -Key 'text.filter_mode')) -Rows @(
             foreach ($r in $included) { , @($r.Group, $r.Intent, $r.Filter, $r.FilterMode) })
     } else {
-        $out += New-IdsTable -Headers @('Group', 'Filter', 'Filter mode') -Rows @(
+        $out += New-IdsTable -Headers @((Get-IdsText -Key 'text.group'), (Get-IdsText -Key 'text.filter'), (Get-IdsText -Key 'text.filter_mode')) -Rows @(
             foreach ($r in $included) { , @($r.Group, $r.Filter, $r.FilterMode) })
     }
     $out += ''
-    $out += '**Excluded**'
+    $out += (Get-IdsText -Key 'text.excluded')
     $out += ''
-    $out += New-IdsTable -Headers @('Group', 'Filter', 'Filter mode') -Rows @(
+    $out += New-IdsTable -Headers @((Get-IdsText -Key 'text.group'), (Get-IdsText -Key 'text.filter'), (Get-IdsText -Key 'text.filter_mode')) -Rows @(
         foreach ($r in $excluded) { , @($r.Group, $r.Filter, $r.FilterMode) })
 
     # Spell out every filter this object uses. A rule is what actually decides which devices
@@ -354,12 +394,12 @@ function Format-IdsAssignments {
     $used = @($rows | Where-Object { $_.FilterId } | Sort-Object Filter -Unique)
     if ($used.Count -gt 0) {
         $out += ''
-        $out += '**Filters used**'
+        $out += (Get-IdsText -Key 'text.filters_used')
         $out += ''
         foreach ($f in $used) {
             $modes = @($rows | Where-Object { $_.FilterId -eq $f.FilterId } | ForEach-Object { $_.FilterMode } | Where-Object { $_ } | Sort-Object -Unique)
             $modeText = ''
-            if ($modes.Count -gt 0) { $modeText = ' — mode: ' + ($modes -join ', ') }
+            if ($modes.Count -gt 0) { $modeText = (Get-IdsText -Key 'text.mode') + ($modes -join ', ') }
             $out += "*$($f.Filter)*$modeText"
             $out += ''
             if ($f.FilterRule) {
@@ -367,7 +407,7 @@ function Format-IdsAssignments {
                 $out += (Format-IdsFilterRule -Rule $f.FilterRule)
                 $out += '```'
             } else {
-                $out += '_Rule not available._'
+                $out += (Get-IdsText -Key 'text.rule_not_available')
             }
             $out += ''
         }
@@ -409,7 +449,7 @@ function Get-IdsCategoryPath {
 
 function Get-IdsPrettyId {
     param([string]$Id)
-    if (-not $Id) { return '(unnamed)' }
+    if (-not $Id) { return (Get-IdsText -Key 'text.unnamed') }
     $last = $Id.Split('_')[-1]
     $words = $last -creplace '([a-z0-9])([A-Z])', '$1 $2'
     if ($words.Length -gt 0) { $words = $words.Substring(0, 1).ToUpperInvariant() + $words.Substring(1) }
@@ -483,7 +523,7 @@ function Expand-IdsSettingInstance {
             if ($sv) {
                 if ($sv.PSObject.Properties['value']) { $val = $sv.value }
                 else { $val = (ConvertTo-Json $sv -Depth 5 -Compress) }
-                if ([string]$sv.'@odata.type' -like '*SecretSettingValue*') { $val = '«secret — not exported»' }
+                if ([string]$sv.'@odata.type' -like '*SecretSettingValue*') { $val = (Get-IdsText -Key 'text.secret_not_exported') }
             }
             $rows += , [pscustomobject]@{ Category = $cat; Setting = $full; Value = $val }
         }
@@ -529,8 +569,11 @@ function Expand-IdsSettingInstance {
 }
 
 function Format-IdsSettingsCatalog {
-    param($Settings)
-    if (-not $Settings -or @($Settings).Count -eq 0) { return '_No settings configured._' }
+    param($Settings, [switch]$AsData)
+    if (-not $Settings -or @($Settings).Count -eq 0) {
+        if ($AsData) { return }
+        return (Get-IdsEmptySettingsText)
+    }
     $defMap = New-IdsDefinitionMap -Settings $Settings
     $rows = @()
     foreach ($s in @($Settings)) {
@@ -538,47 +581,56 @@ function Format-IdsSettingsCatalog {
             $rows += Expand-IdsSettingInstance -Instance $s.settingInstance -DefMap $defMap
         }
     }
-    if ($rows.Count -eq 0) { return '_No settings configured._' }
+    if ($rows.Count -eq 0) {
+        if ($AsData) { return }
+        return (Get-IdsEmptySettingsText)
+    }
 
     $out = @()
     $grouped = $rows | Group-Object Category | Sort-Object Name
     foreach ($g in $grouped) {
         $title = $g.Name
-        if (-not $title) { $title = 'General' }
+        if (-not $title) { $title = (Get-IdsText -Key 'text.general') }
+        if ($AsData) {
+            New-IdsTable -Title $title -Headers @((Get-IdsText -Key 'text.setting'), (Get-IdsText -Key 'text.value')) -AsData -Rows @(
+                foreach ($r in ($g.Group | Sort-Object Setting)) { , @($r.Setting, $r.Value) })
+            continue
+        }
         $out += "**$title**"
         $out += ''
-        $out += New-IdsTable -Headers @('Setting', 'Value') -Rows @(
+        $out += New-IdsTable -Headers @((Get-IdsText -Key 'text.setting'), (Get-IdsText -Key 'text.value')) -Rows @(
             foreach ($r in ($g.Group | Sort-Object Setting)) { , @($r.Setting, $r.Value) })
         $out += ''
     }
-    $out += "_$($rows.Count) settings configured._"
+    if ($AsData) { return }
+    $out += (Get-IdsText -Key 'text.arg0_settings_configured' -Arguments @{ arg0 = ($rows.Count) })
     return ($out -join "`n")
 }
 
 # --- Legacy / template profiles ---------------------------------------------------------
 
 function Format-IdsOmaSettings {
-    param($OmaSettings)
+    param($OmaSettings, [switch]$AsData)
     if (-not $OmaSettings -or @($OmaSettings).Count -eq 0) { return $null }
     $rows = @()
     foreach ($o in @($OmaSettings | Sort-Object omaUri)) {
         if (-not $o) { continue }
         $val = '-'
         if ($o.PSObject.Properties['secretReferenceValueId'] -and $o.secretReferenceValueId) {
-            $val = '«secret — not exported»'
+            $val = (Get-IdsText -Key 'text.secret_not_exported')
         } elseif ($o.PSObject.Properties['value']) {
             $val = $o.value
             if ([string]$o.'@odata.type' -like '*OmaSettingStringXml*') { $val = ConvertFrom-IdsBase64 ([string]$val) }
         }
         $rows += , @($o.displayName, $o.omaUri, (Format-IdsOdataType $o.'@odata.type'), $val)
     }
-    return (New-IdsTable -Headers @('Name', 'OMA-URI', 'Data type', 'Value') -Rows $rows)
+    return (New-IdsTable -Headers @((Get-IdsText -Key 'text.name'), 'OMA-URI', (Get-IdsText -Key 'text.data_type'), (Get-IdsText -Key 'text.value')) -Rows $rows -AsData:$AsData)
 }
 
 function Format-IdsTemplateSettings {
     <#  Legacy deviceConfiguration objects carry their settings as ordinary top-level
         properties. We render every configured scalar, skipping envelope noise. #>
-    param($Config)
+    param($Config, [switch]$AsData)
     $skip = @('id', 'displayName', 'description', 'createdDateTime', 'lastModifiedDateTime', 'version',
         'roleScopeTagIds', 'supportsScopeTags', 'assignments', 'omaSettings', '@odata.type',
         'deviceManagementApplicabilityRuleOsEdition', 'deviceManagementApplicabilityRuleOsVersion',
@@ -598,12 +650,15 @@ function Format-IdsTemplateSettings {
         $label = $label.Substring(0, 1).ToUpperInvariant() + $label.Substring(1)
         $rows += , @($label, $v)
     }
-    return (New-IdsTable -Headers @('Setting', 'Value') -Rows $rows -EmptyText '_No settings configured._')
+    return (New-IdsTable -Headers @((Get-IdsText -Key 'text.setting'), (Get-IdsText -Key 'text.value')) -Rows $rows -EmptyText (Get-IdsEmptySettingsText) -AsData:$AsData)
 }
 
 function Format-IdsAdmxSettings {
-    param($DefinitionValues)
-    if (-not $DefinitionValues -or @($DefinitionValues).Count -eq 0) { return '_No ADMX settings configured._' }
+    param($DefinitionValues, [switch]$AsData)
+    if (-not $DefinitionValues -or @($DefinitionValues).Count -eq 0) {
+        if ($AsData) { return }
+        return (Get-IdsEmptySettingsText -Admx)
+    }
     $rows = @()
     foreach ($d in @($DefinitionValues)) {
         if (-not $d) { continue }
@@ -615,8 +670,8 @@ function Format-IdsAdmxSettings {
             $class = $d.definition.classType
             if ($d.definition.PSObject.Properties['categoryPath']) { $category = $d.definition.categoryPath }
         }
-        $state = 'Disabled'
-        if ($d.enabled) { $state = 'Enabled' }
+        $state = (Get-IdsText -Key 'text.disabled')
+        if ($d.enabled) { $state = (Get-IdsText -Key 'text.enabled') }
         $values = @()
         foreach ($pv in @($d.presentationValues)) {
             # @($null) yields a one-element array containing $null, so guard explicitly.
@@ -632,8 +687,24 @@ function Format-IdsAdmxSettings {
         }
         $rows += , @($category, $name, $class, $state, ($values -join '; '))
     }
-    $sorted = $rows | Sort-Object { $_[0] }, { $_[1] }
-    return (New-IdsTable -Headers @('Category', 'Setting', 'Scope', 'State', 'Value') -Rows $sorted)
+    $sorted = @($rows | Sort-Object { $_[0] }, { $_[1] })
+    return (New-IdsTable -Headers @((Get-IdsText -Key 'text.category'), (Get-IdsText -Key 'text.setting'), (Get-IdsText -Key 'text.scope'), (Get-IdsText -Key 'text.state'), (Get-IdsText -Key 'text.value')) -Rows $sorted -AsData:$AsData)
+}
+
+function Format-IdsIntentSettings {
+    param($Settings, [switch]$AsData)
+    $rows = @()
+    foreach ($s in $Settings) {
+        if (-not $s) { continue }
+        $name = Get-IdsPrettyId ([string]$s.definitionId)
+        $val = '-'
+        foreach ($candidate in @('value', 'valueJson')) {
+            if ($s.PSObject.Properties[$candidate] -and $null -ne $s.$candidate) { $val = $s.$candidate; break }
+        }
+        if ($val -is [string] -and $val -eq 'null') { $val = '-' }
+        $rows += , @($name, $val)
+    }
+    return (New-IdsTable -Headers @((Get-IdsText -Key 'text.setting'), (Get-IdsText -Key 'text.value')) -Rows @($rows | Sort-Object { $_[0] }) -EmptyText (Get-IdsEmptySettingsText) -AsData:$AsData)
 }
 
 function Format-IdsComplianceActions {
@@ -650,7 +721,7 @@ function Format-IdsComplianceActions {
             $rows += , @((Format-IdsOdataType $c.actionType), $c.gracePeriodHours, $recipients)
         }
     }
-    return (New-IdsTable -Headers @('Action', 'Grace period (hours)', 'Additional recipients') -Rows $rows -EmptyText '_No scheduled actions._')
+    return (New-IdsTable -Headers @((Get-IdsText -Key 'text.action'), (Get-IdsText -Key 'text.grace_period_hours'), (Get-IdsText -Key 'text.additional_recipients')) -Rows $rows -EmptyText (Get-IdsText -Key 'text.no_scheduled_actions'))
 }
 
 # --- Applications -----------------------------------------------------------------------
@@ -660,24 +731,24 @@ function Format-IdsAppType {
     $short = ($OdataType -replace '#microsoft\.graph\.', '')
     switch -Regex ($short) {
         '^win32CatalogApp$'                 { 'Win32 — Enterprise App Catalog'; break }
-        '^win32LobApp$'                     { 'Win32 app'; break }
-        '^winGetApp$'                       { 'Microsoft Store app (WinGet)'; break }
-        '^windowsStoreApp$'                 { 'Microsoft Store app (legacy)'; break }
+        '^win32LobApp$'                     { (Get-IdsText -Key 'text.win32_app'); break }
+        '^winGetApp$'                       { (Get-IdsText -Key 'text.microsoft_store_app_winget'); break }
+        '^windowsStoreApp$'                 { (Get-IdsText -Key 'text.microsoft_store_app_legacy'); break }
         '^windowsUniversalAppX'             { 'Windows Universal (AppX)'; break }
         '^windowsMicrosoftEdgeApp$'         { 'Microsoft Edge'; break }
-        '^windowsWebApp$'                   { 'Web link (Windows)'; break }
+        '^windowsWebApp$'                   { (Get-IdsText -Key 'text.web_link_windows'); break }
         '^officeSuiteApp$'                  { 'Microsoft 365 Apps'; break }
         '^windowsAppX$'                     { 'Windows AppX'; break }
-        '^macOS(Lob|Dmg|Pkg)App$'           { 'macOS app'; break }
+        '^macOS(Lob|Dmg|Pkg)App$'           { (Get-IdsText -Key 'text.macos_app'); break }
         '^macOSMicrosoftDefenderApp$'       { 'Microsoft Defender for macOS'; break }
         '^macOSOfficeSuiteApp$'             { 'Microsoft 365 Apps for macOS'; break }
-        '^iosStoreApp$'                     { 'iOS store app'; break }
-        '^iosVppApp$'                       { 'iOS VPP app'; break }
-        '^iosLobApp$'                       { 'iOS line-of-business app'; break }
-        '^androidStoreApp$'                 { 'Android store app'; break }
-        '^androidManagedStoreApp$'          { 'Managed Google Play app'; break }
-        '^androidLobApp$'                   { 'Android line-of-business app'; break }
-        '^webApp$'                          { 'Web link'; break }
+        '^iosStoreApp$'                     { (Get-IdsText -Key 'text.ios_store_app'); break }
+        '^iosVppApp$'                       { (Get-IdsText -Key 'text.ios_vpp_app'); break }
+        '^iosLobApp$'                       { (Get-IdsText -Key 'text.ios_line_of_business_app'); break }
+        '^androidStoreApp$'                 { (Get-IdsText -Key 'text.android_store_app'); break }
+        '^androidManagedStoreApp$'          { (Get-IdsText -Key 'text.managed_google_play_app'); break }
+        '^androidLobApp$'                   { (Get-IdsText -Key 'text.android_line_of_business_app'); break }
+        '^webApp$'                          { (Get-IdsText -Key 'text.web_link'); break }
         default                             { (Format-IdsOdataType $OdataType) }
     }
 }
@@ -707,50 +778,50 @@ function Format-IdsDetectionRules {
         }
         $rows += , @($type, ($detail -join '; '))
     }
-    return (New-IdsTable -Headers @('Rule type', 'Detail') -Rows $rows -EmptyText '_None._')
+    return (New-IdsTable -Headers @((Get-IdsText -Key 'text.rule_type'), (Get-IdsText -Key 'text.detail')) -Rows $rows -EmptyText (Get-IdsText -Key 'text.none'))
 }
 
 function Format-IdsAppInstallSettings {
     param($App)
     $props = [ordered]@{}
     $map = [ordered]@{
-        publisher                = 'Publisher'
-        developer                = 'Developer'
-        owner                    = 'Owner'
-        version                  = 'Version'
-        displayVersion           = 'Display version'
-        fileName                 = 'File name'
-        setupFilePath            = 'Setup file'
-        installCommandLine       = 'Install command'
-        uninstallCommandLine     = 'Uninstall command'
-        packageIdentifier        = 'Package identifier'
-        appStoreUrl              = 'Store URL'
-        bundleId                 = 'Bundle id'
-        applicableArchitectures  = 'Architectures'
-        allowAvailableUninstall  = 'User can uninstall'
-        isFeatured               = 'Featured'
-        privacyInformationUrl    = 'Privacy URL'
-        informationUrl           = 'Information URL'
-        notes                    = 'Notes'
+        publisher                = (Get-IdsText -Key 'text.publisher')
+        developer                = (Get-IdsText -Key 'text.developer')
+        owner                    = (Get-IdsText -Key 'text.owner')
+        version                  = (Get-IdsText -Key 'text.version')
+        displayVersion           = (Get-IdsText -Key 'text.display_version')
+        fileName                 = (Get-IdsText -Key 'text.file_name')
+        setupFilePath            = (Get-IdsText -Key 'text.setup_file')
+        installCommandLine       = (Get-IdsText -Key 'text.install_command')
+        uninstallCommandLine     = (Get-IdsText -Key 'text.uninstall_command')
+        packageIdentifier        = (Get-IdsText -Key 'text.package_identifier')
+        appStoreUrl              = (Get-IdsText -Key 'text.store_url')
+        bundleId                 = (Get-IdsText -Key 'text.bundle_id')
+        applicableArchitectures  = (Get-IdsText -Key 'text.architectures')
+        allowAvailableUninstall  = (Get-IdsText -Key 'text.user_can_uninstall')
+        isFeatured               = (Get-IdsText -Key 'text.featured')
+        privacyInformationUrl    = (Get-IdsText -Key 'text.privacy_url')
+        informationUrl           = (Get-IdsText -Key 'text.information_url')
+        notes                    = (Get-IdsText -Key 'text.notes')
     }
     foreach ($k in $map.Keys) {
         if ($App.PSObject.Properties[$k] -and $null -ne $App.$k -and "$($App.$k)" -ne '') { $props[$map[$k]] = $App.$k }
     }
-    if ($App.PSObject.Properties['size'] -and $App.size) { $props['Size'] = Format-IdsBytes $App.size }
+    if ($App.PSObject.Properties['size'] -and $App.size) { $props[(Get-IdsText -Key 'text.size')] = Format-IdsBytes $App.size }
     if ($App.PSObject.Properties['minimumSupportedOperatingSystem'] -and $App.minimumSupportedOperatingSystem) {
         $oses = @()
         foreach ($p in $App.minimumSupportedOperatingSystem.PSObject.Properties) {
             if ($p.Value -eq $true) { $oses += ($p.Name -replace '^v', '' -replace '_', '.') }
         }
-        if ($oses.Count -gt 0) { $props['Minimum OS'] = ($oses -join ', ') }
+        if ($oses.Count -gt 0) { $props[(Get-IdsText -Key 'text.minimum_os')] = ($oses -join ', ') }
     }
     if ($App.PSObject.Properties['installExperience'] -and $App.installExperience) {
         $ie = $App.installExperience
-        if ($ie.PSObject.Properties['runAsAccount']) { $props['Install context'] = $ie.runAsAccount }
-        if ($ie.PSObject.Properties['deviceRestartBehavior']) { $props['Restart behaviour'] = $ie.deviceRestartBehavior }
-        if ($ie.PSObject.Properties['maxRunTimeInMinutes']) { $props['Max run time (min)'] = $ie.maxRunTimeInMinutes }
+        if ($ie.PSObject.Properties['runAsAccount']) { $props[(Get-IdsText -Key 'text.install_context')] = $ie.runAsAccount }
+        if ($ie.PSObject.Properties['deviceRestartBehavior']) { $props[(Get-IdsText -Key 'text.restart_behaviour')] = $ie.deviceRestartBehavior }
+        if ($ie.PSObject.Properties['maxRunTimeInMinutes']) { $props[(Get-IdsText -Key 'text.max_run_time_min')] = $ie.maxRunTimeInMinutes }
     }
-    return (New-IdsPropertyTable -Properties $props -EmptyText '_No install settings._')
+    return (New-IdsPropertyTable -Properties $props -EmptyText (Get-IdsText -Key 'text.no_install_settings'))
 }
 
 # --- Page assembly ----------------------------------------------------------------------
@@ -784,7 +855,7 @@ function New-IdsDocument {
         [System.Collections.IDictionary]$Sections,
         $Assignments,
         $Raw,
-        [string]$RawLabel = 'Raw Graph object'
+        [string]$RawLabel = (Get-IdsText -Key 'text.raw_graph_object')
     )
     $lines = @()
     if ($FrontMatter) { $lines += New-IdsFrontMatter -Fields $FrontMatter }
@@ -795,7 +866,7 @@ function New-IdsDocument {
         $lines += ''
     }
     if ($Overview -and $Overview.Count -gt 0) {
-        $lines += '## Overview'
+        $lines += (Get-IdsText -Key 'text.overview')
         $lines += ''
         $lines += (New-IdsPropertyTable -Properties $Overview)
         $lines += ''
@@ -811,13 +882,13 @@ function New-IdsDocument {
         }
     }
     if ($null -ne $Assignments) {
-        $lines += '## Assignments'
+        $lines += (Get-IdsText -Key 'text.assignments')
         $lines += ''
         $lines += (Format-IdsAssignments -Assignments $Assignments)
         $lines += ''
     }
     if ($Raw -and $script:IdsOptions.IncludeRaw) {
-        $lines += '## Source'
+        $lines += (Get-IdsText -Key 'text.source')
         $lines += ''
         $lines += "<details><summary>$RawLabel</summary>"
         $lines += ''

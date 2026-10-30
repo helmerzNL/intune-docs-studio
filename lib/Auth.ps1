@@ -1,3 +1,5 @@
+. (Join-Path $PSScriptRoot 'Localization.ps1')
+
 <#
     Auth.ps1 — delegated Microsoft Graph authentication WITHOUT an Entra ID app registration.
 
@@ -19,17 +21,17 @@ $script:IdsClients = [ordered]@{
     graphcli = @{
         id   = '14d82eec-204b-4c2f-b7e8-296a70dab67e'
         name = 'Microsoft Graph Command Line Tools'
-        note = 'Used by the Microsoft.Graph PowerShell SDK. Loopback + device code capable.'
+        noteKey = 'auth.client_graphcli'
     }
     azurecli = @{
         id   = '04b07795-8ddb-461a-bbee-02f9e1bf7b46'
         name = 'Microsoft Azure CLI'
-        note = 'Pre-authorised for Microsoft Graph in the majority of tenants.'
+        noteKey = 'auth.client_azurecli'
     }
     intuneps = @{
         id   = 'd1ddf0e4-d672-4dae-b554-9d5bdfd93547'
         name = 'Microsoft Intune PowerShell'
-        note = 'Legacy Intune client. Frequently already consented in long-lived tenants.'
+        noteKey = 'auth.client_intuneps'
     }
 }
 
@@ -46,23 +48,35 @@ $script:IdsScopes = @(
 
 # Scope -> what breaks without it. Surfaced in the dashboard when consent is partial.
 $script:IdsScopeUsage = [ordered]@{
-    'DeviceManagementConfiguration.Read.All'  = 'Configuration profiles, settings catalog, compliance, endpoint security'
-    'DeviceManagementApps.Read.All'           = 'Applications, app protection and app configuration policies'
-    'DeviceManagementServiceConfig.Read.All'  = 'Enrollment, Autopilot, ESP, terms, notification templates'
-    'DeviceManagementRBAC.Read.All'           = 'Roles, scope tags'
-    'DeviceManagementManagedDevices.Read.All' = 'Device counts and remediation script state'
-    'Group.Read.All'                          = 'Resolving assignment group ids to display names'
+    'DeviceManagementConfiguration.Read.All'  = 'auth.scope_configuration'
+    'DeviceManagementApps.Read.All'           = 'auth.scope_apps'
+    'DeviceManagementServiceConfig.Read.All'  = 'auth.scope_service'
+    'DeviceManagementRBAC.Read.All'           = 'auth.scope_rbac'
+    'DeviceManagementManagedDevices.Read.All' = 'auth.scope_devices'
+    'Group.Read.All'                          = 'auth.scope_groups'
 }
 
 function Get-IdsClient {
     param([string]$Name = 'graphcli')
-    if ($script:IdsClients.Contains($Name)) { return $script:IdsClients[$Name] }
-    return $script:IdsClients['graphcli']
+    $catalog = Get-IdsClientCatalog
+    if ($catalog.Contains($Name)) { return $catalog[$Name] }
+    return $catalog['graphcli']
 }
 
-function Get-IdsClientCatalog { return $script:IdsClients }
+function Get-IdsClientCatalog {
+    $catalog = [ordered]@{}
+    foreach ($key in $script:IdsClients.Keys) {
+        $client = $script:IdsClients[$key]
+        $catalog[$key] = @{ id = $client.id; name = $client.name; note = (Get-IdsText $client.noteKey) }
+    }
+    return $catalog
+}
 function Get-IdsScopeList { return $script:IdsScopes }
-function Get-IdsScopeUsage { return $script:IdsScopeUsage }
+function Get-IdsScopeUsage {
+    $usage = [ordered]@{}
+    foreach ($key in $script:IdsScopeUsage.Keys) { $usage[$key] = Get-IdsText $script:IdsScopeUsage[$key] }
+    return $usage
+}
 
 # --- JWT helpers ------------------------------------------------------------------------
 
@@ -253,14 +267,14 @@ function Test-IdsDeviceCode {
 
 function Get-IdsTokenFromAzureCli {
     $az = Get-Command az -ErrorAction SilentlyContinue
-    if (-not $az) { throw 'Azure CLI (az) was not found on PATH.' }
+    if (-not $az) { throw (Get-IdsText -Key 'text.azure_cli_az_was_not_found_on_path') }
 
     $raw = & az account get-access-token --scope 'https://graph.microsoft.com/.default' -o json 2>&1
     if ($LASTEXITCODE -ne 0) {
         # Older Azure CLI builds only understand --resource.
         $raw = & az account get-access-token --resource 'https://graph.microsoft.com' -o json 2>&1
     }
-    if ($LASTEXITCODE -ne 0) { throw "az account get-access-token failed: $raw" }
+    if ($LASTEXITCODE -ne 0) { throw (Get-IdsText -Key 'text.az_account_get_access_token_failed_arg0' -Arguments @{ arg0 = ($raw) }) }
 
     $j = ($raw | Out-String) | ConvertFrom-Json
     $claims = ConvertFrom-IdsJwt $j.accessToken
@@ -297,7 +311,7 @@ function Connect-IdsMgGraph {
         through Invoke-MgGraphRequest instead. #>
     param([string]$Tenant)
     if (-not (Get-Module -ListAvailable Microsoft.Graph.Authentication)) {
-        throw 'Microsoft.Graph.Authentication module is not installed. Install-Module Microsoft.Graph.Authentication -Scope CurrentUser'
+        throw (Get-IdsText -Key 'text.microsoft_graph_authentication_module_is_not_installed_install_module_microsoft_graph_authentication')
     }
     Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
 
@@ -384,7 +398,7 @@ function Get-IdsScopeReport {
         $report += [pscustomobject]@{
             scope   = $k
             granted = $has
-            impact  = $script:IdsScopeUsage[$k]
+            impact  = (Get-IdsText $script:IdsScopeUsage[$k])
         }
     }
     return $report

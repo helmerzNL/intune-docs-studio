@@ -42,7 +42,7 @@ jobs:
         run: |
           $r = Invoke-Pester -Path .\tests -Output Detailed -PassThru
           if ($r.FailedCount -or $r.NotRunCount -or $r.PassedCount -eq 0) { exit 1 }
-          node --test .\tests\publishing-ui.test.js
+          node --test .\tests\publishing-ui.test.js .\tests\assessment-ui.test.js .\tests\app-shell-ui.test.js
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       - name: Validate repository policy

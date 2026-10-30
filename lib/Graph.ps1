@@ -1,3 +1,5 @@
+. (Join-Path $PSScriptRoot 'Localization.ps1')
+
 <#
     Graph.ps1 — transport-aware Microsoft Graph client.
 
@@ -22,10 +24,18 @@ function Initialize-IdsGraph {
 function Get-IdsGraphStats { return $script:IdsGraphStats }
 function Reset-IdsGraphStats { $script:IdsGraphStats = @{ requests = 0; retries = 0; throttled = 0; failures = 0 } }
 
+function Test-IdsGraphAuthenticationFailure {
+    param([Exception]$Exception)
+    # Refresh failures can precede the HTTP wrapper and have no StatusCode.
+    # Use structured metadata only; never inspect provider messages or bodies.
+    return [bool]($Exception.StatusCode -eq 401 -or
+        ($Exception.PSObject.Properties['OAuthError'] -and $Exception.OAuthError))
+}
+
 function Get-IdsGraphAuth {
-    if (-not $script:IdsGraphState) { throw 'Graph client not initialised. Call Initialize-IdsGraph first.' }
+    if (-not $script:IdsGraphState) { throw (Get-IdsText -Key 'text.graph_client_not_initialised_call_initialize_idsgraph_first') }
     $auth = $script:IdsGraphState.Auth
-    if (-not $auth) { throw 'Not signed in.' }
+    if (-not $auth) { throw (Get-IdsText -Key 'text.not_signed_in') }
     if ($auth.transport -ne 'mggraph' -and $auth.expires_at -le (Get-Date).ToUniversalTime()) {
         $refreshed = Update-IdsToken -Auth $auth
         if ($refreshed) {
@@ -100,7 +110,7 @@ function Invoke-IdsGraphRaw {
             }
             $script:IdsGraphStats.failures++
             $msg = $_.Exception.Message
-            $err = New-Object System.Exception ("Graph $Method $Uri failed ($status): $msg")
+            $err = New-Object System.Exception ((Get-IdsText -Key 'text.graph_arg0_arg1_failed_arg2_arg3' -Arguments @{ arg0 = ($Method); arg1 = ($Uri); arg2 = ($status); arg3 = ($msg) }))
             $err | Add-Member -NotePropertyName StatusCode -NotePropertyValue $status -Force
             throw $err
         }
@@ -189,7 +199,10 @@ function Invoke-IdsGraphBatch {
                 } catch {
                     $st = 500
                     if ($_.Exception.PSObject.Properties['StatusCode']) { $st = [int]$_.Exception.StatusCode }
-                    $results[[string]$r.id] = @{ status = $st; body = $null }
+                    $results[[string]$r.id] = @{
+                        status = $st; body = $null
+                        authenticationFailure = (Test-IdsGraphAuthenticationFailure $_.Exception)
+                    }
                 }
             }
         }

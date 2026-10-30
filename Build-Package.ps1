@@ -35,16 +35,62 @@ $requiredFiles = @(
     'QUICKSTART.md'
     'SECURITY.md'
     'docs\publishing.md'
+    'docs\assessment-rule-packs.md'
+    'baselines\microsoft-windows-11.json'
+    'baselines\microsoft-macos.json'
+    'baselines\microsoft-ios-ipados.json'
+    'baselines\microsoft-android-enterprise.json'
     'web\index.html'
     'web\app.js'
+    'web\i18n.js'
     'web\style.css'
 )
+$locales = @('en-GB', 'nl-NL', 'fr-FR', 'de-DE', 'sv-SE', 'es-ES', 'nb-NO', 'pt-PT', 'it-IT', 'da-DK')
+foreach ($locale in $locales) {
+    $requiredFiles += "locales\$locale.json"
+    $requiredFiles += "web\flags\$locale.svg"
+}
 $relativeFiles = [System.Collections.Generic.List[string]]::new()
 $relativeFiles.AddRange([string[]]$requiredFiles)
 
 foreach ($required in $requiredFiles) {
     if (-not (Test-Path -LiteralPath (Join-Path $src $required) -PathType Leaf)) {
         throw "Required product file is missing: $required"
+    }
+}
+
+$catalogs = @{}
+foreach ($locale in $locales) {
+    try {
+        $catalogPath = Join-Path $src "locales\$locale.json"
+        $text = [Text.UTF8Encoding]::new($false, $true).GetString([IO.File]::ReadAllBytes($catalogPath))
+        $catalogs[$locale] = ConvertFrom-Json -InputObject $text -AsHashtable -Depth 16 -ErrorAction Stop
+    } catch { throw "Invalid localization catalog $locale. Restore its UTF-8 JSON resource before building: $($_.Exception.Message)" }
+}
+foreach ($locale in $locales) {
+    foreach ($domain in 'ui', 'server') {
+        $messages = $catalogs[$locale][$domain]
+        $english = $catalogs['en-GB'][$domain]
+        if ($messages -isnot [Collections.IDictionary] -or -not $messages.Count -or
+            $english -isnot [Collections.IDictionary] -or -not $english.Count) {
+            throw "Localization catalog $locale requires a nonempty '$domain' dictionary. Restore the complete catalog."
+        }
+        $keys = @($messages.Keys | Sort-Object -CaseSensitive)
+        $expected = @($english.Keys | Sort-Object -CaseSensitive)
+        if (($keys -join "`n") -cne ($expected -join "`n")) {
+            throw "Localization catalog $locale/$domain has missing or unexpected keys. Match the English catalog before building."
+        }
+        foreach ($key in $keys) {
+            $value = $messages[$key]
+            if ($value -isnot [string] -or [string]::IsNullOrWhiteSpace($value)) {
+                throw "Localization catalog $locale/$domain/$key has an empty or invalid translation."
+            }
+            $tokens = @([regex]::Matches($value, '\{[A-Za-z0-9_]+(?::[^{}]+)?\}') | ForEach-Object Value | Sort-Object)
+            $reference = @([regex]::Matches($english[$key], '\{[A-Za-z0-9_]+(?::[^{}]+)?\}') | ForEach-Object Value | Sort-Object)
+            if (($tokens -join "`n") -cne ($reference -join "`n")) {
+                throw "Localization catalog $locale/$domain/$key has mismatched interpolation placeholders."
+            }
+        }
     }
 }
 
@@ -110,7 +156,7 @@ try {
     $leaks = @()
     foreach ($file in $sourceFiles) {
         $extension = [IO.Path]::GetExtension($file.RelativePath)
-        if ($extension -notin '.ps1', '.md', '.html', '.js', '.css', '.cmd') { continue }
+        if ($extension -notin '.ps1', '.md', '.html', '.js', '.css', '.cmd', '.json', '.svg') { continue }
         $stagedPath = Join-Path $stageRoot $file.RelativePath
         $lines = Get-Content -LiteralPath $stagedPath -ErrorAction SilentlyContinue
         for ($i = 0; $i -lt $lines.Count; $i++) {
