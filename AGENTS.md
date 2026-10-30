@@ -83,7 +83,12 @@ the release notes are `docs/releases/vX.Y.Z.md`; the owner merges the
 promotion; the full test command is the set of checks listed in that runbook
 under *Checks and operator update*.
 
-**Every release has release notes.** They are written and reviewed before the
+**Every release has release notes in both Dutch and English.** Keep both
+language versions in `docs/releases/vX.Y.Z.md` so the published release includes
+both. They must convey the same changes, update guidance, risks and limitations;
+neither language may be only a shortened summary. The agent writes both versions
+as part of preparing the release, without a separate reminder.
+They are written and reviewed before the
 promotion merges, in a normal pull request into `beta` that is merged first, and
 they cover everything since the previous stable version, not only the last
 change. The stable pipeline refuses to release without them.
