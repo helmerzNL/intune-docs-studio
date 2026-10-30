@@ -176,8 +176,13 @@ Custom reference checks, not to replace the target source.
 
 ZIP/folder validation rejects unsafe/duplicate paths, reparse points/links,
 unsupported schemas and hash mismatches. Limits: 32 MiB ZIP, 1,000 entries,
-500 JSON files, 10 MiB per file, 64 MiB JSON total, 64 JSON levels and 16 folder
-levels. Policy-set exports exclude Auth/tokens/cookies/browser profiles and
+500 JSON files, 64 MiB per file, 256 MiB JSON total, 64 JSON levels and 16 folder
+levels. Policy-set JSON is compact (without indentation); hashes and evidence
+remain intact. Larger policy families no longer inherit the 10 MiB rule-pack
+limit. The 32 MiB compressed ZIP/upload limit is unchanged; use a host folder
+when the compressed policy set is larger. Rule-pack/build-kit folders retain
+their separate 10 MiB per-file and 64 MiB total limits.
+Policy-set exports exclude Auth/tokens/cookies/browser profiles and
 redact recognized policy secrets; still protect and back up the remaining files
 as customer-owned configuration, separately from application files.
 

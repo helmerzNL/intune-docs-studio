@@ -53,9 +53,9 @@ function Write-IdsBuildKitJsonValue {
 }
 
 function ConvertTo-IdsBuildKitJsonBytes {
-    param($Value)
+    param($Value, [switch]$Compress)
     $options = [Text.Json.JsonWriterOptions]::new()
-    $options.Indented = $true
+    $options.Indented = -not $Compress
     $stream = [IO.MemoryStream]::new()
     try {
         $writer = [Text.Json.Utf8JsonWriter]::new($stream, $options)
@@ -678,6 +678,14 @@ namespace Ids {
         }
 
         public static byte[] ReadEntry(byte[] b, BaselineZipEntry entry, System.Collections.IDictionary budget) {
+            return ReadEntry(b, entry, budget, EntryLimit, ArchiveLimit);
+        }
+
+        public static byte[] ReadEntry(byte[] b, BaselineZipEntry entry, System.Collections.IDictionary budget,
+                                       long entryLimit, long archiveLimit) {
+            if (entryLimit < 1 || entryLimit > 64L * 1024 * 1024 ||
+                archiveLimit < 1 || archiveLimit > 256L * 1024 * 1024)
+                throw new ArgumentOutOfRangeException("entryLimit");
             ulong data = DataOffset(b, entry);
             long read = Convert.ToInt64(budget["read"]);
             using (var raw = new MemoryStream(b, (int)data, (int)entry.CompressedLength, false))
@@ -686,9 +694,9 @@ namespace Ids {
             using (var content = new MemoryStream()) {
                 var buffer = new byte[81920];
                 uint crc = uint.MaxValue;
-                while (content.Length <= EntryLimit && read <= ArchiveLimit) {
+                while (content.Length <= entryLimit && read <= archiveLimit) {
                     int remaining = (int)Math.Min(buffer.Length,
-                        Math.Min(EntryLimit + 1 - content.Length, ArchiveLimit + 1 - read));
+                        Math.Min(entryLimit + 1 - content.Length, archiveLimit + 1 - read));
                     int count = source.Read(buffer, 0, remaining);
                     if (count == 0) {
                         if ((ulong)content.Length != entry.Length || (crc ^ uint.MaxValue) != entry.Crc)
@@ -714,8 +722,8 @@ namespace Ids {
 }
 
 function Read-IdsBaselineArchiveEntry {
-    param([byte[]]$Bytes, $Entry, $Budget)
-    return ,([Ids.BaselineZipReader]::ReadEntry($Bytes, $Entry, $Budget))
+    param([byte[]]$Bytes, $Entry, $Budget, [long]$MaxFileBytes = 10MB, [long]$MaxTotalBytes = 64MB)
+    return ,([Ids.BaselineZipReader]::ReadEntry($Bytes, $Entry, $Budget, $MaxFileBytes, $MaxTotalBytes))
 }
 
 function ConvertFrom-IdsBaselineArchiveText {
@@ -746,6 +754,32 @@ function Get-IdsBaselineArchivePolicies {
         if ($item -isnot [Collections.IDictionary] -or -not $item.Contains('settings')) { return $null }
     }
     return ,@($list)
+}
+
+function ConvertFrom-IdsBaselineFolder {
+    param([Parameter(Mandatory)][string]$Path)
+    $entries = Read-IdsPolicyEntries -Path $Path -MaxFileBytes 10MB -MaxTotalBytes 64MB
+    if ([IO.File]::Exists($Path)) {
+        return ConvertFrom-IdsBaselineArchive -Bytes ([IO.File]::ReadAllBytes($Path))
+    }
+    $stream = [IO.MemoryStream]::new()
+    try {
+        $archive = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Create, $true)
+        try {
+            foreach ($name in $entries.Keys | Sort-Object -CaseSensitive) {
+                $entry = $archive.CreateEntry($name)
+                $modified = [IO.File]::GetLastWriteTimeUtc((Join-Path $Path $name))
+                if ($modified.Year -lt 1980 -or $modified.Year -gt 2107) {
+                    throw [ArgumentOutOfRangeException]::new('LastWriteTimeUtc')
+                }
+                $entry.LastWriteTime = [datetimeoffset]::new($modified)
+                $content = $entry.Open()
+                try { $content.Write($entries[$name], 0, $entries[$name].Length) }
+                finally { $content.Dispose() }
+            }
+        } finally { $archive.Dispose() }
+        return ConvertFrom-IdsBaselineArchive -Bytes $stream.ToArray()
+    } finally { $stream.Dispose() }
 }
 
 function ConvertFrom-IdsBaselineArchive {

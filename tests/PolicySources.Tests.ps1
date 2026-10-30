@@ -118,6 +118,80 @@ Describe 'Explicit policy sources and portable snapshots' {
         $policy.lastModifiedDateTime | Should -BeOfType datetimeoffset
     }
 
+    It 'round-trips policy families larger than 10 MiB and a policy set larger than 64 MiB' {
+        $snapshot = New-TestPolicySource
+        $padding = @(1..320 | ForEach-Object { 'x' * 32768 })
+        $raw = $snapshot.collection.documentation.deviceConfiguration[0].policy
+        $raw | Add-Member NoteProperty syntheticPadding $padding
+        $snapshot.collection.policies[0].rawSettings = Copy-IdsAssessmentEvidence @($raw)
+        foreach ($family in 'compliance', 'intent') {
+            $policy = Copy-IdsPolicyPayload $snapshot.collection.policies[0]
+            $policy.family = $family; $policy.key = "${family}:synthetic-policy"
+            $snapshot.collection.policies += $policy
+            $snapshot.collection.documentation[$family] = @(@{ policy = $raw; settings = @($raw); template = $null })
+        }
+        $output = Export-IdsPolicySnapshot $snapshot (Join-Path $TestDrive 'large-policy-set') $script:root
+        $files = @(Get-ChildItem -LiteralPath $output.path -Recurse -File)
+        ($files | Measure-Object Length -Sum).Sum | Should -BeGreaterThan 64MB
+        @($files | Where-Object Length -GT 10MB).Count | Should -Be 3
+        @($files | Where-Object Length -GT 64MB).Count | Should -Be 0
+        $folder = Import-IdsPolicySnapshot -Path $output.path
+        $folder.collection.policies.Count | Should -Be 3
+        $folder.collection.policies[0].rawSettings[0].syntheticPadding.Count | Should -Be 320
+        $folder.collection.policies[0].rawSettings[0].syntheticPadding[319].Length | Should -Be 32768
+        $zip = Join-Path $TestDrive 'large-policy-set.zip'
+        [IO.Compression.ZipFile]::CreateFromDirectory($output.path, $zip)
+        $uploaded = Import-IdsPolicySnapshot -Archive ([IO.File]::ReadAllBytes($zip))
+        $uploaded.collection.policies.Count | Should -Be 3
+        $uploaded.collection.policies[0].rawSettings[0].syntheticPadding[319] |
+            Should -BeExactly $folder.collection.policies[0].rawSettings[0].syntheticPadding[319]
+    }
+
+    It 'accepts exactly 64 MiB of JSON and rejects the next byte' {
+        $json = [Text.Encoding]::UTF8.GetBytes('{"synthetic":true}' + (' ' * (64MB - 18)))
+        $json.Length | Should -Be 64MB
+        (Read-IdsPolicyJson $json).synthetic | Should -BeTrue
+        { Read-IdsPolicyJson ([byte[]]::new(64MB + 1)) } | Should -Throw '*64 MiB*'
+    }
+
+    It 'enforces the 64 MiB entry and 256 MiB expanded budgets without changing pack defaults' {
+        . (Join-Path $PSScriptRoot 'TestHelpers/Assessment.ps1')
+        $zip = New-IdsTestZipBytes ([ordered]@{ 'payload.json' = '{"synthetic":true}' })
+        Initialize-IdsBaselineArchiveReader
+        $entry = @([Ids.BaselineZipReader]::ReadDirectory($zip, 1))[0]
+        $length = [Text.Encoding]::UTF8.GetByteCount('{"synthetic":true}')
+        $budget = @{ read = 256MB - $length }
+        $bytes = Read-IdsBaselineArchiveEntry $zip $entry $budget -MaxFileBytes 64MB -MaxTotalBytes 256MB
+        $bytes.Length | Should -Be $length
+        $budget.read | Should -Be 256MB
+        $budget = @{ read = 256MB - $length + 1 }
+        [void](Read-IdsBaselineArchiveEntry $zip $entry $budget -MaxFileBytes 64MB -MaxTotalBytes 256MB)
+        $budget.read | Should -Be (256MB + 1)
+        $budget = @{ read = 64MB }
+        [void](Read-IdsBaselineArchiveEntry $zip $entry $budget)
+        $budget.read | Should -Be (64MB + 1)
+    }
+
+    It 'rejects an oversized <Mode> before creating any policy export output' -ForEach @(
+        @{ Mode = 'family' }, @{ Mode = 'total' }, @{ Mode = 'manifest' }
+    ) {
+        $snapshot = New-TestPolicySource
+        $largeBytes = [byte[]]::new($(if ($Mode -eq 'total') { 64MB } else { 64MB + 1 }))
+        Mock ConvertTo-IdsBuildKitJsonBytes {
+            param($Value)
+            if (($Mode -eq 'family' -and $Value.family -ceq 'deviceConfiguration') -or
+                ($Mode -eq 'total' -and $Value.family -cin @('settingsCatalog', 'deviceConfiguration', 'compliance', 'admx')) -or
+                ($Mode -eq 'manifest' -and $Value.format -ceq 'intune-docs-studio-policy-set')) {
+                return ,$largeBytes
+            }
+            return ,([Text.Encoding]::UTF8.GetBytes('{}'))
+        }
+        Mock Get-IdsBuildKitSha256 { '0' * 64 }
+        $output = Join-Path $TestDrive "rejected-$Mode"
+        { Export-IdsPolicySnapshot $snapshot $output $script:root } | Should -Throw '*64 MiB*256 MiB*'
+        [IO.Directory]::Exists($output) | Should -BeFalse
+    }
+
     It 'does not export authentication or secret policy values' {
         $snapshot = New-TestPolicySource
         $snapshot.Auth = @{ access_token = 'SYNTHETIC-CREDENTIAL-MUST-NOT-EXPORT' }
@@ -208,6 +282,39 @@ Describe 'Explicit policy sources and portable snapshots' {
         $options.Sections = @('apps')
         Start-IdsExport $state $options $snapshot
         $state.Export.error | Should -Match 'Offline'
+    }
+
+    It 'publishes an offline assessment through the worker using the same projected evidence in both reports' {
+        $snapshot = New-TestPolicySource
+        $snapshot.source.kind = 'offline'
+        $state = New-TestSourceState
+        Set-IdsActivePolicySnapshot $state $snapshot
+        $pack = @((Get-IdsAssessmentCatalog $state $script:root).packs | Where-Object platform -CEQ windows11)[0]
+        $options = @{
+            packIds = @("$($pack.id)@$($pack.version)#$($pack.sha256)")
+            context = @{ platforms = @('windows11'); osVersions = @{ windows11 = '10.0.26100' }; enrollmentModes = @{} }
+            outputPath = Join-Path $TestDrive 'worker-reports'
+        }
+        try {
+            Start-IdsAssessmentJob $state $options $script:root | Should -BeTrue
+            $deadline = [datetime]::UtcNow.AddSeconds(30)
+            while ($state.Assessment.running -and [datetime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 25 }
+            $state.Assessment.running | Should -BeFalse
+            while ($state.Assessment.job -and [datetime]::UtcNow -lt $deadline) {
+                Clear-IdsAssessmentJob $state
+                Start-Sleep -Milliseconds 25
+            }
+            $state.Assessment.error | Should -BeNullOrEmpty
+            $state.Assessment.job | Should -BeNullOrEmpty
+            $paths = $state.Assessment.reportPaths
+            [IO.File]::ReadAllText($paths.jsonPath) |
+                Should -BeExactly (ConvertTo-Json $state.Assessment.result -Depth 64)
+            [IO.File]::ReadAllText($paths.markdownPath) |
+                Should -BeExactly (ConvertTo-IdsProjectedAssessmentMarkdown $state.Assessment.result)
+            @($state.Assessment.result.controls | Where-Object controlId -CEQ IDS-WIN-SHELL-SMARTSCREEN)[0].status |
+                Should -BeExactly aligned
+            $state.Auth | Should -BeNullOrEmpty
+        } finally { Stop-IdsAssessmentJob $state }
     }
 
     It 'creates deterministic custom reference packs and detects a differing target without policy-ID matching' {

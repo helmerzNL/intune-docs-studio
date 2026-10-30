@@ -6,7 +6,7 @@ function Get-IdsPolicyFamilies {
 
 function Read-IdsPolicyJson {
     param([byte[]]$Bytes)
-    if ($Bytes.Length -gt 10MB) { throw (Get-IdsText -Key 'text.policy_json_file_exceeds_10_mib') }
+    if ($Bytes.Length -gt 64MB) { throw (Get-IdsText -Key 'policy.json_file_limit' -Arguments @{ fileMiB = 64 }) }
     $options = [Text.Json.JsonDocumentOptions]::new()
     $options.MaxDepth = 64
     $document = [Text.Json.JsonDocument]::Parse((ConvertFrom-IdsBaselineArchiveText $Bytes), $options)
@@ -23,7 +23,9 @@ function Assert-IdsPolicyEntryName {
 }
 
 function Read-IdsPolicyEntries {
-    param([string]$Path, [byte[]]$Archive)
+    param([string]$Path, [byte[]]$Archive,
+        [ValidateRange(1, 67108864)][long]$MaxFileBytes = 64MB,
+        [ValidateRange(1, 268435456)][long]$MaxTotalBytes = 256MB)
     $files = [Collections.Generic.Dictionary[string, byte[]]]::new([StringComparer]::OrdinalIgnoreCase)
     $budget = @{ read = 0L }
     if ($null -ne $Archive) {
@@ -50,9 +52,14 @@ function Read-IdsPolicyEntries {
                     throw (Get-IdsText -Key 'text.policy_zip_contains_encrypted_or_invalid_entries')
                 }
                 if (-not $name.EndsWith('.json', [StringComparison]::OrdinalIgnoreCase)) { continue }
-                if ($files.Count -ge 500 -or $entry.Length -gt 10MB) { throw (Get-IdsText -Key 'text.policy_input_exceeds_500_json_files_or_10_mib_per_file') }
-                $content = Read-IdsBaselineArchiveEntry $Archive $info $budget
-                if ($budget.read -gt 64MB -or $content.Length -gt 10MB -or $content.Length -ne $entry.Length) {
+                if ($files.Count -ge 500 -or $entry.Length -gt $MaxFileBytes) {
+                    throw (Get-IdsText -Key 'policy.input_size_limit' -Arguments @{ fileMiB = ($MaxFileBytes / 1MB); totalMiB = ($MaxTotalBytes / 1MB) })
+                }
+                $content = Read-IdsBaselineArchiveEntry $Archive $info $budget -MaxFileBytes $MaxFileBytes -MaxTotalBytes $MaxTotalBytes
+                if ($budget.read -gt $MaxTotalBytes -or $content.Length -gt $MaxFileBytes) {
+                    throw (Get-IdsText -Key 'policy.input_size_limit' -Arguments @{ fileMiB = ($MaxFileBytes / 1MB); totalMiB = ($MaxTotalBytes / 1MB) })
+                }
+                if ($content.Length -ne $entry.Length) {
                     throw (Get-IdsText -Key 'text.policy_zip_expanded_size_exceeds_limits_or_does_not_match_its_directory')
                 }
                 $files.Add($name, $content)
@@ -64,10 +71,10 @@ function Read-IdsPolicyEntries {
         if ([IO.File]::Exists($Path)) {
             if ([IO.Path]::GetExtension($Path) -ine '.zip') { throw (Get-IdsText -Key 'text.choose_a_json_policy_folder_or_zip_file') }
             if ([IO.FileInfo]::new($Path).Length -gt 32MB) { throw (Get-IdsText -Key 'text.policy_zip_exceeds_32_mib') }
-            return Read-IdsPolicyEntries -Archive ([IO.File]::ReadAllBytes($Path))
+            return Read-IdsPolicyEntries -Archive ([IO.File]::ReadAllBytes($Path)) -MaxFileBytes $MaxFileBytes -MaxTotalBytes $MaxTotalBytes
         }
         if (-not [IO.Directory]::Exists($Path)) { throw (Get-IdsText -Key 'text.policy_folder_does_not_exist_on_the_application_host') }
-        $root = [IO.Path]::GetFullPath($Path).TrimEnd('\') + '\'
+        $root = [IO.Path]::GetFullPath($Path).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
         $pending = [Collections.Generic.Queue[string]]::new()
         $pending.Enqueue($root)
         $count = 0
@@ -82,8 +89,8 @@ function Read-IdsPolicyEntries {
                 if ($item.PSIsContainer) { if ($item.Name -ne '.git') { $pending.Enqueue($item.FullName) }; continue }
                 if ($item.Extension -ine '.json') { continue }
                 $budget.read += $item.Length
-                if ($item.Length -gt 10MB -or $budget.read -gt 64MB -or $files.Count -ge 500) {
-                    throw (Get-IdsText -Key 'text.policy_input_exceeds_500_json_files_10_mib_per_file_or_64_mib_total')
+                if ($item.Length -gt $MaxFileBytes -or $budget.read -gt $MaxTotalBytes -or $files.Count -ge 500) {
+                    throw (Get-IdsText -Key 'policy.input_size_limit' -Arguments @{ fileMiB = ($MaxFileBytes / 1MB); totalMiB = ($MaxTotalBytes / 1MB) })
                 }
                 $bytes = [IO.File]::ReadAllBytes($item.FullName)
                 if ($bytes.Length -ne $item.Length) { throw (Get-IdsText -Key 'text.policy_input_changed_while_reading_retry') }
@@ -235,14 +242,16 @@ function Export-IdsPolicySnapshot {
             $payload[$field] = @($Snapshot.collection.$field | Where-Object family -CEQ $family)
         }
         $payload.documentation = @($Snapshot.collection.documentation[$family])
-        $files["families/$family.json"] = ConvertTo-IdsBuildKitJsonBytes (Copy-IdsPolicyPayload $payload)
+        $files["families/$family.json"] = ConvertTo-IdsBuildKitJsonBytes (Copy-IdsPolicyPayload $payload) -Compress
     }
     $refs = if ($Snapshot.references) { $Snapshot.references } else { @{} }
-    $files['references.json'] = ConvertTo-IdsBuildKitJsonBytes (Copy-IdsPolicyPayload $refs)
+    $files['references.json'] = ConvertTo-IdsBuildKitJsonBytes (Copy-IdsPolicyPayload $refs) -Compress
     $total = 0L
     foreach ($name in $files.Keys) {
         $total += $files[$name].Length
-        if ($files[$name].Length -gt 10MB -or $total -gt 64MB) { throw (Get-IdsText -Key 'text.policy_export_exceeds_the_re_importable_json_size_limits') }
+        if ($files[$name].Length -gt 64MB -or $total -gt 256MB) {
+            throw (Get-IdsText -Key 'policy.export_size_limit' -Arguments @{ fileMiB = 64; totalMiB = 256 })
+        }
         $hashes[$name] = Get-IdsBuildKitSha256 $files[$name]
     }
     $manifest = [ordered]@{
@@ -251,7 +260,10 @@ function Export-IdsPolicySnapshot {
         capturedAt = $Snapshot.capturedAt; exportedAt = [datetime]::UtcNow.ToString('o')
         source = Copy-IdsPolicyPayload $Snapshot.source; files = $hashes
     }
-    $files['policyset.json'] = ConvertTo-IdsBuildKitJsonBytes $manifest
+    $files['policyset.json'] = ConvertTo-IdsBuildKitJsonBytes $manifest -Compress
+    if ($files['policyset.json'].Length -gt 64MB -or $total + $files['policyset.json'].Length -gt 256MB) {
+        throw (Get-IdsText -Key 'policy.export_size_limit' -Arguments @{ fileMiB = 64; totalMiB = 256 })
+    }
     [void][IO.Directory]::CreateDirectory($root)
     Assert-IdsReportDirectoryPath $root
     $destination = Join-Path $root ("policy-set-" + [datetime]::UtcNow.ToString('yyyyMMddTHHmmss') + '-' + [guid]::NewGuid().ToString('N'))

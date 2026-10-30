@@ -1,6 +1,6 @@
 BeforeAll {
     $repo = Split-Path -Parent $PSScriptRoot
-    foreach ($module in 'Http', 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'BaselineArchive', 'AssessmentRules', 'AssessmentReports', 'Assessment', 'AssessmentApi') {
+    foreach ($module in 'Http', 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'BaselineArchive', 'AssessmentRules', 'AssessmentReports', 'Assessment', 'AssessmentApi', 'PolicySnapshots') {
         $file = Join-Path $repo "lib\$module.ps1"
         if (Test-Path $file) { . $file }
     }
@@ -53,6 +53,26 @@ Describe 'Assessment local route contract' {
             Config = @{ Port = 7654; ImportedPackRoot = (Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))); OutputPath = "$TestDrive\export" }
         })
         Initialize-IdsAssessment $state
+    }
+    It 'imports extracted build-kit folders through the shared ZIP converter and reports skipped files' {
+        $folder = Join-Path $TestDrive 'licensed-kit'
+        [void][IO.Directory]::CreateDirectory((Join-Path $folder 'nested'))
+        $policy = New-IdsTestBuildKitPolicy -Instances @(
+            (New-IdsTestSettingInstance -Id 'syn.folder' -Value @{ value = 3 })
+        )
+        [IO.File]::WriteAllText((Join-Path $folder 'nested/policy.json'), (ConvertTo-Json $policy -Depth 64))
+        [IO.File]::WriteAllText((Join-Path $folder 'unrelated.json'), '{"unrelated":true}')
+        $request = New-ApiRequest (ConvertTo-Json @{ path = $folder; kind = 'packs' })
+        $response = Invoke-IdsAssessmentRoute POST /api/assessment/packs $request $state $repo
+        $response.status | Should -Be 201
+        $response.body.packs.Count | Should -Be 1
+        $response.body.packs[0].framework | Should -BeExactly CIS
+        $response.body.skippedCount | Should -Be 1
+        $response.body.skipped[0].entry | Should -BeExactly 'unrelated.json'
+        $again = Invoke-IdsAssessmentRoute POST /api/assessment/packs `
+            (New-ApiRequest (ConvertTo-Json @{ path = $folder; kind = 'packs' })) $state $repo
+        $again.status | Should -Be 201
+        $again.body.added | Should -Be 0
     }
     It 'requires sign-in for progress, results and starts but not catalog metadata' {
         foreach ($path in '/api/assessment', '/api/assessment/results') {

@@ -188,7 +188,8 @@ below the stepper.
    and its Settings Catalog policies become local rule packs. The card lists
    packs, skipped entries with reasons and ignored-file counts. Imported packs
    are never selected automatically. A single JSON file must be a schema-1 rule
-   pack; Settings Catalog JSON is converted only from a build-kit ZIP. Converted
+   pack; Settings Catalog JSON is converted from a build-kit ZIP or an extracted
+   build-kit folder, including its subfolders. Converted
    packs are labeled CIS without verifying the source, so import only your licensed
    download. The build-kit layout is unverified; review the defensive converter's
    summary. PDFs, Excel, XCCDF/OVAL, Group Policy and OMA-URI content are not
