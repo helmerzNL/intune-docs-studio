@@ -196,6 +196,12 @@ with a broad token.
 The job validates one merged same-repository beta-to-main promotion, a two-parent
 merge commit, the successful `quality` and `only-from-beta` checks on its beta
 parent, the expected `main` head, selected labels, and complete reviewed notes.
+Pushing the child version commit with a separate automation token can trigger
+another `push` run. Read-only planning recognizes that push only after validating
+the original promotion/CI/notes, exact parent, `Release-Promotion` trailer,
+VERSION-only delta, planned version and current local/remote main heads. It then
+exits with no release: publication still belongs to the original promotion run.
+This does not skip CI or allow an arbitrary single-parent commit onto main.
 It creates one child version commit with a `Release-Promotion: <merge-sha>`
 trailer, pushes without force, then tests and packages that exact commit in
 stable mode. The ZIP and SHA-256 manifest are stored as an Actions artifact
@@ -265,6 +271,29 @@ target, or mismatched assets is a blocker requiring manual investigation.
 
 Recovery dispatch is not approval for a different promotion. Never reuse these
 inputs for another merge or bypass a failed verification.
+
+### Failed validation after an immutable artifact upload
+
+An uploaded Actions artifact is not a published GitHub Release. Release notes
+can already exist in `docs/releases/` while there is no public Release page,
+ZIP download or published release text. Always distinguish those states.
+
+If tests fail after the version push, retain the exact version commit and
+uploaded ZIP/manifest. A rerun cannot fix tests stored in that commit.
+Do not edit the commit, replace the artifact, disable assertions or publish
+manually to make the failed validation look successful. Diagnose whether the
+failure is environmental or a defect in the versioned tests/application.
+Source-based package tests must use an explicit synthetic fixture version;
+runtime package metadata must agree with the fixture's VERSION, not assume the
+bootstrap version forever.
+
+For a versioned defect, submit the repair through `beta` and stop publication
+until the owner approves a reconciliation/superseding-release path. A new
+promotion may not silently discard the already-pushed pipeline version:
+main/beta VERSION must agree before planning the next increment. The existing
+recovery path still validates the original exact version commit and cannot
+incorporate a later repair. Keep its artifacts and record the original promotion,
+version commit and run IDs; do not manufacture a tag or rewrite history.
 
 ## Checks and operator update
 

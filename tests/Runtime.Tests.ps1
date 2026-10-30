@@ -145,11 +145,17 @@ Describe 'PowerShell runtime requirements' {
             }
         }
 
-        It 'serves stable identity from package metadata' {
-            $json = (@{ version = '0.1.0'; channel = 'stable'; commit = ('c' * 40) } | ConvertTo-Json)
-            Invoke-LocalServer -Name 'stable' -Metadata $json -Check {
+        It 'serves stable identity from package metadata for version <FixtureVersion>' -ForEach @(
+            @{ FixtureVersion = '0.1.0' }; @{ FixtureVersion = '7.8.9' }
+        ) {
+            $json = (@{ version = $FixtureVersion; channel = 'stable'; commit = ('c' * 40) } | ConvertTo-Json)
+            Invoke-LocalServer -Name "stable-$FixtureVersion" -Metadata $json -Configure {
+                param($folder)
+                Set-Content -LiteralPath (Join-Path $folder 'VERSION') -Value $FixtureVersion -NoNewline
+            } -Check {
                 param($base)
                 $version = Invoke-RestMethod "$base/api/version"
+                $version.version | Should -Be $FixtureVersion
                 $version.channel | Should -Be 'stable'
                 $version.commit | Should -Be ('c' * 40)
                 (Invoke-RestMethod "$base/api/state").build.channel | Should -Be 'stable'

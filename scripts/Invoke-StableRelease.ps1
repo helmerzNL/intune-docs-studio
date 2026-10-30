@@ -629,6 +629,39 @@ function Invoke-IdsBackMerge {
     }
 }
 
+function Get-IdsVersionPushPlan {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$Before,
+        [Parameter(Mandatory)][string]$After,
+        [Parameter(Mandatory)][string]$Repository
+    )
+
+    foreach ($sha in @($Before, $After)) {
+        if ($sha -cnotmatch '^[0-9a-f]{40}$') { throw 'Push boundaries must be full lowercase 40-character commit SHAs.' }
+    }
+    $parents = (Invoke-IdsGit -Root $Root -Arguments @('rev-list', '--parents', '-n', '1', $After)).Trim() -split '\s+'
+    if ($parents.Count -ne 2) { return $null }
+    if ($parents[1] -cne $Before) { throw 'Version push Before must be the exact parent promotion.' }
+
+    $promotionParents = Get-IdsPromotionParents -Root $Root -PromotionSha $Before
+    $validated = Assert-IdsPromotionAndPlan -Root $Root -Before $promotionParents.before `
+        -PromotionSha $Before -Repository $Repository
+    if (-not $validated.plan.required) { throw 'A version push requires an original promotion with a stable release plan.' }
+    Assert-IdsVersionCommit -Root $Root -Before $promotionParents.before -PromotionSha $Before -Commit $After -Plan $validated.plan
+    $localHead = (Invoke-IdsGit -Root $Root -Arguments @('rev-parse', 'HEAD')).Trim()
+    $remoteHead = Get-IdsReadOnlyMainHead -Repository $Repository
+    if ($localHead -cne $After -or $remoteHead -cne $After) {
+        throw 'Version push is stale: local and remote main must equal the verified version commit.'
+    }
+    return @{
+        required = $false
+        version = $validated.plan.version
+        tag = $validated.plan.tag
+        promotionSha = $Before
+    }
+}
+
 function Invoke-IdsStableRelease {
     [CmdletBinding()]
     param(
@@ -662,6 +695,19 @@ function Invoke-IdsStableRelease {
 
     $rootPath = [IO.Path]::GetFullPath($Root)
     if (-not $Repository) { $Repository = Get-IdsRepositoryName -Root $rootPath }
+    if ($PlanOnly) {
+        $versionPushPlan = Get-IdsVersionPushPlan -Root $rootPath -Before $Before -After $PromotionSha -Repository $Repository
+        if ($null -ne $versionPushPlan) {
+            Write-IdsWorkflowOutput -Values @{
+                required = 'false'
+                version = $versionPushPlan.version
+                tag = $versionPushPlan.tag
+                promotion_sha = $versionPushPlan.promotionSha
+            }
+            Write-Host "Verified pipeline version push $PromotionSha; publication remains owned by promotion $Before. No second release started."
+            return $versionPushPlan
+        }
+    }
     $validated = Assert-IdsPromotionAndPlan -Root $rootPath -Before $Before `
         -PromotionSha $PromotionSha -Repository $Repository
     $plan = $validated.plan
