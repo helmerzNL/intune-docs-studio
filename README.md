@@ -14,6 +14,8 @@ From your tenant to a Git-ready Markdown repository — without a new app regist
 [Explore the output](#output-structure) &nbsp; · &nbsp;
 [Setup guide](QUICKSTART.md)
 
+*Nederlandse versie: [README.nl.md](https://github.com/helmerzNL/intune-docs-studio/blob/beta/README.nl.md)*
+
 </div>
 
 ---
@@ -82,9 +84,10 @@ identity checks, and output backup/restore, see [the operator guide](docs/operat
 ## Languages
 
 The header language selector is available before and after sign-in. Bundled SVG
-flags and native language names identify English, Dutch, French, German,
-Swedish, Spanish, Norwegian Bokmål, European Portuguese, Italian and Danish.
-On the first visit the app matches the browser language, falling back to English;
+flags and native language names identify Danish, German, English, Spanish, French,
+Italian, Dutch, Norwegian Bokmål, European Portuguese and Swedish, listed
+alphabetically by native name. On the first visit the app matches the browser
+language when it is supported and otherwise defaults to English;
 a saved choice in this browser takes precedence. Selection works with the keyboard
 and updates the current screen in place without clearing the policy source,
 sign-in, wizard entries, import queue or active job.
