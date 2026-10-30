@@ -484,8 +484,9 @@ function Assert-IdsPublishedRelease {
     if ($release.tag_name -cne $Tag -or $release.draft -or $release.prerelease) {
         throw "Existing '$Tag' is not the expected published stable release."
     }
-    $expectedNotes = [IO.File]::ReadAllText($NotesPath).Trim()
-    if ([string]$release.body -cne $expectedNotes) {
+    $expectedNotes = ([IO.File]::ReadAllText($NotesPath) -replace "`r`n", "`n").Trim()
+    $publishedNotes = ([string]$release.body -replace "`r`n", "`n").Trim()
+    if ($publishedNotes -cne $expectedNotes) {
         throw "Existing '$Tag' release notes do not match the reviewed promotion notes."
     }
     $assets = @{}
