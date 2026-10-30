@@ -680,7 +680,7 @@
     "text.load_policies_or_import_a_policy_set_before_documenting_or_assessing": "Laden oder importieren Sie zuerst Richtlinien.",
     "text.verifying_tenant": "Mandanten überprüfen",
     "text.loading_policies": "Richtlinien laden",
-    "text.policy_authentication_failed": "Authentifizierung fehlgeschlagen.",
+    "text.policy_authentication_failed": "Ihre Microsoft Graph-Anmeldung ist nicht mehr gültig. Melden Sie sich erneut an.",
     "text.no_policy_source_could_be_loaded": "Keine Richtlinienquelle konnte geladen werden.",
     "text.loaded_with_limitations": "Mit Einschränkungen geladen",
     "text.policies_loaded": "Richtlinien geladen",

@@ -680,7 +680,7 @@
     "text.load_policies_or_import_a_policy_set_before_documenting_or_assessing": "Läs in eller importera principer först.",
     "text.verifying_tenant": "Verifierar klientorganisation",
     "text.loading_policies": "Läser in principer",
-    "text.policy_authentication_failed": "Autentiseringen misslyckades.",
+    "text.policy_authentication_failed": "Din Microsoft Graph-inloggning är inte längre giltig. Logga in igen.",
     "text.no_policy_source_could_be_loaded": "Ingen principkälla kunde läsas in.",
     "text.loaded_with_limitations": "Inläst med begränsningar",
     "text.policies_loaded": "Principer inlästa",

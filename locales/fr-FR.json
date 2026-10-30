@@ -680,7 +680,7 @@
     "text.load_policies_or_import_a_policy_set_before_documenting_or_assessing": "Chargez ou importez d’abord des stratégies.",
     "text.verifying_tenant": "Vérification du tenant",
     "text.loading_policies": "Chargement des stratégies",
-    "text.policy_authentication_failed": "Échec de l’authentification.",
+    "text.policy_authentication_failed": "Votre connexion Microsoft Graph n’est plus valide. Reconnectez-vous.",
     "text.no_policy_source_could_be_loaded": "Aucune source de stratégies n’a pu être chargée.",
     "text.loaded_with_limitations": "Chargé avec des limites",
     "text.policies_loaded": "Stratégies chargées",

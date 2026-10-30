@@ -680,7 +680,7 @@
     "text.load_policies_or_import_a_policy_set_before_documenting_or_assessing": "Last inn eller importer policyer først.",
     "text.verifying_tenant": "Kontrollerer leier",
     "text.loading_policies": "Laster policyer",
-    "text.policy_authentication_failed": "Autentisering mislyktes.",
+    "text.policy_authentication_failed": "Microsoft Graph-påloggingen er ikke lenger gyldig. Logg på igjen.",
     "text.no_policy_source_could_be_loaded": "Ingen policykilde kunne lastes inn.",
     "text.loaded_with_limitations": "Lastet med begrensninger",
     "text.policies_loaded": "Policyer lastet",

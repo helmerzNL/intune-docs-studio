@@ -680,7 +680,7 @@
     "text.load_policies_or_import_a_policy_set_before_documenting_or_assessing": "Indlæs eller importér politikker først.",
     "text.verifying_tenant": "Kontrollerer lejer",
     "text.loading_policies": "Indlæser politikker",
-    "text.policy_authentication_failed": "Godkendelsen mislykkedes.",
+    "text.policy_authentication_failed": "Dit Microsoft Graph-login er ikke længere gyldigt. Log ind igen.",
     "text.no_policy_source_could_be_loaded": "Ingen politikkilde kunne indlæses.",
     "text.loaded_with_limitations": "Indlæst med begrænsninger",
     "text.policies_loaded": "Politikker indlæst",
