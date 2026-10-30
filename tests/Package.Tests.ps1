@@ -14,6 +14,7 @@ BeforeAll {
         [void](New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force)
         Copy-Item -LiteralPath $file.FullName -Destination $destination -Force
     }
+    Set-Content -LiteralPath (Join-Path $script:PackageFixture 'VERSION') -Value '7.8.9' -NoNewline
 
     $fixtureArtifacts = @{
         '.env' = 'LOCAL_SECRET=synthetic'
@@ -122,7 +123,8 @@ Describe 'Build-Package.ps1 product package contract' {
         $metadataPath = Join-Path $root 'build-info.json'
         $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
         $metadata.channel | Should -Be 'beta'
-        $metadata.version | Should -Be '0.1.0'
+        $metadata.version | Should -Be '7.8.9'
+        (Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw).Trim() | Should -Be '7.8.9'
         $metadata.commit | Should -Be ('a' * 40)
         @($metadata.PSObject.Properties.Name | Sort-Object) |
             Should -Be @('channel', 'commit', 'version')
@@ -399,7 +401,8 @@ Describe 'Build-Package.ps1 product package contract' {
         $metadata = Get-Content -LiteralPath (Join-Path $root 'build-info.json') -Raw | ConvertFrom-Json
         $metadata.channel | Should -Be 'stable'
         $metadata.commit | Should -Be $sha
-        $metadata.version | Should -Be '0.1.0'
+        $metadata.version | Should -Be '7.8.9'
+        (Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw).Trim() | Should -Be '7.8.9'
     }
 
     It 'defaults a local package to beta/development identity' {

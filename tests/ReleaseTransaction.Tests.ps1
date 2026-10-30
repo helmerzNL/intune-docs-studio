@@ -548,6 +548,55 @@ Describe 'Stable release transaction safety' {
         @($script:GitHubCalls | Where-Object { $_ -match '/git/ref/tags|/releases/tags|release create' }) | Should -BeNullOrEmpty
     }
 
+    It 'does not start a second release for the verified pipeline version push' {
+        Initialize-PreparedReleaseFixture
+        $script:ReadHead = $script:Prepared.commit
+        Remove-Item Env:IDS_STABLE_RELEASE_TOKEN
+        $env:GH_TOKEN = 'synthetic-read-only-token'
+        $plan = Invoke-IdsStableRelease -Root $script:Fixture.Root -Before $script:Fixture.Promotion `
+            -PromotionSha $script:Prepared.commit -Repository 'fixture/repository' -PlanOnly
+
+        $plan.required | Should -BeFalse
+        $plan.version | Should -Be '0.2.0'
+        $plan.promotionSha | Should -Be $script:Fixture.Promotion
+        (& git -C $script:Fixture.Root rev-parse HEAD).Trim() | Should -Be $script:Prepared.commit
+        (Get-IdsRemoteBranchHead -Root $script:Fixture.Root -Branch main) | Should -Be $script:Prepared.commit
+        @($script:GitHubCalls | Where-Object { $_ -contains 'create' }) | Should -BeNullOrEmpty
+    }
+
+    It 'rejects unverified version-push no-ops: <Case>' -ForEach @(
+        @{ Case = 'missing trailer' }
+        @{ Case = 'other changed files' }
+        @{ Case = 'wrong version' }
+        @{ Case = 'moved remote main' }
+        @{ Case = 'wrong before boundary' }
+    ) {
+        Initialize-PreparedReleaseFixture
+        $commit = $script:Prepared.commit
+        if ($Case -in @('missing trailer', 'other changed files', 'wrong version')) {
+            # Replace only a synthetic fixture commit, never repository history.
+            Invoke-ReleaseFixtureGit -Root $script:Fixture.Root -Arguments @('switch', '-c', 'invalid-version', $script:Fixture.Promotion) | Out-Null
+            Set-Content -LiteralPath (Join-Path $script:Fixture.Root 'VERSION') -Value $(if ($Case -eq 'wrong version') { '0.3.0' } else { '0.2.0' })
+            if ($Case -eq 'other changed files') {
+                Set-Content -LiteralPath (Join-Path $script:Fixture.Root 'web\app.js') -Value 'unexpected code'
+            }
+            Invoke-ReleaseFixtureGit -Root $script:Fixture.Root -Arguments @('add', '--all') | Out-Null
+            $message = if ($Case -eq 'missing trailer') { 'unverified version' } else { "chore(release): 0.2.0`n`nRelease-Promotion: $($script:Fixture.Promotion)" }
+            Invoke-ReleaseFixtureGit -Root $script:Fixture.Root -Arguments @('commit', '-m', $message) | Out-Null
+            $commit = Invoke-ReleaseFixtureGit -Root $script:Fixture.Root -Arguments @('rev-parse', 'HEAD')
+            Invoke-ReleaseFixtureGit -Root $script:Fixture.Root -Arguments @('branch', '-f', 'main', $commit) | Out-Null
+            Invoke-ReleaseFixtureGit -Root $script:Fixture.Root -Arguments @('switch', 'main') | Out-Null
+        }
+        $script:ReadHead = if ($Case -eq 'moved remote main') { 'b' * 40 } else { $commit }
+        $before = if ($Case -eq 'wrong before boundary') { $script:Fixture.Before } else { $script:Fixture.Promotion }
+        {
+            Invoke-IdsStableRelease -Root $script:Fixture.Root -Before $before `
+                -PromotionSha $commit -Repository 'fixture/repository' -PlanOnly
+        } | Should -Throw
+        (& git -C $script:Fixture.Root rev-parse HEAD).Trim() | Should -Be $commit
+        (Get-IdsRemoteBranchHead -Root $script:Fixture.Root -Branch main) | Should -Be $script:Prepared.commit
+    }
+
     It 'fails closed when the narrow stable automation credential is absent' {
         $previousToken = $env:IDS_STABLE_RELEASE_TOKEN
         try {
