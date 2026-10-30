@@ -1,0 +1,80 @@
+name: Feature request
+description: Suggest a new capability, export area or improvement
+title: "[Feature]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Intune Docs Studio is read-only and uses delegated permissions only. Requests that
+        would write to a tenant, add an app registration or store credentials are out of
+        scope. Do not include tenant data in this request.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation you ran into, rather than jumping straight to a solution.
+      placeholder: The export has no section for a configuration area that customers ask about.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How do you think this should work?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any other ways to solve this? How do you work around it today?
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part would change?
+      options:
+        - Export / Markdown generation
+        - Sign-in
+        - Git publishing
+        - Dashboard UI
+        - Packaging or update
+        - Repository tooling or CI
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Does it touch customer data or authentication?
+      description: Anything that reads more Graph data, changes consent or token handling, or changes what is written to the output needs extra care and tests.
+      options:
+        - No
+        - Reads additional Microsoft Graph data or permissions
+        - Changes authentication, consent or token handling
+        - Changes what is written to the generated output
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links, examples from other tools, anything that helps. Use synthetic examples only.
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched for existing requests for this
+          required: true
+        - label: I removed tenant data and tokens from this request
+          required: true
