@@ -1,0 +1,50 @@
+name: Maintenance / tech debt
+description: Refactor, cleanup, test, build or tooling improvement
+title: "[Chore]: "
+labels: ["chore"]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of work is this?
+      options:
+        - Refactor
+        - Build, packaging or CI/CD
+        - Test coverage
+        - Cleanup / dead file removal
+        - Tooling or developer experience
+        - Migration or deprecation
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What needs to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Why now?
+      description: What risk or burden does this remove?
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Areas affected
+      description: Which folders, scripts or workflows does this touch? Feature pull requests must not change VERSION.
+
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Estimated risk
+      options:
+        - Low — no behaviour change expected
+        - Medium — touches shared runtime, packaging or policy checks
+        - High — touches authentication, export output, Git publishing or the release pipeline
+    validations:
+      required: true

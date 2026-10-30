@@ -1,0 +1,35 @@
+name: Documentation
+description: Something in the documentation is wrong, missing or contradicts another document
+title: "[Docs]: "
+labels: ["documentation"]
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Where is it?
+      description: Link to the page or file.
+      placeholder: "docs/operations.md"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What's the problem?
+      options:
+        - Information is incorrect
+        - Information is missing
+        - Unclear or confusing
+        - Out of date
+        - Contradicts another document
+        - Typo or grammar
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What is wrong, and what should it say instead? If two documents disagree, name both. AGENTS.md is the canonical repository policy.
+    validations:
+      required: true

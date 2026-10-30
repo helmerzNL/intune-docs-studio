@@ -1,6 +1,6 @@
 ## Summary
 
-<!-- What changed and why? -->
+<!-- What changed and why, in two or three sentences. Link the issue: "Closes #123". -->
 
 ## Baseline and standards alignment
 
@@ -34,3 +34,10 @@ Commands and results:
 - [ ] No `VERSION` change (feature pull requests must not edit it)
 - [ ] Stable-promotion-only change reviewed and authorized by the owner
 - User-facing release-note impact:
+
+## Checklist
+
+- [ ] Branch started from and targets `beta` (only a `beta` promotion targets `main`).
+- [ ] No tenant data, tokens, credentials, browser profiles or `.env` files are committed; fixtures are synthetic.
+- [ ] Documentation (`README.md`, `docs/`) is updated when behavior or operator procedures change.
+- [ ] Change is consistent with `AGENTS.md`.
