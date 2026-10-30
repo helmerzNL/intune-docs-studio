@@ -76,6 +76,18 @@ by default, or the selected minor/major increment). Policy and workflow checks
 are implemented locally; GitHub enforcement is not active until the required
 remote protection and credentials are configured and read back.
 
+**Promoting `beta` to `main`** follows App-Guidance's
+[`shared/guidelines/promotion-runbook.md`](https://github.com/Flux76HQ/App-Guidance/blob/main/shared/guidelines/promotion-runbook.md);
+the steps as applied here are in `docs/promotion-runbook.md`. Per-app choices:
+the release notes are `docs/releases/vX.Y.Z.md`; the owner merges the
+promotion; the full test command is the set of checks listed in that runbook
+under *Checks and operator update*.
+
+**Every release has release notes.** They are written and reviewed before the
+promotion merges, in a normal pull request into `beta` that is merged first, and
+they cover everything since the previous stable version, not only the last
+change. The stable pipeline refuses to release without them.
+
 Stable promotions and releases happen only when the owner requests them.
 Never create or publish a stable release on your own, overwrite an existing
 version tag or release, or treat a beta build as a stable release. Review
