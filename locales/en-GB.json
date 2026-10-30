@@ -680,7 +680,7 @@
     "text.load_policies_or_import_a_policy_set_before_documenting_or_assessing": "Load policies or import a policy set before documenting or assessing.",
     "text.verifying_tenant": "Verifying tenant",
     "text.loading_policies": "Loading policies",
-    "text.policy_authentication_failed": "Policy authentication failed.",
+    "text.policy_authentication_failed": "Your Microsoft Graph sign-in is no longer valid. Please sign in again.",
     "text.no_policy_source_could_be_loaded": "No policy source could be loaded.",
     "text.loaded_with_limitations": "Loaded with limitations",
     "text.policies_loaded": "Policies loaded",

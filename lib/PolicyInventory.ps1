@@ -129,6 +129,7 @@ function Start-IdsPolicyLoad {
     $worker = {
         param($Root, $State, $Inventory, $Auth, $Locale)
         $ErrorActionPreference = 'Stop'
+        $requiresSignIn = $false
         try {
             . (Join-Path $Root 'lib\Localization.ps1')
             Set-IdsLocale -Locale $Locale
@@ -148,6 +149,7 @@ function Start-IdsPolicyLoad {
             $collection = Get-IdsAssessmentCollection -AllPolicies -IncludeDocumentation -ProgressCallback $progress
             $issues = @($collection.issues) + @($collection.documentationIssues)
             if (@($issues | Where-Object { $_.statusCode -eq 401 -or $_.authenticationFailure }).Count) {
+                $requiresSignIn = $true
                 throw (Get-IdsText -Key 'text.policy_authentication_failed')
             }
             $failedFamilies = @($collection.issues | Where-Object stage -EQ 'inventory' | Select-Object -ExpandProperty family -Unique)
@@ -165,7 +167,11 @@ function Start-IdsPolicyLoad {
             }
         } catch {
             if (Test-IdsPolicyOwner $State $Inventory) {
-                $Inventory.error = (Get-IdsText -Key 'text.could_not_load_policies_during_arg0_retry_or_sign_out_and_check_your_intune_read_permissions' -Arguments @{ arg0 = ($Inventory.phase) })
+                if ($requiresSignIn -or (Test-IdsGraphAuthenticationFailure $_.Exception)) {
+                    $Inventory.error = (Get-IdsText -Key 'text.policy_authentication_failed')
+                } else {
+                    $Inventory.error = (Get-IdsText -Key 'text.could_not_load_policies_during_arg0_retry_or_sign_out_and_check_your_intune_read_permissions' -Arguments @{ arg0 = ($Inventory.phase) })
+                }
                 $Inventory.snapshot = $null
                 $Inventory.status = 'failed'
                 $Inventory.phase = (Get-IdsText -Key 'text.loading_failed')

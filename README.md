@@ -322,8 +322,9 @@ Practical notes, learned the hard way:
   Azure AD's *Stay signed in?* prompt. Use **Forget saved session** on the sign-in page to switch accounts.
 - **The token cannot be renewed** — the refresh token stays inside the portal. Its lifetime is
   set by tenant policy and varies widely (an hour in some tenants, close to a day in others);
-  the dashboard shows the actual expiry. When it lapses, sign in again. For anything recurring,
-  prefer a method above that can refresh.
+  the dashboard shows the actual expiry. Loading live policies checks the Graph sign-in; if the
+  token is no longer valid, sign in again. For anything recurring, prefer a method above that
+  can refresh.
 - This depends on the admin center's current behaviour and is not a supported Microsoft
   integration pattern. It is excellent for an assessment; it is not a pipeline foundation.
 

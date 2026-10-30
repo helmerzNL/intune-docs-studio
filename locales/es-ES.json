@@ -680,7 +680,7 @@
     "text.load_policies_or_import_a_policy_set_before_documenting_or_assessing": "Cargue o importe directivas primero.",
     "text.verifying_tenant": "Verificando inquilino",
     "text.loading_policies": "Cargando directivas",
-    "text.policy_authentication_failed": "Error de autenticación.",
+    "text.policy_authentication_failed": "La sesión de Microsoft Graph ya no es válida. Inicie sesión de nuevo.",
     "text.no_policy_source_could_be_loaded": "No se pudo cargar ningún origen de directivas.",
     "text.loaded_with_limitations": "Cargado con limitaciones",
     "text.policies_loaded": "Directivas cargadas",

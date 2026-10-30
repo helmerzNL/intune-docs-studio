@@ -680,7 +680,7 @@
     "text.load_policies_or_import_a_policy_set_before_documenting_or_assessing": "Carica o importa prima i criteri.",
     "text.verifying_tenant": "Verifica del tenant",
     "text.loading_policies": "Caricamento dei criteri",
-    "text.policy_authentication_failed": "Autenticazione non riuscita.",
+    "text.policy_authentication_failed": "L'accesso a Microsoft Graph non è più valido. Accedi di nuovo.",
     "text.no_policy_source_could_be_loaded": "Impossibile caricare un’origine dei criteri.",
     "text.loaded_with_limitations": "Caricato con limitazioni",
     "text.policies_loaded": "Criteri caricati",

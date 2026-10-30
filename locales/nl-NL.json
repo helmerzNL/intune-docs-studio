@@ -680,7 +680,7 @@
     "text.load_policies_or_import_a_policy_set_before_documenting_or_assessing": "Laad of importeer eerst beleid.",
     "text.verifying_tenant": "Tenant controleren",
     "text.loading_policies": "Beleid laden",
-    "text.policy_authentication_failed": "Verificatie mislukt.",
+    "text.policy_authentication_failed": "Uw Microsoft Graph-aanmelding is niet meer geldig. Meld u opnieuw aan.",
     "text.no_policy_source_could_be_loaded": "Er kon geen beleidsbron worden geladen.",
     "text.loaded_with_limitations": "Geladen met beperkingen",
     "text.policies_loaded": "Beleid geladen",

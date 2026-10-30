@@ -29,6 +29,11 @@ BeforeAll {
         param($Uri, $Body)
         if ($Uri -match '/organization') {
             if ('__MODE__' -eq 'slow') { Start-Sleep -Seconds 2 }
+            if ('__MODE__' -eq 'expired') {
+                $error = [Exception]::new('SYNTHETIC-PRIVATE expired token')
+                $error | Add-Member NoteProperty StatusCode 401
+                throw $error
+            }
             if ('__MODE__' -eq 'metadataDenied') {
                 $error = [Exception]::new('SYNTHETIC-PRIVATE metadata denied')
                 $error | Add-Member NoteProperty StatusCode 403
@@ -101,6 +106,17 @@ BeforeAll {
                 Sync-IdsPolicyLoad $fixture.state $fixture.root
                 $fixture.state.Policies.job | Should -BeNullOrEmpty
                 [object]::ReferenceEquals($snapshot, (Get-IdsLoadedPolicies $fixture.state)) | Should -BeTrue
+            } finally { Stop-IdsPolicyLoad $fixture.state }
+        }
+
+        It 'asks the user to sign in again when the live policy token has expired' {
+            $fixture = New-PolicyWorkerFixture 'expired'
+            try {
+                Start-IdsPolicyLoad $fixture.state $fixture.root | Should -BeTrue
+                Wait-PolicyWorker $fixture.state
+                $fixture.state.Policies.status | Should -Be 'failed'
+                $fixture.state.Policies.error | Should -Match 'Sign in again'
+                $fixture.state.Policies.error | Should -Not -Match 'SYNTHETIC-PRIVATE'
             } finally { Stop-IdsPolicyLoad $fixture.state }
         }
 
