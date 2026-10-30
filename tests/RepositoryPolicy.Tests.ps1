@@ -1,5 +1,6 @@
 BeforeAll {
-    $script:PolicyFixtureBase = Join-Path $PSScriptRoot ('.repository-policy-fixtures-' + [Guid]::NewGuid().ToString('N'))
+    # Keep nested release-worktree paths out of synthetic Git object paths on Windows.
+    $script:PolicyFixtureBase = Join-Path $TestDrive 'policy'
     [void](New-Item -ItemType Directory -Path $script:PolicyFixtureBase -Force)
 
     $policyPath = Join-Path $PSScriptRoot '..\scripts\RepositoryPolicy.ps1'
