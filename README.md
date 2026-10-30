@@ -14,7 +14,8 @@ From your tenant to a Git-ready Markdown repository — without a new app regist
 [Explore the output](#output-structure) &nbsp; · &nbsp;
 [Setup guide](QUICKSTART.md)
 
-*Nederlandse versie: [README.nl.md](https://github.com/helmerzNL/intune-docs-studio/blob/beta/README.nl.md)*
+*Nederlandse versie: [README.nl.md](README.nl.md).
+The setup guide [QUICKSTART.md](QUICKSTART.md) and the documents in `docs/` are available in English only.*
 
 </div>
 
@@ -35,6 +36,8 @@ choose. Git publishing is optional; generated tenant documentation should be tre
 > Beta builds are available as ZIP artifacts from successful
 > [Beta workflow runs](https://github.com/helmerzNL/intune-docs-studio/actions/workflows/beta.yml).
 > GitHub sign-in and access to this private repository are required.
+> Stable packages built through the authorized `beta`-to-`main` promotion and release process
+> use the `stable` channel; the *beta* marker then disappears from the title bar and app name.
 
 ## Quick start
 
@@ -56,6 +59,8 @@ needed for commit/push functionality.
 5. **Document policies** — choose your output folder and which areas to document, click
    **Generate documentation**, watch the live progress, inspect the Markdown, and optionally
    commit and push under **Git publishing**.
+
+![The Intune Docs Studio sign-in page in Dutch](docs/images/aanmelden.png)
 
 Already have the source or an extracted application package? Open PowerShell 7 in that
 folder and run:
@@ -81,6 +86,17 @@ stopped, so either answer is fine.
 For a guided walkthrough, see [QUICKSTART.md](QUICKSTART.md). For safe updates, runtime
 identity checks, and output backup/restore, see [the operator guide](docs/operations.md).
 
+### The Home page
+
+After sign-in and policy loading, Home shows the active tenant, collection time and policy
+counts per family. Both workflows — documentation and assessment — use the same snapshot.
+
+![The Home page with a policy snapshot, shown in Dutch](docs/images/startpagina.png)
+
+> The screenshots in both READMEs show the real web interface in Dutch with **synthetic
+> demonstration data**. They contain no real tenant, account or policy.
+> The English interface offers the same workflows.
+
 ## Languages
 
 The header language selector is available before and after sign-in. Bundled SVG
@@ -91,6 +107,8 @@ language when it is supported and otherwise defaults to English;
 a saved choice in this browser takes precedence. Selection works with the keyboard
 and updates the current screen in place without clearing the policy source,
 sign-in, wizard entries, import queue or active job.
+
+![The language selector with languages listed alphabetically](docs/images/taalkiezer.png)
 
 The selected language also applies to newly started documentation and Assessment
 jobs. Each job captures its language at admission: switching the interface later
@@ -115,6 +133,8 @@ for settings, output and troubleshooting boundaries.
 After policy loading or import, the **Assess policies** path compares read-only policy evidence with
 versioned Microsoft rules and locally imported customer packs. It does not change
 Intune, determine effective targeting, certify a benchmark, or measure device compliance.
+
+![Step 3 of the assessment wizard: reference baselines, shown in Dutch](docs/images/beoordelen.png)
 
 The dashboard loads Settings Catalog, configuration profiles, compliance policies,
 administrative templates, and endpoint-security intents into a tenant-scoped,
@@ -417,6 +437,10 @@ A source checkout with no `build-info.json` identifies itself as **beta / develo
 `build-info.json` containing exactly `version`, `channel` and `commit`. Its ZIP contents and
 timestamps are normalized so repeated builds from unchanged inputs are byte-identical.
 
+The title bar and app name show **(beta)** while the package channel is `beta`.
+A `stable`-channel package built through the authorized promotion and release process
+does not show that marker. The package's channel, not the checkout's branch name, determines it.
+
 For a local development package, the defaults are beta/development:
 
 ```powershell
@@ -479,6 +503,8 @@ collapsed `<details>` block.
 Where an assignment uses an assignment filter, the filter's **rule is written out beneath the
 assignment tables**, so you can see which devices are actually targeted without opening
 another page. Filter pages list every assignment that uses them in return.
+
+![Generating documentation: choosing sections and an output folder, shown in Dutch](docs/images/documenteren.png)
 
 ---
 
@@ -598,6 +624,8 @@ much more common case where one is unwelcome.
 - The HTTP listener binds to `localhost` only.
 - Operator update, backup, and restore procedures are documented in
   [`docs/operations.md`](docs/operations.md).
+
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md); do not use public issues.
 
 ---
 
