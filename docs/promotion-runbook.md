@@ -98,6 +98,12 @@ Skeleton for `docs/releases/vX.Y.Z.md` (fill in both languages):
    **Unverified integrations**. Describe every user-facing change since the
    last stable version; explicitly say when a category has no change or was
    not verified. Do not write notes that imply a release has shipped.
+   If the owner explicitly requests a stable release for a documentation-only
+   delta, add `release:required` to that promotion PR before merging. Without
+   this opt-in, documentation-only promotions still publish nothing. This label
+   does not choose the increment: patch remains the default and the existing
+   version labels choose minor/major. Do not use it to bypass a failed release
+   or replace an existing tag, release or artifact.
 3. Review the rendered English and Dutch notes for equivalent coverage and
    confirm that the selected version/tag is not
    already present. Do not edit `VERSION` in the promotion PR; the pipeline
@@ -162,8 +168,15 @@ verified ZIP and follow `QUICKSTART.md` / `docs/operations.md`).
 ## What the serialized workflow does
 
 The `Stable release` workflow runs on a push to `main` or an explicit recovery
-dispatch. A docs-only delta exits successfully with a no-release message.
+dispatch. A docs-only delta exits successfully with a no-release message unless
+the merged promotion PR has the owner-requested `release:required` label.
 Runtime, build, test, or workflow changes require a stable release.
+The label is read from the validated same-repository promotion PR, not a feature
+PR or a workflow input. Explicit releases still require successful beta checks,
+complete reviewed release notes, unchanged source `VERSION`, the narrow
+credential, current branch heads and an unused version tag. Recovery requires
+the same promotion labels to remain in place; do not add or remove labels to
+change the plan of a release already in progress.
 
 The read-only promotion plan verifies `main` through the authenticated GitHub
 ref API using the workflow's read-only token, not an unauthenticated Git fetch

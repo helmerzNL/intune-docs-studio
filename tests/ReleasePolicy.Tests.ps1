@@ -44,8 +44,15 @@ Describe 'Stable release policy' {
         }
     }
 
-    It 'plans notes and a tag for the next version without changing the source version' {
-        $fixture = Join-Path $TestDrive 'release-plan'
+    It 'plans a documentation-only release only with explicit opt-in: <Case>' -ForEach @(
+        @{ Case = 'no label'; Labels = @(); Required = $false; Version = '0.1.7' }
+        @{ Case = 'version label alone'; Labels = @('version:minor'); Required = $false; Version = '0.1.7' }
+        @{ Case = 'explicit patch'; Labels = @('release:required'); Required = $true; Version = '0.1.8' }
+        @{ Case = 'explicit minor'; Labels = @('release:required', 'version:minor'); Required = $true; Version = '0.2.0' }
+        @{ Case = 'explicit major'; Labels = @('release:required', 'version:major'); Required = $true; Version = '1.0.0' }
+        @{ Case = 'unrelated label'; Labels = @('release:optional'); Required = $false; Version = '0.1.7' }
+    ) {
+        $fixture = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         [void](New-Item -ItemType Directory -Path $fixture -Force)
         Set-Content -LiteralPath (Join-Path $fixture 'VERSION') -Value '0.1.7' -NoNewline
         & git -C $fixture init --quiet
@@ -57,13 +64,14 @@ Describe 'Stable release policy' {
         & git -C $fixture -c user.name='Release Test' -c user.email='release@example.invalid' commit -m 'docs: update' --quiet
         $after = (& git -C $fixture rev-parse HEAD).Trim()
 
-        $plan = Get-IdsReleasePlan -Root $fixture -Before $before -After $after -Labels @()
-        $plan.required | Should -BeFalse
+        $plan = Get-IdsReleasePlan -Root $fixture -Before $before -After $after -Labels $Labels
+        $plan.required | Should -Be $Required
         $plan.previousVersion | Should -Be '0.1.7'
-        $plan.version | Should -Be '0.1.7'
-        $plan.tag | Should -Be 'v0.1.7'
-        $plan.notesPath | Should -Be (Join-Path $fixture 'docs\releases\v0.1.7.md')
+        $plan.version | Should -Be $Version
+        $plan.tag | Should -Be "v$Version"
+        $plan.notesPath | Should -Be (Join-Path $fixture "docs\releases\v$Version.md")
         $plan.promotionSha | Should -Be $after
+        (Get-Content -LiteralPath (Join-Path $fixture 'VERSION') -Raw) | Should -Be '0.1.7'
     }
 
     It 'validates complete user-facing release notes' {

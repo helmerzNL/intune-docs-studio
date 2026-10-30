@@ -83,7 +83,7 @@ function Get-IdsReleasePlan {
 
     $paths = @(& git -C $rootPath diff --name-only --no-renames $Before $After 2>$null)
     if ($LASTEXITCODE -ne 0) { throw 'Unable to calculate the stable promotion delta.' }
-    $required = Test-IdsReleaseDelta -Paths $paths
+    $required = (Test-IdsReleaseDelta -Paths $paths) -or ($Labels -contains 'release:required')
     $version = if ($required) { Get-IdsNextVersion -Version $beforeVersion -Labels $Labels } else { $beforeVersion }
     return @{
         required       = [bool]$required
