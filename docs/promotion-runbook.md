@@ -26,6 +26,11 @@ Every release has release notes in `docs/releases/vX.Y.Z.md`. The stable release
 text is created once when the promotion merges and is not rewritten afterwards,
 so the notes must be right **before** the merge.
 
+- The agent writes **both English and Dutch** in that same file as part of
+  release preparation. Both versions cover the same changes, update guidance,
+  risks and limitations; neither is an abbreviated summary. Review both before
+  merging. Keep the required English headings unchanged for pipeline validation,
+  then add the equivalent Dutch sections so publication includes both languages.
 - A promotion usually spans **several versions that only existed as a beta**. The
   notes describe everything since the previous stable version, grouped by what a
   user notices, not by commit or beta build.
@@ -40,10 +45,14 @@ so the notes must be right **before** the merge.
 - Write only what is true. Do not describe a release as shipped before the
   workflow has published it, and say plainly what was not verified.
 
-Skeleton for `docs/releases/vX.Y.Z.md`:
+Skeleton for `docs/releases/vX.Y.Z.md` (fill in both languages):
 
 ```markdown
 # Intune Docs Studio X.Y.Z
+
+[English](#english) | [Nederlands](#nederlands)
+
+## English
 
 ## Since the previous stable version (vA)
 
@@ -58,6 +67,22 @@ Skeleton for `docs/releases/vX.Y.Z.md`:
 ## Data implications
 
 ## Unverified integrations
+
+## Nederlands
+
+## Sinds de vorige stabiele versie (vA)
+
+## Goed om te weten bij het bijwerken
+
+## Wijzigingen en zichtbare gevolgen
+
+## Update-instructies
+
+## Afhankelijkheden en runtime
+
+## Gevolgen voor gegevens
+
+## Niet-geverifieerde integraties
 ```
 
 ## Before requesting the promotion
@@ -73,7 +98,8 @@ Skeleton for `docs/releases/vX.Y.Z.md`:
    **Unverified integrations**. Describe every user-facing change since the
    last stable version; explicitly say when a category has no change or was
    not verified. Do not write notes that imply a release has shipped.
-3. Review the rendered notes and confirm that the selected version/tag is not
+3. Review the rendered English and Dutch notes for equivalent coverage and
+   confirm that the selected version/tag is not
    already present. Do not edit `VERSION` in the promotion PR; the pipeline
    creates the only version bump.
 4. Merge the same-repository `beta` → `main` pull request using a merge commit.
