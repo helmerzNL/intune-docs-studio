@@ -36,8 +36,8 @@ Git-publicatie is optioneel; behandel gegenereerde tenantdocumentatie als gevoel
 > Beta-builds zijn beschikbaar als ZIP-artifacts van geslaagde
 > [Beta-workflowruns](https://github.com/helmerzNL/intune-docs-studio/actions/workflows/beta.yml).
 > Aanmelden bij GitHub en toegang tot deze privérepository zijn vereist.
-> Een build die naar `main` is gepromoveerd is een stabiele release; de aanduiding *beta* verdwijnt dan uit de
-> titelbalk en de naam van de app.
+> Stabiele pakketten die via het geautoriseerde promotie- en releaseproces van `beta` naar `main`
+> worden gebouwd, gebruiken het kanaal `stable`; de aanduiding *beta* verdwijnt dan uit de titelbalk en appnaam.
 
 ## Snelstart
 
@@ -91,8 +91,9 @@ beleidsregels per familie. Beide workflows — documenteren en beoordelen — ge
 
 ![De startpagina met een beleidsmomentopname](docs/images/startpagina.png)
 
-> De screenshots in deze README zijn gemaakt met de echte webinterface (Nederlandse taal) en **synthetische
+> De screenshots in beide README's zijn gemaakt met de echte webinterface in het Nederlands en **synthetische
 > demogegevens**. Ze bevatten geen echte tenant, account of beleid.
+> De Engelse interface biedt dezelfde workflows.
 
 ## Talen
 
@@ -345,17 +346,21 @@ over. Apparaatbeleid blijft van toepassing. Vóór het starten leest de app verp
 |---|---|
 | `RemoteDebuggingAllowed` | `0`: remote debugging/CDP uitgeschakeld |
 | `DeveloperToolsAvailability` | `2`: ontwikkelaarshulpmiddelen uitgeschakeld |
-| `InPrivateModeAvailability` / `IncognitoModeAvailability` | `1`: privévensters verboden, bij **Accountkiezer afdwingen** |
+| `InPrivateModeAvailability` (Edge) / `IncognitoModeAvailability` (Chrome) | `1`: privévensters verboden, bij **Accountkiezer afdwingen** |
 | `UserDataDir` | Een ingestelde profielmap overschrijft het geïsoleerde app-profiel |
 
-Onleesbaar beleid geeft een foutmelding. Deze lokale controle is geen volledige beoordeling van effectief
-beleid: controleer ook bron en status in `edge://policy` of `chrome://policy`, inclusief cloudbeleid.
-De app controleert vervolgens zowel het lokale CDP-HTTP-eindpunt als de WebSocket-verbinding.
+Onleesbaar beleid geeft een foutmelding en wordt niet als toestemming beschouwd. Deze conservatieve lokale
+controle is geen volledige beoordeling van effectief beleid: cloudbeleid, beleidsvoorrang, extensies en
+endpointbeveiliging kunnen de browser nog beïnvloeden. Controleer bron en status in `edge://policy` of
+`chrome://policy` op de betreffende werkplek, inclusief cloudbeleid.
+De app controleert vervolgens zowel het lokale CDP-HTTP-eindpunt als de WebSocket-verbinding, met
+afzonderlijke meldingen voor time-outs en verbindingsfouten.
 Bij verbindingsfouten kan IT loopback-/endpointbeveiliging en conflicterende debugsessies onderzoeken.
 Bij een werkende verbinding maar ontbrekend token zijn ook aanmelding, Conditional Access, Intune-rechten
 en het actuele portalgedrag relevant.
 
-De app wijzigt geen beleid, schakelt geen beveiliging uit en kopieert geen dagelijks browserprofiel.
+De app wijzigt geen beleid, schakelt geen beveiliging uit, kopieert geen dagelijks browserprofiel en
+probeert geen andere browser om een beperking te omzeilen.
 Vraag IT om een gerichte, goedgekeurde uitzondering of beheerwerkplek. CDP heeft toegang tot gevoelig
 sessiemateriaal. Als CDP verboden blijft, gebruikt u reguliere Graph-aanmelding met eenmalige
 beheerderstoestemming. Ook met een uitzondering blijft portal-tokenhergebruik een niet door Microsoft
@@ -413,7 +418,8 @@ Een broncode-checkout zonder `build-info.json` identificeert zichzelf als **beta
 genormaliseerd, zodat herhaalde builds van ongewijzigde invoer byte-identiek zijn.
 
 De titelbalk en de naam van de app tonen **(beta)** zolang het pakket kanaal `beta` heeft. Een pakket met kanaal
-`stable` — gebouwd bij een promotie van `beta` naar `main` — toont die aanduiding niet.
+`stable`, gebouwd via het geautoriseerde promotie- en releaseproces, toont die aanduiding niet.
+Het kanaal van het pakket bepaalt dit, niet de branchnaam van de checkout.
 
 Voor een lokaal ontwikkelpakket zijn beta/development de standaardwaarden:
 
@@ -449,7 +455,7 @@ intune-docs/
 │  ├─ administrative-templates/*.md   ADMX, met categorie en status
 │  └─ custom/*.md                     OMA-URI en aangepaste payloads
 ├─ compliance/<platform>/*.md         regels + acties bij niet-naleving
-├─ endpoint-security/<categorie>/*.md
+├─ endpoint-security/<category>/*.md
 ├─ apps/<platform>/*.md               installatie-, detectie- en vereisteregels
 ├─ app-management/
 │  ├─ app-protection/<platform>/*.md
@@ -612,6 +618,9 @@ Kwetsbaarheden meldt u privé, zie [SECURITY.md](SECURITY.md); gebruik hiervoor 
 | Aanmeldvenster opent met het verkeerde account | Vink **Accountkiezer afdwingen** aan en meld u opnieuw aan. Dat opent een InPrivate-venster met de sessie afgemeld, zodat Windows SSO uw dagelijkse account niet kan hergebruiken. Passkeys en beveiligingssleutels blijven werken. |
 | Portalsessie vraagt elke keer om aanmelding | Opgelost in de huidige build: de browser wordt nu netjes gesloten zodat Chromium zijn cookies naar schijf schrijft. Let op: **Accountkiezer afdwingen** onthoudt de sessie bewust niet. |
 | Portalopname meldt „geen bruikbaar token” | Het account waarmee u zich aanmeldde heeft mogelijk geen Intune-rol in die tenant, of de aanmelding is nooit voltooid. De statusregel toont de gezien API-hosts. |
+| Portalaanmelding meldt een beleidsblokkade | Controleer de genoemde instelling en bron in `edge://policy` of `chrome://policy`. Vraag om een door IT goedgekeurde uitzondering/beheerwerkplek of gebruik reguliere Graph-aanmelding. De app wijzigt geen beleid. |
+| „Koppelen mislukt” of „CDP-WebSocket-verbinding mislukte” | Controleer met IT het effectieve browserbeleid, of de gekozen browser opende, lokale loopback-/WebSocket-beveiliging en conflicterende debugsessies. Geslaagde lokale registercontroles bewijzen niet dat toegang is toegestaan. |
+| Gekozen portalbrowser is niet gevonden | Kies een geïnstalleerde, door IT goedgekeurde Edge of Chrome. Een expliciete keuze valt niet terug op een andere browser. |
 | Toewijzingen tonen `(deleted group …)` | Die toewijzingen richten zich op groepen die niet meer in Entra ID bestaan. Echte kandidaten om op te ruimen — zie `assignments/by-group.md`. |
 | Toewijzingen tonen `(group … insufficient permission)` | De aanmelding mist `Group.Read.All`. Objectpagina's zijn volledig; alleen de *namen* van groepen ontbreken. |
 | Sommige onderdelen zijn leeg en er verschijnt een waarschuwing | Het aangemelde account mist de bijbehorende scope of Intune RBAC. De machtigingenlijst van het dashboard toont welke. |
