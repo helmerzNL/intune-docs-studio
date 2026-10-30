@@ -179,7 +179,7 @@ function Start-IdsAssessmentJob {
             })
             if ($a.epoch -ne $Epoch -or $a.runId -ne $RunId) { throw (Get-IdsText -Key 'text.assessment_session_expired') }
             $a.phase = (Get-IdsText -Key 'text.writing_reports'); $a.percent = 85
-            $paths = Write-IdsAssessmentReports -Result $result -OutputPath $Options.outputPath -InstallRoot $Root -ExportRoot $Options.exportRoot
+            $paths = Write-IdsProjectedAssessmentReports -Projection $result -OutputPath $Options.outputPath -InstallRoot $Root -ExportRoot $Options.exportRoot
             if ($a.epoch -eq $Epoch -and $a.runId -eq $RunId) {
                 $a.result = $result
                 $a.reportPaths = $paths

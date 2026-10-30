@@ -57,7 +57,14 @@ workspace reset return the wizard to **Platforms** and clear the import summary.
    Policy/ADMX or OMA-URI content is parsed, and no CIS content is downloaded
    or bundled. Customers own rights to their imported material. Schema
    validation and conversion are not verification of the benchmark content or
-   mapping correctness. A host folder of schema-1 JSON packs is also supported.
+   mapping correctness. A host folder of schema-1 JSON packs or an extracted
+   Settings Catalog build kit is also supported, including nested folders.
+   Folder input uses the same format detection, 64-level build-kit parsing and
+   conversion as ZIP input; ready-made rule packs still require the stricter
+   32-level schema. Folder traversal is bounded to 1,000 entries, 500 JSON files,
+   10 MiB per JSON file, 64 MiB total and 16 directory levels; links are rejected.
+   Unrelated or invalid JSON files are reported as skipped rather than being
+   mistaken for schema-1 packs.
    Select **Policy set as custom reference** for reference-export conversion,
    not a normal target import; see below.
 4. **Baselines.** Select exact pack versions/profiles. **Next** requires a

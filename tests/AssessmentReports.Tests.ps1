@@ -82,6 +82,40 @@ BeforeAll {
 }
 
 Describe 'Standalone assessment reports' {
+    It 'escapes every Markdown and HTML delimiter exactly once and preserves other Unicode text' {
+        $text = -join (@(0..127 | ForEach-Object { [char]$_ }) + @([char]0x00e9, [char]0x6f22))
+        $expected = [Text.StringBuilder]::new()
+        foreach ($character in $text.ToCharArray()) {
+            if ($character -in @('&', '<', '>', '|', '[', ']', '(', ')', '*', '_', '`', '\', '#', '!', '+', '-', '{', '}', '~', "`r", "`n")) {
+                [void]$expected.Append("&#$([int]$character);")
+            } else { [void]$expected.Append($character) }
+        }
+        ConvertTo-IdsReportText $text | Should -BeExactly $expected.ToString()
+        ConvertTo-IdsReportText '&#38;' | Should -BeExactly '&#38;&#35;38;'
+        ConvertTo-IdsReportText '' | Should -BeExactly ''
+        ConvertTo-IdsReportText $null | Should -BeExactly (Get-IdsText 'text.not_available')
+    }
+
+    It 'escapes multi-megabyte evidence within five seconds without per-character PowerShell work' {
+        [void](ConvertTo-IdsReportText 'warm-up')
+        $text = ('<script> & | [link](url) * _ ` {x} ~ # ! + - \' + "`r`n") * 100000
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        $escaped = ConvertTo-IdsReportText $text
+        $watch.Stop()
+        [Net.WebUtility]::HtmlDecode($escaped) | Should -BeExactly $text
+        $watch.Elapsed.TotalSeconds | Should -BeLessThan 5
+    }
+
+    It 'projects evidence once when publishing both report formats' {
+        $result = New-ReportResult
+        $projected = ConvertTo-IdsReportProjection $result
+        Mock ConvertTo-IdsReportProjection { $projected }
+        $paths = Write-IdsAssessmentReports $result "$TestDrive\single-projection" "$TestDrive\app" "$TestDrive\docs"
+        Should -Invoke ConvertTo-IdsReportProjection -Times 1 -Exactly
+        [IO.File]::ReadAllText($paths.markdownPath) | Should -BeExactly (ConvertTo-IdsProjectedAssessmentMarkdown $projected)
+        [IO.File]::ReadAllText($paths.jsonPath) | Should -BeExactly (ConvertTo-Json $projected -Depth 64)
+    }
+
     It 'shares documentation labels and value formatting in readable policy tables' {
         $catalogSettings = @([pscustomobject]@{
             settingDefinitions = @([pscustomobject]@{

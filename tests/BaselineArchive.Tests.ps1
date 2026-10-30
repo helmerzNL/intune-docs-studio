@@ -4,6 +4,7 @@ BeforeAll {
         . "$PSScriptRoot\..\lib\$module.ps1"
     }
     if (Test-Path "$PSScriptRoot\..\lib\BaselineArchive.ps1") { . "$PSScriptRoot\..\lib\BaselineArchive.ps1" }
+    . "$PSScriptRoot\..\lib\PolicySnapshots.ps1"
     $archiveSha = '0123456789abcdef' * 4
     function Get-TestControlSignature($Control) {
         $mapping = $Control.mappings[0]
@@ -497,6 +498,50 @@ Describe 'Build-kit Settings Catalog conversion' {
             "CIS build kit policy 'Synthetic L1 display' (archive entry 'kit/display.json')"
             "CIS build kit policy 'Synthetic L1 file' (archive entry 'kit/L1/Synthetic L1 file.JSON')"
         ) -join "`n")
+    }
+}
+
+Describe 'Extracted build-kit folder reader' {
+    It 'converts nested Settings Catalog JSON deeper than pack nesting and preserves pack validation' {
+        $folder = Join-Path $TestDrive 'kit'
+        $nested = Join-Path $folder 'Windows/L1'
+        [void][IO.Directory]::CreateDirectory($nested)
+        $value = @{ value = 1 }
+        foreach ($index in 1..36) { $value = @{ child = $value } }
+        $policy = @{
+            name = 'Synthetic L1 policy'; platforms = 'windows10'; technologies = 'mdm'
+            metadata = $value
+            settings = @(@{ settingInstance = New-IdsTestSettingInstance -Id 'syn.folder' -Value @{ value = 1 } })
+        }
+        $path = Join-Path $nested 'policy.json'
+        [IO.File]::WriteAllText($path, (ConvertTo-Json $policy -Depth 64))
+        [IO.File]::SetLastWriteTimeUtc($path, [datetime]::new(2026, 10, 1, 12, 0, 0, [DateTimeKind]::Utc))
+        [IO.File]::WriteAllBytes((Join-Path $folder 'ready.json'), (New-IdsTestPackBytes))
+        [IO.File]::WriteAllText((Join-Path $folder 'invalid.json'), '{"broken":')
+        $result = ConvertFrom-IdsBaselineFolder $folder
+        $result.packs.Count | Should -Be 2
+        $result.skipped.Count | Should -Be 1
+        $result.skipped[0].entry | Should -BeExactly 'invalid.json'
+        $pack = @($result.packs | ForEach-Object { Read-IdsBaselinePack $_ } | Where-Object framework -CEQ CIS)[0]
+        $pack.controls[0].mappings[0].expected | Should -Be 1
+        $pack.sources[0].retrievedOn | Should -BeExactly '2026-10-01'
+        $again = ConvertFrom-IdsBaselineFolder $folder
+        (Get-IdsBuildKitSha256 $again.packs[0]) | Should -BeExactly (Get-IdsBuildKitSha256 $result.packs[0])
+        $zip = New-IdsTestZipBytes ([ordered]@{
+            'Windows/L1/policy.json' = [IO.File]::ReadAllBytes($path)
+            'ready.json' = New-IdsTestPackBytes
+        })
+        $fromZip = ConvertFrom-IdsBaselineArchive $zip
+        $zipPack = @($fromZip.packs | ForEach-Object { Read-IdsBaselinePack $_ } | Where-Object framework -CEQ CIS)[0]
+        (Get-TestControlSignature $pack.controls[0]) | Should -BeExactly (Get-TestControlSignature $zipPack.controls[0])
+    }
+
+    It 'keeps the existing pack folder file and expanded-size budgets' {
+        $folder = Join-Path $TestDrive 'oversize-kit'
+        [void][IO.Directory]::CreateDirectory($folder)
+        $file = [IO.File]::Create((Join-Path $folder 'large.json'))
+        try { $file.SetLength(10MB + 1) } finally { $file.Dispose() }
+        { ConvertFrom-IdsBaselineFolder $folder } | Should -Throw '*10 MiB*64 MiB*'
     }
 }
 

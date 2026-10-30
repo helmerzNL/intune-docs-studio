@@ -172,13 +172,16 @@ function Invoke-IdsAssessmentRoute {
                         } else { Import-IdsPolicySnapshot -Path ([string]$body.path) }
                         ConvertTo-IdsReferencePacks $snapshot
                     } else {
-                        $entries = Read-IdsPolicyEntries -Path ([string]$body.path)
-                        $bytes = @(foreach ($name in $entries.Keys | Sort-Object) { ,$entries[$name] })
-                        foreach ($entryBytes in $bytes) { [void](Read-IdsBaselinePack $entryBytes) }
-                        @{ packs = $bytes; skipped = @(); skippedCount = 0; ignored = 0 }
+                        ConvertFrom-IdsBaselineFolder -Path ([string]$body.path)
                     }
+                    $skippedCount = @($result.skipped).Count
+                    $skipped = @($result.skipped | Select-Object -First 100 | ForEach-Object {
+                        $entry = [string]$_.entry
+                        if ($entry.Length -gt 260) { $entry = $entry.Substring(0, 260) }
+                        @{ entry = $entry; reason = $_.reason }
+                    })
                     if ($result.packs.Count -eq 0) {
-                        $response.status = 400; $response.body = @{ error = (Get-IdsText -Key 'text.no_safe_reference_checks_or_schema_1_rule_packs_found'); skipped = $result.skipped; skippedCount = $result.skippedCount }; break
+                        $response.status = 400; $response.body = @{ error = (Get-IdsText -Key 'text.no_safe_reference_checks_or_schema_1_rule_packs_found'); skipped = $skipped; skippedCount = $skippedCount; ignored = $result.ignored }; break
                     }
                     $catalog = Get-IdsAssessmentCatalog $State $Root
                     foreach ($entryBytes in $result.packs) {
@@ -195,7 +198,7 @@ function Invoke-IdsAssessmentRoute {
                         $metadata | Add-Member NoteProperty added $item.added
                         $metadata | Add-Member NoteProperty controlCount @($item.pack.controls).Count
                         $metadata
-                    }); added = @($imported | Where-Object added).Count; skipped = $result.skipped; skippedCount = $result.skippedCount; ignored = $result.ignored }
+                    }); added = @($imported | Where-Object added).Count; skipped = $skipped; skippedCount = $skippedCount; ignored = $result.ignored }
                     break
                 }
                 if (@($fields.Keys | Where-Object { $_ -in @('content', 'archive') }).Count -ne 1) { throw (Get-IdsText -Key 'text.provide_exactly_one_of_content_or_archive') }

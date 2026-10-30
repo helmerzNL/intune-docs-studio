@@ -199,9 +199,12 @@ function Add-IdsAssessmentEvidencePresentation {
     }
 }
 
+$script:IdsReportSchemas = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+
 function Copy-IdsReportRecord {
     param($InputObject, [string]$Kind)
-    $schema = switch -CaseSensitive ($Kind) {
+    if (-not $script:IdsReportSchemas.ContainsKey($Kind)) {
+        $script:IdsReportSchemas[$Kind] = switch -CaseSensitive ($Kind) {
         Result { [ordered]@{
             schemaVersion = 'number'; runId = 'text'; generatedAt = 'text'; policySnapshotAt = 'text'; policySource = 'PolicySource'; tenant = 'Tenant'; context = 'Context'
             packs = 'Pack[]'; summaries = 'Summary[]'; controls = 'Control[]'; policies = 'Policy[]'
@@ -268,7 +271,9 @@ function Copy-IdsReportRecord {
         Issue { [ordered]@{ family = 'text'; policyKey = 'text'; stage = 'text'; statusCode = 'number'; reason = 'text' } }
         Source { [ordered]@{ family = 'text'; platform = 'text'; complete = 'boolean'; errors = 'Issue[]' } }
         default { throw (Get-IdsText -Key 'text.unsupported_assessment_report_record_arg0' -Arguments @{ arg0 = ($Kind) }) }
+        }
     }
+    $schema = $script:IdsReportSchemas[$Kind]
     if ($null -eq $InputObject) { return $null }
     if ($InputObject -isnot [Collections.IDictionary] -and $InputObject -isnot [pscustomobject]) {
         throw (Get-IdsText -Key 'text.assessment_report_arg0_must_be_a_record' -Arguments @{ arg0 = ($Kind) })
@@ -282,7 +287,7 @@ function Copy-IdsReportRecord {
             $record[$field] = @(foreach ($item in $value) {
                 if ($null -ne $item) { Copy-IdsReportField $item $itemType }
             })
-            if ($Kind -cnotin @('SettingTable', 'SettingRow')) {
+            if ($record[$field].Count -gt 1 -and $Kind -cnotin @('SettingTable', 'SettingRow')) {
                 $record[$field] = $record[$field] | Sort-Object { ConvertTo-Json -InputObject $_ -Depth 64 -Compress } -CaseSensitive
             }
             $record[$field] = @($record[$field])
@@ -334,7 +339,10 @@ function Copy-IdsReportTypedValue {
             if ($null -eq $item) { throw (Get-IdsText -Key 'text.assessment_report_set_cannot_contain_null') }
             Copy-IdsReportField $item $type
         })
-        return ,@($items | Sort-Object { ConvertTo-Json -InputObject $_ -Compress } -CaseSensitive)
+        if ($items.Count -gt 1) {
+            $items = @($items | Sort-Object { ConvertTo-Json -InputObject $_ -Compress } -CaseSensitive)
+        }
+        return ,$items
     }
     return Copy-IdsReportField $Value $type
 }
@@ -350,13 +358,34 @@ function ConvertTo-IdsReportText {
     # Entities neutralize both HTML and Markdown, including links, table/newline
     # injection and code fences. No imported content is emitted as markup.
     $text = if ($null -eq $Value) { (Get-IdsText -Key 'text.not_available') } else { [string]$Value }
-    $builder = [Text.StringBuilder]::new()
-    foreach ($character in $text.ToCharArray()) {
-        if ($character -in @('&', '<', '>', '|', '[', ']', '(', ')', '*', '_', '`', '\', '#', '!', '+', '-', '{', '}', '~', "`r", "`n")) {
-            [void]$builder.Append("&#$([int]$character);")
-        } else { [void]$builder.Append($character) }
+    if (-not ('Ids.ReportTextEncoder' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System.Globalization;
+using System.Text;
+namespace Ids {
+    public static class ReportTextEncoder {
+        public static string Escape(string text) {
+            var result = new StringBuilder(text.Length);
+            foreach (char character in text) {
+                switch (character) {
+                    case '&': case '<': case '>': case '|': case '[': case ']':
+                    case '(': case ')': case '*': case '_': case '`': case '\\':
+                    case '#': case '!': case '+': case '-': case '{': case '}':
+                    case '~': case '\r': case '\n':
+                        result.Append("&#").Append(((int)character).ToString(CultureInfo.InvariantCulture)).Append(';');
+                        break;
+                    default:
+                        result.Append(character);
+                        break;
+                }
+            }
+            return result.ToString();
+        }
     }
-    return $builder.ToString()
+}
+'@
+    }
+    return [Ids.ReportTextEncoder]::Escape($text)
 }
 
 function Format-IdsReportRecord {
@@ -592,11 +621,24 @@ function Write-IdsAssessmentReports {
         [Parameter(Mandatory)][string]$ExportRoot,
         [string]$Locale = (Get-IdsLocale)
     )
+    $projection = ConvertTo-IdsReportProjection $Result
+    return Write-IdsProjectedAssessmentReports -Projection $projection -OutputPath $OutputPath `
+        -InstallRoot $InstallRoot -ExportRoot $ExportRoot -Locale $Locale
+}
+
+function Write-IdsProjectedAssessmentReports {
+    # Worker-owned evidence is already allowlisted; raw results must use Write-IdsAssessmentReports.
+    param(
+        [Parameter(Mandatory)][pscustomobject]$Projection,
+        [Parameter(Mandatory)][string]$OutputPath,
+        [Parameter(Mandatory)][string]$InstallRoot,
+        [Parameter(Mandatory)][string]$ExportRoot,
+        [string]$Locale = (Get-IdsLocale)
+    )
     $output = Get-IdsReportCanonicalRoot $OutputPath
     $install = Get-IdsReportCanonicalRoot $InstallRoot
     $export = Get-IdsReportCanonicalRoot $ExportRoot
     Assert-IdsReportDistinctRoots @($output, $install, $export)
-    $projection = ConvertTo-IdsReportProjection $Result
     $stage = $null
     try {
         [void][IO.Directory]::CreateDirectory($output)
@@ -611,7 +653,11 @@ function Write-IdsAssessmentReports {
         Assert-IdsReportDirectoryPath $stage
         $json = ConvertTo-Json -InputObject $projection -Depth 64
         Set-Content -LiteralPath (Join-Path $stage 'assessment.json') -Value $json -Encoding utf8 -NoNewline -ErrorAction Stop
-        $markdown = ConvertTo-IdsAssessmentMarkdown -Result $projection -Locale $Locale
+        $previousLocale = Get-IdsLocale
+        try {
+            Set-IdsLocale -Locale (Resolve-IdsLocale $Locale -Strict)
+            $markdown = ConvertTo-IdsProjectedAssessmentMarkdown $projection
+        } finally { Set-IdsLocale $previousLocale }
         Set-Content -LiteralPath (Join-Path $stage 'assessment.md') -Value $markdown -Encoding utf8 -NoNewline -ErrorAction Stop
         foreach ($path in @($stage, $install, $export)) { Assert-IdsReportDirectoryPath $path }
         [IO.Directory]::Move($stage, $final)
