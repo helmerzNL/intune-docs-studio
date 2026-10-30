@@ -146,7 +146,9 @@ operator must act on.
 Check, do not assume:
 
 - release `vX.Y.Z` exists, is **not** a prerelease, is marked *latest*, has the
-  ZIP and manifest attached, and its text is the reviewed notes;
+  ZIP and manifest attached, and its text is the reviewed notes (normalize
+  CRLF/LF and surrounding whitespace when comparing the API response; content
+  changes still fail verification);
 - the version commit carries the `Release-Promotion` trailer and the final
   `main` → `beta` back-merge succeeded;
 - if something is missing, use the recovery procedure below; never overwrite an

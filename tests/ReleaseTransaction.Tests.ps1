@@ -146,7 +146,14 @@ Live Azure DevOps and Intune authentication were not exercised.
                         @{ name = 'release-manifest.json'; digest = "sha256:$((Get-FileHash $Arguments[4]).Hash.ToLowerInvariant())" }
                     )
                 }
+                if ($script:PublishedBodyMode -eq 'crlf') {
+                    $script:PublishedRelease.body = (([IO.File]::ReadAllText($notes) -replace "`r`n", "`n") -replace "`n", "`r`n") + "`r`n"
+                }
+                if ($script:PublishedBodyMode -eq 'lf') {
+                    $script:PublishedRelease.body = ([IO.File]::ReadAllText($notes) -replace "`r`n", "`n") + "`n"
+                }
                 if ($script:PublicationFailure -ceq 'digest') { $script:PublishedRelease.assets[0].digest = 'sha256:wrong' }
+                if ($script:PublicationFailure -ceq 'notes') { $script:PublishedRelease.body += "`nUnreviewed release change." }
                 if ($script:PublicationFailure -ceq 'create') { throw 'Synthetic release create failure' }
                 return ''
             }
@@ -214,6 +221,7 @@ Describe 'Stable release transaction safety' {
         $script:ArtifactQueryFailure = $null
         $script:PublishedCommit = $null
         $script:PublishedRelease = $null
+        $script:PublishedBodyMode = $null
         $script:PublicationFailure = $null
         $script:PriorRuns = @()
         $script:RunHistoryFailure = $null
@@ -508,8 +516,29 @@ Describe 'Stable release transaction safety' {
         @($script:GitHubCalls | Where-Object { ($_ -join ' ') -match '/actions/artifacts' }) | Should -BeNullOrEmpty
     }
 
+    It 'accepts published notes with <BodyMode> newlines without rewriting release or artifact' -ForEach @(
+        @{ BodyMode = 'lf' }; @{ BodyMode = 'crlf' }
+    ) {
+        Initialize-PreparedReleaseFixture
+        New-FixtureStableArtifact -Directory $script:ArtifactDirectory
+        $script:PublishedBodyMode = $BodyMode
+        $checksum = (Get-FileHash (Join-Path $script:ArtifactDirectory 'IntuneDocsStudio.zip')).Hash
+        Mock Invoke-IdsValidationAndBuild { }
+
+        Invoke-FixturePublication | Out-Null
+        $body = $script:PublishedRelease.body
+        Invoke-FixturePublication | Out-Null
+
+        $script:PublishedRelease.body | Should -BeExactly $body
+        (Get-FileHash (Join-Path $script:ArtifactDirectory 'IntuneDocsStudio.zip')).Hash | Should -Be $checksum
+        @($script:GitHubCalls | Where-Object { $_[0] -ceq 'release' -and $_[1] -ceq 'create' }).Count | Should -Be 1
+        $beta = Get-IdsRemoteBranchHead -Root $script:Fixture.Root -Branch beta
+        Invoke-ReleaseFixtureGit -Root $script:Fixture.Root -Arguments @('merge-base', '--is-ancestor', $script:Prepared.commit, $beta) |
+            Should -BeNullOrEmpty
+    }
+
     It 'does not back-merge when publication or release verification fails: <Failure>' -ForEach @(
-        @{ Failure = 'create' }; @{ Failure = 'digest' }; @{ Failure = 'latest' }
+        @{ Failure = 'create' }; @{ Failure = 'digest' }; @{ Failure = 'latest' }; @{ Failure = 'notes' }
     ) {
         Initialize-PreparedReleaseFixture
         New-FixtureStableArtifact -Directory $script:ArtifactDirectory
