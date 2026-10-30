@@ -221,6 +221,16 @@ Existing tags/releases and their assets are immutable.
 
 ## Recovery
 
+If back-merge validation fails only because a synthetic Git fixture exceeds
+Windows path limits in the nested release worktree, keep the published release
+and main version commit intact. Put the test-only path repair through a normal
+PR into `beta` and verify its hosted checks, then dispatch the existing
+promotion's recovery with its recorded version commit/artifact run. The recovery
+revalidates the immutable release and exact main commit, then merges into the
+repaired beta tree and reruns the full checks before pushing. Do not copy beta
+tests into the stable checkout, disable assertions, replace release assets or
+increment the version to work around an environmental test-path failure.
+
 Concurrency serializes an active run but GitHub may replace a pending run. Do
 not assume a durable FIFO queue. The promotion SHA, version commit, workflow
 run, and uploaded artifact are the recovery evidence.
