@@ -8,7 +8,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { installI18n } = require('./i18n-test-helpers');
 const root = path.join(__dirname, '..');
-const ids = ['en-GB', 'nl-NL', 'fr-FR', 'de-DE', 'sv-SE', 'es-ES', 'nb-NO', 'pt-PT', 'it-IT', 'da-DK'];
+const ids = ['da-DK', 'de-DE', 'en-GB', 'es-ES', 'fr-FR', 'it-IT', 'nl-NL', 'nb-NO', 'pt-PT', 'sv-SE'];
 const catalog = id => JSON.parse(fs.readFileSync(path.join(root, 'locales', `${id}.json`), 'utf8')).ui;
 const english = catalog('en-GB');
 const app = fs.readFileSync(path.join(root, 'web', 'app.js'), 'utf8');
@@ -25,7 +25,7 @@ const sameAsEnglish = {
   'da-DK': { 'text.output': 'Output is the standard Danish computing term.',
     'section.scripts': 'Scripts is the shared programming term.' }
 };
-for (const id of ids.slice(1)) {
+for (const id of ids.filter(id => id !== 'en-GB')) {
   sameAsEnglish[id] = { 'text.azure_devops': 'Azure DevOps is a product name.', ...sameAsEnglish[id] };
 }
 const placeholders = value => [...value.matchAll(/\{([A-Za-z]\w*)\}/g)].map(match => match[1]).sort();
@@ -256,14 +256,15 @@ test('keyboard dropdown shows all local flags/native names, commits language and
     assert.equal(row.children[1].getAttribute('lang'), ids[index]);
     assert.equal(row.getAttribute('role'), 'option');
   }
-  const nativeNames = ['English', 'Nederlands', 'Français', 'Deutsch', 'Svenska', 'Español',
-    'Norsk bokmål', 'Português', 'Italiano', 'Dansk'];
+  const nativeNames = ['Dansk', 'Deutsch', 'English', 'Español', 'Français', 'Italiano',
+    'Nederlands', 'Norsk bokmål', 'Português', 'Svenska'];
   assert.deepEqual(rows.map(row => row.children[1].textContent), nativeNames);
   assert.equal(h.element('localeCurrent').textContent, 'English');
   const key = value => control.handlers.keydown({ key: value, preventDefault() {} });
   key('ArrowDown');
   assert.equal(control.getAttribute('aria-expanded'), 'true');
-  key('ArrowDown'); key('Enter');
+  for (let step = 0; step < 4; step++) key('ArrowDown'); // English -> Español -> Français -> Italiano -> Nederlands
+  key('Enter');
   await new Promise(setImmediate);
   assert.equal(h.i18n.locale, 'nl-NL');
   assert.equal(h.attributes.get('lang'), 'nl-NL');

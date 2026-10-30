@@ -1,17 +1,19 @@
 'use strict';
 
 (() => {
+  // Listed alphabetically by native language name. English is the default: it is used when there is no
+  // saved choice and the browser language is not supported (see initialLocale).
   const locales = Object.freeze([
-    ['en-GB', 'English'],
-    ['nl-NL', 'Nederlands'],
-    ['fr-FR', 'Français'],
+    ['da-DK', 'Dansk'],
     ['de-DE', 'Deutsch'],
-    ['sv-SE', 'Svenska'],
+    ['en-GB', 'English'],
     ['es-ES', 'Español'],
+    ['fr-FR', 'Français'],
+    ['it-IT', 'Italiano'],
+    ['nl-NL', 'Nederlands'],
     ['nb-NO', 'Norsk bokmål'],
     ['pt-PT', 'Português'],
-    ['it-IT', 'Italiano'],
-    ['da-DK', 'Dansk']
+    ['sv-SE', 'Svenska']
   ].map(([id, language]) => Object.freeze({ id, language })));
   const storageKey = 'ids.locale';
   const catalogs = new Map();
