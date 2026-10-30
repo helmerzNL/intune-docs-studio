@@ -309,6 +309,9 @@ verkrijgt. Er wordt niets geregistreerd en er verschijnt geen nieuwe toekenning 
 
 Praktische notities, met pijn en moeite geleerd:
 
+- **Kies de portalbrowser**: Automatisch geeft Edge voorrang en gebruikt Chrome alleen als Edge niet is
+  geïnstalleerd. Een expliciete keuze wisselt nooit van browser, ook niet bij beleids- of verbindingsfouten.
+  Gebruik uitsluitend een door IT goedgekeurde browser.
 - **Windows SSO is bewust uitgeschakeld** in dat venster. Zonder dit meldt Edge stilzwijgend aan met het
   werkaccount van de machine zelf, wat meestal een *andere tenant* is dan degene die u documenteert — en de
   export vindt dan niets. U wordt gevraagd een account te kiezen; kies de beheerder van de tenant die u
@@ -319,10 +322,11 @@ Praktische notities, met pijn en moeite geleerd:
   Windows Hello blijven werken — WebAuthn is niet aan een browserprofiel gebonden. De afweging is dat de
   aanmelding niet wordt onthouden voor de volgende run.
 - **De aanmelding wordt onthouden** in een profiel onder `%LOCALAPPDATA%\IntuneDocsStudio`, dus dit is een
-  eenmalige stap. De browser wordt via CDP netjes gesloten zodat Chromium zijn cookies naar schijf schrijft, en
+  eenmalige stap per browser. Edge gebruikt `browser-profile`, Chrome het aparte `browser-profile-chrome`.
+  De browser wordt via CDP netjes gesloten zodat Chromium zijn cookies naar schijf schrijft, en
   sessieherstel staat aan zodat de aanmelding blijft bestaan, of u nu wel of niet op de vraag *Aangemeld
-  blijven?* van Azure AD ingaat. Gebruik **Opgeslagen sessie vergeten** op de aanmeldpagina om van account te
-  wisselen.
+  blijven?* van Azure AD ingaat. **Opgeslagen sessies vergeten** wist beide app-profielen.
+  Rond een actieve portalaanmelding eerst af of sluit het venster.
 - **Het token kan niet worden vernieuwd** — het refresh-token blijft binnen de portal. De levensduur wordt door
   tenantbeleid bepaald en loopt sterk uiteen (een uur in sommige tenants, bijna een dag in andere); het dashboard
   toont de werkelijke vervaltijd. Bij het laden van live beleid wordt de Graph-aanmelding gecontroleerd; als het
@@ -330,6 +334,32 @@ Praktische notities, met pijn en moeite geleerd:
   die kan vernieuwen.
 - Dit hangt af van het huidige gedrag van het beheercentrum en is geen door Microsoft ondersteund
   integratiepatroon. Uitstekend voor een beoordeling; niet geschikt als basis van een pipeline.
+
+#### Beheerde browsers en diagnostiek
+
+De app opent een eigen browserinstantie met een geïsoleerd profiel en neemt uw dagelijkse browsersessie niet
+over. Apparaatbeleid blijft van toepassing. Vóór het starten leest de app verplichte lokale instellingen in
+`HKLM` en `HKCU` onder `SOFTWARE\Policies\Microsoft\Edge` of `SOFTWARE\Policies\Google\Chrome`:
+
+| Instelling | Blokkade |
+|---|---|
+| `RemoteDebuggingAllowed` | `0`: remote debugging/CDP uitgeschakeld |
+| `DeveloperToolsAvailability` | `2`: ontwikkelaarshulpmiddelen uitgeschakeld |
+| `InPrivateModeAvailability` / `IncognitoModeAvailability` | `1`: privévensters verboden, bij **Accountkiezer afdwingen** |
+| `UserDataDir` | Een ingestelde profielmap overschrijft het geïsoleerde app-profiel |
+
+Onleesbaar beleid geeft een foutmelding. Deze lokale controle is geen volledige beoordeling van effectief
+beleid: controleer ook bron en status in `edge://policy` of `chrome://policy`, inclusief cloudbeleid.
+De app controleert vervolgens zowel het lokale CDP-HTTP-eindpunt als de WebSocket-verbinding.
+Bij verbindingsfouten kan IT loopback-/endpointbeveiliging en conflicterende debugsessies onderzoeken.
+Bij een werkende verbinding maar ontbrekend token zijn ook aanmelding, Conditional Access, Intune-rechten
+en het actuele portalgedrag relevant.
+
+De app wijzigt geen beleid, schakelt geen beveiliging uit en kopieert geen dagelijks browserprofiel.
+Vraag IT om een gerichte, goedgekeurde uitzondering of beheerwerkplek. CDP heeft toegang tot gevoelig
+sessiemateriaal. Als CDP verboden blijft, gebruikt u reguliere Graph-aanmelding met eenmalige
+beheerderstoestemming. Ook met een uitzondering blijft portal-tokenhergebruik een niet door Microsoft
+ondersteund integratiepatroon.
 
 ### Gevraagde machtigingen
 
@@ -530,6 +560,7 @@ Opnieuw exporteren en pushen werkt de wiki ter plekke bij. Zie
 |---|---|
 | `-Export` | Headless uitvoeren, zonder dashboard |
 | `-Method` | `interactive` (standaard), `browser`, `devicecode`, `azurecli`, `mggraph` |
+| `-PortalBrowser` | Browser voor `-Export -Method browser`: `auto` (standaard), `edge`, `chrome`. Interactieve aanmelding blijft vereist. |
 | `-Client` | `graphcli` (standaard), `azurecli`, `intuneps` |
 | `-Tenant` | Tenant-id of domein; standaard `organizations` |
 | `-OutputPath` | Doelmap |
@@ -554,7 +585,8 @@ waarin die ongewenst is.
 
 - Gegenereerde documentatie wordt naar de gekozen uitvoermap geschreven. Aanmelden via de portalsessie leest een
   token uit de MSAL-cache van de browser; het aparte profiel onder
-  `%LOCALAPPDATA%\IntuneDocsStudio\browser-profile` kan cookies en ander in de cache bewaard
+  `%LOCALAPPDATA%\IntuneDocsStudio\browser-profile` (Edge) of
+  `%LOCALAPPDATA%\IntuneDocsStudio\browser-profile-chrome` (Chrome) kan cookies en ander in de cache bewaard
   authenticatiemateriaal bewaren.
 - Door de app beheerde tokens en de normale dashboardstatus staan in het procesgeheugen; de app schrijft zijn
   tokenstatus niet naar schijf. Maak geen back-up van browserprofielen, kopieer of herstel ze niet als

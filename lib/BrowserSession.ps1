@@ -35,19 +35,113 @@
 #>
 
 function Find-IdsBrowser {
-    <#  Prefers Edge, falls back to Chrome. #>
-    param([string]$Preferred)
-    $candidates = @()
-    if ($Preferred) { $candidates += $Preferred }
-    $candidates += @(
-        "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
-        "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
-        "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
-        "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
-        "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
+    <#  Auto prefers Edge. An explicit choice never falls back to another browser. #>
+    param(
+        [string]$Preferred,
+        [ValidateSet('auto', 'edge', 'chrome')][string]$Browser = 'auto'
     )
-    foreach ($c in $candidates) { if ($c -and (Test-Path -LiteralPath $c)) { return $c } }
+    if ($Preferred) {
+        if ($Browser -ne 'auto') { throw (Get-IdsText 'portal.path_conflict') }
+        if (-not (Test-Path -LiteralPath $Preferred -PathType Leaf)) { throw (Get-IdsText 'portal.path_missing') }
+        return $Preferred
+    }
+    $candidates = @()
+    if ($Browser -in 'auto', 'edge') {
+        $candidates += @(
+            "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+            "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
+            "$env:LOCALAPPDATA\Microsoft\Edge\Application\msedge.exe"
+        )
+    }
+    if ($Browser -in 'auto', 'chrome') {
+        $candidates += @(
+            "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
+            "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
+            "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
+        )
+    }
+    foreach ($c in $candidates) { if (Test-Path -LiteralPath $c -PathType Leaf) { return $c } }
     return $null
+}
+
+function Get-IdsBrowserPolicies {
+    param([ValidateSet('edge', 'chrome')][string]$Browser)
+    if (-not $IsWindows) { throw (Get-IdsText 'portal.windows') }
+    $key = if ($Browser -eq 'edge') { 'Microsoft\Edge' } else { 'Google\Chrome' }
+    $privatePolicy = if ($Browser -eq 'edge') { 'InPrivateModeAvailability' } else { 'IncognitoModeAvailability' }
+    foreach ($hive in 'HKLM', 'HKCU') {
+        $path = "${hive}:\SOFTWARE\Policies\$key"
+        try {
+            if (-not (Test-Path -LiteralPath $path -ErrorAction Stop)) { continue }
+            $values = Get-ItemProperty -LiteralPath $path -ErrorAction Stop
+            foreach ($name in 'RemoteDebuggingAllowed', 'DeveloperToolsAvailability', $privatePolicy, 'UserDataDir') {
+                $property = $values.PSObject.Properties[$name]
+                if ($null -ne $property) {
+                    [pscustomobject]@{ Name = $name; Value = $property.Value; Source = $path }
+                }
+            }
+        } catch {
+            throw (Get-IdsText 'portal.policy_read' -Arguments @{ path = $path; browser = $Browser })
+        }
+    }
+}
+
+function Assert-IdsBrowserPolicy {
+    param(
+        [ValidateSet('edge', 'chrome')][string]$Browser,
+        [switch]$ForceAccountPicker
+    )
+    $blockers = @(
+        foreach ($policy in Get-IdsBrowserPolicies -Browser $Browser) {
+            $reason = switch ($policy.Name) {
+                'RemoteDebuggingAllowed' { if ($policy.Value -eq 0) { '0' } }
+                'DeveloperToolsAvailability' { if ($policy.Value -eq 2) { '2' } }
+                { $_ -in 'InPrivateModeAvailability', 'IncognitoModeAvailability' } {
+                    if ($ForceAccountPicker -and $policy.Value -eq 1) {
+                        '1 (Force account picker)'
+                    }
+                }
+                'UserDataDir' {
+                    if (-not [string]::IsNullOrWhiteSpace([string]$policy.Value)) {
+                        Get-IdsText 'portal.profile_override'
+                    }
+                }
+            }
+            if ($reason) { "$($policy.Name) at $($policy.Source): $reason" }
+        }
+    )
+    if ($blockers.Count) {
+        throw ((Get-IdsText 'portal.policy_blocked' -Arguments @{ browser = $Browser; details = ($blockers -join '; ') }) +
+            ' ' + (Get-IdsText 'portal.policy_help' -Arguments @{ browser = $Browser }))
+    }
+}
+
+function Wait-IdsBrowserCdp {
+    param(
+        [int]$Port,
+        [ValidateSet('edge', 'chrome')][string]$Browser,
+        [int]$TimeoutSeconds = 40
+    )
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 500
+        try {
+            $version = Invoke-RestMethod "http://127.0.0.1:$Port/json/version" -TimeoutSec 5 -ErrorAction Stop
+        } catch { continue }
+        if (-not $version.webSocketDebuggerUrl) { continue }
+        $probe = $null
+        try {
+            $probe = Connect-IdsCdpSocket -WebSocketUrl $version.webSocketDebuggerUrl -TimeoutSeconds 5
+        } catch {
+            throw ((Get-IdsText 'portal.cdp_socket' -Arguments @{ browser = $Browser; port = $Port }) +
+                ' ' + (Get-IdsText 'portal.policy_help' -Arguments @{ browser = $Browser }))
+        } finally {
+            if ($probe) { $probe.Dispose() }
+        }
+        return
+    }
+    throw ((Get-IdsText 'portal.cdp_timeout' -Arguments @{ browser = $Browser; port = $Port; seconds = $TimeoutSeconds }) +
+        ' ' + (Get-IdsText 'portal.policy_help' -Arguments @{ browser = $Browser }))
 }
 
 function Get-IdsFreePort {
@@ -61,18 +155,24 @@ function Get-IdsFreePort {
 function Get-IdsBrowserProfilePath {
     <#  A persistent profile means the administrator signs in once, not on every run.
         It lives under LOCALAPPDATA, deliberately outside OneDrive, so nothing syncs. #>
-    param([switch]$Ephemeral)
+    param(
+        [switch]$Ephemeral,
+        [ValidateSet('edge', 'chrome')][string]$Browser = 'edge'
+    )
     if ($Ephemeral) {
         return (Join-Path $env:TEMP ('ids-browser-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)))
     }
-    $p = Join-Path $env:LOCALAPPDATA 'IntuneDocsStudio\browser-profile'
+    $folder = if ($Browser -eq 'chrome') { 'browser-profile-chrome' } else { 'browser-profile' }
+    $p = Join-Path $env:LOCALAPPDATA "IntuneDocsStudio\$folder"
     if (-not (Test-Path -LiteralPath $p)) { New-Item -ItemType Directory -Force -Path $p | Out-Null }
     return $p
 }
 
 function Clear-IdsBrowserProfile {
-    $p = Join-Path $env:LOCALAPPDATA 'IntuneDocsStudio\browser-profile'
-    if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue }
+    foreach ($folder in 'browser-profile', 'browser-profile-chrome') {
+        $p = Join-Path $env:LOCALAPPDATA "IntuneDocsStudio\$folder"
+        if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction Stop }
+    }
 }
 
 function Connect-IdsCdpSocket {
@@ -81,8 +181,13 @@ function Connect-IdsCdpSocket {
     $cts = New-Object Threading.CancellationTokenSource([TimeSpan]::FromSeconds($TimeoutSeconds))
     # [void] matters: awaiting a non-generic Task emits a VoidTaskResult object in PowerShell 7,
     # which would otherwise be returned alongside the socket.
-    [void]$ws.ConnectAsync([Uri]$WebSocketUrl, $cts.Token).GetAwaiter().GetResult()
-    return $ws
+    try {
+        [void]$ws.ConnectAsync([Uri]$WebSocketUrl, $cts.Token).GetAwaiter().GetResult()
+        return $ws
+    } catch {
+        $ws.Dispose()
+        throw
+    } finally { $cts.Dispose() }
 }
 
 function Send-IdsCdpCommand {
@@ -429,6 +534,10 @@ function Get-IdsTokenFromBrowser {
             single sign-on cannot silently reuse the machine's everyday account. Needed when
             the operator's admin account differs from the account the device is joined with.
 
+        .PARAMETER Browser
+            Auto prefers Edge and uses Chrome only when Edge is absent. An explicit browser
+            choice never falls back, and policy or connection failures never change browsers.
+
         .PARAMETER StatusCallback
             Optional scriptblock invoked with progress strings, so the dashboard can narrate.
     #>
@@ -436,6 +545,7 @@ function Get-IdsTokenFromBrowser {
         [string]$Tenant,
         [int]$TimeoutSeconds = 600,
         [string]$BrowserPath,
+        [ValidateSet('auto', 'edge', 'chrome')][string]$Browser = 'auto',
         [scriptblock]$StatusCallback,
         [switch]$Ephemeral,
         [switch]$ForceAccountPicker
@@ -443,11 +553,23 @@ function Get-IdsTokenFromBrowser {
 
     function Report { param([string]$m) if ($StatusCallback) { & $StatusCallback $m } else { Write-Host "  $m" } }
 
-    $exe = Find-IdsBrowser -Preferred $BrowserPath
-    if (-not $exe) { throw (Get-IdsText -Key 'text.neither_microsoft_edge_nor_google_chrome_could_be_found_install_one_or_use_a_different_sign_in_metho') }
+    $exe = Find-IdsBrowser -Preferred $BrowserPath -Browser $Browser
+    if (-not $exe) {
+        if ($Browser -ne 'auto') {
+            throw (Get-IdsText 'portal.not_found' -Arguments @{ browser = $Browser })
+        }
+        throw (Get-IdsText -Key 'text.neither_microsoft_edge_nor_google_chrome_could_be_found_install_one_or_use_a_different_sign_in_metho')
+    }
+    $browserKind = switch ([IO.Path]::GetFileName($exe)) {
+        'msedge.exe' { 'edge' }
+        'chrome.exe' { 'chrome' }
+        default { throw (Get-IdsText 'portal.path_unsupported') }
+    }
+    Report (Get-IdsText 'portal.check_policy' -Arguments @{ browser = $browserKind })
+    Assert-IdsBrowserPolicy -Browser $browserKind -ForceAccountPicker:$ForceAccountPicker
 
     $port = Get-IdsFreePort
-    $profileDir = Get-IdsBrowserProfilePath -Ephemeral:($Ephemeral -or $ForceAccountPicker)
+    $profileDir = Get-IdsBrowserProfilePath -Browser $browserKind -Ephemeral:($Ephemeral -or $ForceAccountPicker)
     Initialize-IdsProfilePreferences -ProfileDir $profileDir
 
     # Land directly on a blade that forces the portal to load Intune configuration data.
@@ -465,7 +587,8 @@ function Get-IdsTokenFromBrowser {
 
     $browserArgs = @(
         "--remote-debugging-port=$port"
-        "--user-data-dir=$profileDir"
+        '--remote-debugging-address=127.0.0.1'
+        "--user-data-dir=`"$profileDir`""
         '--no-first-run'
         '--no-default-browser-check'
         # Windows SSO would silently sign the window in as the machine's work account, which
@@ -487,7 +610,11 @@ function Get-IdsTokenFromBrowser {
     $browserArgs += $startUrl
 
     Report (Get-IdsText -Key 'text.starting_a_browser_window_for_the_intune_admin_center')
-    $proc = Start-Process -FilePath $exe -ArgumentList $browserArgs -PassThru
+    try {
+        $proc = Start-Process -FilePath $exe -ArgumentList $browserArgs -PassThru -ErrorAction Stop
+    } catch {
+        throw (Get-IdsText 'portal.launch_failed' -Arguments @{ browser = $browserKind })
+    }
     $browserPid = $proc.Id
 
     $socket = $null
@@ -495,16 +622,8 @@ function Get-IdsTokenFromBrowser {
         # Wait for the DevTools endpoint. We no longer hold a browser-level socket for the
         # whole session: tokens are read straight from the portal's MSAL cache, which is far
         # more reliable than trying to observe traffic from cross-origin blade iframes.
-        $ready = $false
-        $deadline = (Get-Date).AddSeconds(40)
-        while ((Get-Date) -lt $deadline) {
-            Start-Sleep -Milliseconds 500
-            try {
-                $v = Invoke-RestMethod "http://127.0.0.1:$port/json/version" -TimeoutSec 5
-                if ($v.webSocketDebuggerUrl) { $ready = $true; break }
-            } catch { }
-        }
-        if (-not $ready) { throw (Get-IdsText -Key 'text.could_not_attach_to_the_browser_close_any_other_debugging_session_and_try_again') }
+        Report (Get-IdsText 'portal.check_cdp' -Arguments @{ browser = $browserKind })
+        Wait-IdsBrowserCdp -Port $port -Browser $browserKind
 
         Report (Get-IdsText -Key 'text.sign_in_to_the_intune_admin_center_in_the_browser_window_that_just_opened')
         Report (Get-IdsText -Key 'text.this_is_your_normal_portal_sign_in_no_consent_prompt_no_app_registration')
@@ -637,8 +756,8 @@ function Get-IdsTokenFromBrowser {
         if ($closeSocket) { try { $closeSocket.Dispose() } catch { } }
         if ($socket) { try { $socket.Dispose() } catch { } }
         # A persistent profile is kept on purpose so the next run does not need a fresh sign-in.
-        if ($Ephemeral -and (Test-Path -LiteralPath $profileDir)) {
-            Remove-Item -LiteralPath $profileDir -Recurse -Force -ErrorAction SilentlyContinue
+        if (($Ephemeral -or $ForceAccountPicker) -and (Test-Path -LiteralPath $profileDir)) {
+            Remove-Item -LiteralPath $profileDir -Recurse -Force -ErrorAction Stop
         }
     }
 }

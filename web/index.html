@@ -129,6 +129,16 @@
           <span data-i18n="text.role_your_signin_is_remembered_so_you_only_do">role. Your sign-in is remembered, so you only do this once.
           The captured session is temporary and cannot be renewed automatically.</span>
         </p>
+        <label><span data-i18n="text.portal_browser">Portal browser</span>
+          <select id="portalBrowser" aria-describedby="portalBrowserNote">
+            <option value="auto" data-i18n="text.portal_browser_auto">Automatic (Edge preferred)</option>
+            <option value="edge">Microsoft Edge</option>
+            <option value="chrome">Google Chrome</option>
+          </select>
+          <small id="portalBrowserNote" data-i18n="text.portal_browser_note">Use only an IT-approved browser. Automatic uses Chrome only if Edge is not installed;
+            a policy or connection failure never switches browsers. Local policy and CDP connection checks run before sign-in.
+            Each browser has a separate saved session.</small>
+        </label>
         <button class="btn primary block" id="btnBrowser"><span data-i18n="text.sign_in_via_the_intune_portal">Sign in via the Intune portal</span></button>
         <div id="browserStatus" class="notice hidden"><p id="bsText"></p></div>
         <label class="check">
@@ -138,7 +148,7 @@
             reuse your everyday account. Security keys, passkeys and Windows Hello still work.</span></small>
           </span>
         </label>
-        <button class="linkbtn" id="btnForget" title="Clear the saved browser profile" data-i18n-title="text.clear_the_saved_browser_profile"><span data-i18n="text.forget_saved_session">Forget saved session</span></button>
+        <button class="linkbtn" id="btnForget" title="Clear saved Edge and Chrome application profiles" data-i18n-title="text.portal_forget_title"><span data-i18n="text.portal_forget">Forget saved sessions</span></button>
       </div>
 
       <details id="advancedSignin" class="disclosure">

@@ -31,6 +31,7 @@ param(
     # Headless mode
     [switch]$Export,
     [ValidateSet('interactive', 'devicecode', 'azurecli', 'mggraph', 'browser')][string]$Method = 'interactive',
+    [ValidateSet('auto', 'edge', 'chrome')][string]$PortalBrowser = 'auto',
     [string[]]$Sections,
     [switch]$GitCommit,
     [switch]$GitPush,
@@ -177,7 +178,11 @@ function Start-IdsExportJob {
 function Start-IdsBrowserSignIn {
     <#  Runs the browser capture in its own runspace: it blocks for as long as the sign-in
         takes, and the dashboard must keep serving requests meanwhile. #>
-    param([string]$TenantId, [bool]$ForcePicker = $false)
+    param(
+        [string]$TenantId,
+        [bool]$ForcePicker = $false,
+        [ValidateSet('auto', 'edge', 'chrome')][string]$Browser = 'auto'
+    )
     if ((Test-IdsWorkActive $State) -or $State.Browser.running) { return $false }
     Clear-IdsFinishedJob
     Reset-IdsSessionState
@@ -189,14 +194,14 @@ function Start-IdsBrowserSignIn {
     $State.Browser.status = (Get-IdsText -Key 'text.starting_browser')
 
     $script = {
-        param($Root, $State, $TenantId, $ForcePicker, $Epoch, $Locale)
+        param($Root, $State, $TenantId, $ForcePicker, $Epoch, $Locale, $Browser)
         try {
             . (Join-Path $Root 'lib\Localization.ps1')
             Set-IdsLocale -Locale $Locale
             . (Join-Path $Root 'lib\Auth.ps1')
             . (Join-Path $Root 'lib\BrowserSession.ps1')
             $cb = { param($m) $State.Browser.status = $m }.GetNewClosure()
-            $auth = Get-IdsTokenFromBrowser -Tenant $TenantId -StatusCallback $cb -ForceAccountPicker:$ForcePicker
+            $auth = Get-IdsTokenFromBrowser -Tenant $TenantId -StatusCallback $cb -ForceAccountPicker:$ForcePicker -Browser $Browser
             if ($State.Assessment.epoch -eq $Epoch) {
                 $State.Auth = $auth
                 $State.Browser.status = (Get-IdsText -Key 'text.connected')
@@ -213,7 +218,7 @@ function Start-IdsBrowserSignIn {
         $rs.Open()
         $ps = [powershell]::Create()
         $ps.Runspace = $rs
-        [void]$ps.AddScript($script).AddArgument($Root).AddArgument($State).AddArgument($TenantId).AddArgument($ForcePicker).AddArgument($epoch).AddArgument($jobLocale)
+        [void]$ps.AddScript($script).AddArgument($Root).AddArgument($State).AddArgument($TenantId).AddArgument($ForcePicker).AddArgument($epoch).AddArgument($jobLocale).AddArgument($Browser)
         $handle = $ps.BeginInvoke()
         $State.Browser.job = @{ ps = $ps; handle = $handle; runspace = $rs }
     } catch {
@@ -363,7 +368,7 @@ if ($Export) {
     $clientId = (Get-IdsClient $Client).id
     switch ($Method) {
         'interactive' { $State.Auth = Invoke-IdsInteractiveSignIn -ListenPort $Port -TenantId $Tenant -ClientId $clientId }
-        'browser'     { $State.Auth = Get-IdsTokenFromBrowser -Tenant $Tenant }
+        'browser'     { $State.Auth = Get-IdsTokenFromBrowser -Tenant $Tenant -Browser $PortalBrowser }
         'azurecli'    { $State.Auth = Get-IdsTokenFromAzureCli }
         'mggraph'     { $State.Auth = Connect-IdsMgGraph -Tenant $Tenant }
         'devicecode'  {
@@ -682,7 +687,18 @@ while ($running -and $listener.IsListening) {
                 if ($body.tenant) { $t = $body.tenant }
                 $force = $false
                 if ($body.PSObject.Properties['forcePicker']) { $force = [bool]$body.forcePicker }
-                [void](Start-IdsBrowserSignIn -TenantId $t -ForcePicker $force)
+                $browser = 'auto'
+                if ($body.PSObject.Properties['browser']) {
+                    if ($body.browser -isnot [string] -or $body.browser -notin 'auto', 'edge', 'chrome') {
+                        Send-IdsJson -Response $res -Object @{ error = (Get-IdsText 'portal.browser_choice') } -Status 400
+                        break
+                    }
+                    $browser = $body.browser
+                }
+                if (-not (Start-IdsBrowserSignIn -TenantId $t -ForcePicker $force -Browser $browser)) {
+                    Send-IdsJson -Response $res -Object @{ error = (Get-IdsText 'portal.busy') } -Status 409
+                    break
+                }
                 Send-IdsJson -Response $res -Object @{ started = $true }
                 break
             }
@@ -698,6 +714,10 @@ while ($running -and $listener.IsListening) {
             }
 
             '^POST /api/signin/browser/forget$' {
+                if ($State.Browser.running) {
+                    Send-IdsJson -Response $res -Object @{ error = (Get-IdsText 'portal.busy') } -Status 409
+                    break
+                }
                 try {
                     Clear-IdsBrowserProfile
                     Reset-IdsSessionState

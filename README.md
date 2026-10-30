@@ -310,6 +310,10 @@ appears in the directory.
 
 Practical notes, learned the hard way:
 
+- **Choose the portal browser** in the dashboard: Automatic prefers Edge and uses Chrome only
+  if Edge is not installed. An explicit Edge or Chrome choice never falls back to another
+  browser. Policy or connection failures never trigger a browser switch. Use only a browser
+  approved by your IT administrator.
 - **Windows SSO is deliberately disabled** in that window. Without this, Edge silently signs in
   with the machine's own work account, which is usually a *different tenant* than the one being
   documented — and the export then finds nothing. You will be asked to pick an account; choose
@@ -320,9 +324,11 @@ Practical notes, learned the hard way:
   all keep working — WebAuthn is not tied to a browser profile. The trade-off is that the
   sign-in is not remembered for the next run.
 - **The sign-in is remembered** in a profile under `%LOCALAPPDATA%\IntuneDocsStudio`, so this
-  is a one-time step. The browser is closed cleanly over CDP so Chromium flushes its cookies
+  is a one-time step per browser. Edge keeps `browser-profile`; Chrome uses the separate
+  `browser-profile-chrome` folder. The browser is closed cleanly over CDP so Chromium flushes its cookies
   to disk, and session restore is enabled so the sign-in survives whether or not you tick
-  Azure AD's *Stay signed in?* prompt. Use **Forget saved session** on the sign-in page to switch accounts.
+  Azure AD's *Stay signed in?* prompt. Use *forget saved sessions* to clear both app-managed
+  browser profiles. Finish or close an active portal sign-in before clearing them.
 - **The token cannot be renewed** — the refresh token stays inside the portal. Its lifetime is
   set by tenant policy and varies widely (an hour in some tenants, close to a day in others);
   the dashboard shows the actual expiry. Loading live policies checks the Graph sign-in; if the
@@ -330,6 +336,35 @@ Practical notes, learned the hard way:
   can refresh.
 - This depends on the admin center's current behaviour and is not a supported Microsoft
   integration pattern. It is excellent for an assessment; it is not a pipeline foundation.
+
+#### Managed browsers and portal-session diagnostics
+
+This method starts its own browser instance and isolated profile; it does not attach to your
+everyday Edge/Chrome session. An isolated profile still inherits applicable enterprise policy.
+Before launch, the app reads relevant mandatory local policies from both `HKLM` and `HKCU`
+under `SOFTWARE\Policies\Microsoft\Edge` or `SOFTWARE\Policies\Google\Chrome`. It stops on:
+
+| Policy | Local blocker |
+|---|---|
+| `RemoteDebuggingAllowed` | `0`: CDP/remote debugging disabled |
+| `DeveloperToolsAvailability` | `2`: developer tools disabled |
+| `InPrivateModeAvailability` (Edge) / `IncognitoModeAvailability` (Chrome) | `1`: private browsing disabled, when **Force account picker** is selected |
+| `UserDataDir` | A nonempty managed directory overrides the app's isolated profile |
+
+An unreadable policy key is reported as an error, not treated as permission to proceed.
+These checks are conservative local diagnostics, not a complete evaluation of effective
+browser policy: cloud policy, policy precedence, extensions and endpoint protection can still
+affect the browser. Inspect `edge://policy` or `chrome://policy` on the affected workstation,
+including the source/status of each policy. The app also checks the local CDP HTTP endpoint
+and WebSocket connection before capturing a token, with distinct timeout/connection errors.
+If these checks pass but no usable token is found, check the sign-in, Conditional Access,
+Intune permissions and portal behaviour rather than assuming a debugging-policy problem.
+
+The app never edits policies, disables endpoint protection, copies an everyday browser
+profile or retries with another browser to get around a restriction. Ask IT for a narrowly
+scoped, approved exception or a compliant management workstation; CDP can access sensitive
+session material. If CDP is prohibited, use standard Graph sign-in with one-time admin consent.
+An approved exception does not make portal-token reuse a Microsoft-supported integration.
 
 ### Permissions requested
 
@@ -524,6 +559,7 @@ Re-running the export and pushing updates the wiki in place. See
 |---|---|
 | `-Export` | Run headless, no dashboard |
 | `-Method` | `interactive` (default), `browser`, `devicecode`, `azurecli`, `mggraph` |
+| `-PortalBrowser` | Portal-session browser for `-Export -Method browser`: `auto` (default), `edge`, `chrome`. The browser still requires interactive sign-in. |
 | `-Client` | `graphcli` (default), `azurecli`, `intuneps` |
 | `-Tenant` | Tenant id or domain; defaults to `organizations` |
 | `-OutputPath` | Target folder |
@@ -548,7 +584,8 @@ much more common case where one is unwelcome.
 
 - Generated documentation is written to the chosen output folder. Portal-session
   sign-in reads a token from the browser's MSAL cache; its separate profile under
-  `%LOCALAPPDATA%\IntuneDocsStudio\browser-profile` may persist cookies and other
+  `%LOCALAPPDATA%\IntuneDocsStudio\browser-profile` (Edge) or
+  `%LOCALAPPDATA%\IntuneDocsStudio\browser-profile-chrome` (Chrome) may persist cookies and other
   cached authentication material.
 - App-managed tokens and normal dashboard state live in process memory; the app
   does not write its token state to disk. Do not back up, copy, or restore browser
@@ -572,6 +609,9 @@ much more common case where one is unwelcome.
 | Sign-in window opens as the wrong account | Tick **Force account picker** and sign in again. That opens an InPrivate window with the session signed out, so Windows SSO cannot reuse your everyday account. Passkeys and security keys still work. |
 | Portal session asks me to sign in every time | Fixed in the current build: the browser is now closed cleanly so Chromium writes its cookies to disk. Note that **Force account picker** deliberately does not remember the session. |
 | Portal capture reports "no usable token" | The account signed in may hold no Intune role in that tenant, or the sign-in never completed. The status line lists the API hosts seen. |
+| Portal sign-in reports a policy blocker | Inspect the named policy/source in `edge://policy` or `chrome://policy`. Request an IT-approved exception/workstation or use standard Graph sign-in. Policies are not changed by the app. |
+| "Could not attach" or "CDP WebSocket connection failed" | Check effective browser policy, whether the selected browser opened, local loopback/WebSocket protection and conflicting debugging sessions with IT. Passing local registry checks does not prove access is allowed. |
+| Selected portal browser was not found | Select an installed, IT-approved Edge or Chrome. An explicit choice does not fall back to another browser. |
 | Assignments show `(deleted group …)` | Those assignments target groups that no longer exist in Entra ID. Genuine clean-up candidates — see `assignments/by-group.md`. |
 | Assignments show `(group … insufficient permission)` | The sign-in lacks `Group.Read.All`. Object pages are complete; only group *names* are missing. |
 | Some areas are empty and a warning appears | The signed-in account lacks the matching scope or Intune RBAC. The dashboard's permission list shows which. |
