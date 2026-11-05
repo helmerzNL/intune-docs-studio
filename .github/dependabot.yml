@@ -1,0 +1,17 @@
+# Dependabot configuration for Intune Docs Studio.
+#
+# Version updates go to the `beta` integration branch through `target-branch`, like any other
+# feature work, and reach `main` only through an owner-requested promotion.
+#
+# `target-branch` does not apply to security updates: those always follow the repository's
+# Default branch, which should therefore be `beta` as well (App-Guidance project-baseline §20).
+#
+# The repository has no npm, pip, NuGet or container manifests; the only managed dependencies
+# are the pinned GitHub Actions in `.github/workflows/`.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "beta"
+    schedule:
+      interval: "weekly"
