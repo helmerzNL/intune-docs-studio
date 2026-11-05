@@ -58,7 +58,7 @@ $Build = Get-IdsBuildInfo -Root $Root
 . (Join-Path $Root 'lib\Render.ps1')
 . (Join-Path $Root 'lib\Export.ps1')
 . (Join-Path $Root 'lib\Http.ps1')
-foreach ($module in 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'BaselineArchive', 'AssessmentRules', 'AssessmentReports', 'Assessment', 'AssessmentApi', 'PolicyInventory', 'PolicySnapshots', 'LocalFolders', 'PolicyApi', 'ReferencePacks') {
+foreach ($module in 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'BaselineArchive', 'AssessmentRules', 'AssessmentReports', 'AppSettings', 'Assessment', 'AssessmentApi', 'PolicyInventory', 'PolicySnapshots', 'LocalFolders', 'PolicyApi', 'ReferencePacks') {
     . (Join-Path $Root "lib\$module.ps1")
 }
 
@@ -81,7 +81,8 @@ $State = [hashtable]::Synchronized(@{
                 summary = $null
             })
         Config  = @{ Port = $Port; OutputPath = $OutputPath; DefaultOutputPath = $OutputPath; Root = $Root; Tenant = $Tenant; DefaultTenant = $Tenant
-            ImportedPackRoot = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'IntuneDocsStudio\AssessmentPacks') }
+            ImportedPackRoot = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'IntuneDocsStudio\AssessmentPacks')
+            SettingsPath = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'IntuneDocsStudio\settings.json') }
     })
 
 Initialize-IdsAssessment $State
@@ -487,6 +488,11 @@ while ($running -and $listener.IsListening) {
         $assessmentRoute = Invoke-IdsAssessmentRoute -Method $req.HttpMethod -Path $path -Request $req -State $State -Root $Root
         if ($assessmentRoute.handled) {
             Send-IdsJson -Response $res -Object $assessmentRoute.body -Status $assessmentRoute.status -Depth 64
+            continue
+        }
+        $settingsRoute = Invoke-IdsSettingsRoute -Method $req.HttpMethod -Path $path -Request $req -State $State
+        if ($settingsRoute.handled) {
+            Send-IdsJson -Response $res -Object $settingsRoute.body -Status $settingsRoute.status -Depth 16
             continue
         }
         switch -Regex ("$($req.HttpMethod) $path") {

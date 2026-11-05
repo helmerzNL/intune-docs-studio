@@ -586,3 +586,107 @@ Describe 'Standalone assessment reports' {
         Test-Path "$TestDrive\bad-value" | Should -BeFalse
     }
 }
+
+Describe 'Plain-language assessment overview in Markdown' {
+    BeforeAll {
+        function New-OverviewResult {
+            param($Thresholds = @{ good = 90; attention = 70; coverage = 80 }, [switch]$Aligned)
+            $control = {
+                param($PackId, $Platform, $Id, $Title, $Status, $Operator, $Expected, $Observed)
+                [pscustomobject]@{
+                    packId = $PackId; platform = $Platform; controlId = $Id; title = $Title; status = $Status; reason = 'Synthetic'
+                    expected = @([pscustomobject]@{ family = 'settingsCatalog'; operator = $Operator; displayValue = $Expected })
+                    observed = @($Observed | ForEach-Object { [pscustomobject]@{ policyKey = 'p1'; configured = $true; displayValue = $_ } })
+                    policyResults = @(); references = @()
+                }
+            }
+            $controls = @(
+                (& $control pack-a windows11 A-1 'Screen lock' aligned lte '15 minutes' @('10 minutes'))
+                (& $control pack-b macos B-9 'Not relevant' notApplicable eq 'On' @())
+            )
+            if (-not $Aligned) {
+                $controls += & $control pack-b macos B-2 '<Firewall> | pipe' missing gte '2 rules' @()
+                $controls += & $control pack-b macos B-1 'Gatekeeper' misaligned eq 'Enabled' @('Disabled')
+            }
+            $result = [pscustomobject]@{
+                schemaVersion = 1; runId = 'synthetic-run'; generatedAt = '2026-10-28T12:00:00Z'
+                tenant = [pscustomobject]@{ id = 'synthetic-tenant'; displayName = 'Synthetic tenant' }
+                context = [pscustomobject]@{ platforms = @('windows11', 'macos') }
+                packs = @(
+                    [pscustomobject]@{ id = 'pack-a'; version = '1.0.0'; framework = 'Microsoft'; frameworkVersion = 'Synthetic 1'; profile = 'Desktop'; platform = 'windows11' }
+                    [pscustomobject]@{ id = 'pack-b'; version = '1.0.0'; framework = 'CIS'; frameworkVersion = 'v2'; profile = 'Level 1'; platform = 'macos' }
+                )
+                summaries = @(
+                    [pscustomobject]@{ packId = 'pack-b'; platform = 'macos'; assessed = 4; coverageDenominator = 10; coveragePercent = 40; alignmentPercent = 50
+                        counts = [pscustomobject]@{ aligned = 2; misaligned = 1; missing = 1; potentialConflict = 0; notApplicable = 1; notAssessed = 6 } }
+                    [pscustomobject]@{ packId = 'pack-a'; platform = 'windows11'; assessed = 20; coverageDenominator = 20; coveragePercent = 100; alignmentPercent = 95
+                        counts = [pscustomobject]@{ aligned = 19; misaligned = 1; missing = 0; potentialConflict = 0; notApplicable = 0; notAssessed = 0 } }
+                )
+                controls = $controls; policies = @(); collectionIssues = @(); sources = @()
+            }
+            if ($Thresholds) { $result | Add-Member NoteProperty verdictThresholds ([pscustomobject]$Thresholds) }
+            return $result
+        }
+        function Get-OverviewSection {
+            param([string]$Markdown, [string]$Locale = 'en-GB')
+            $start = $Markdown.IndexOf((Get-IdsText 'report.overview.heading' -Locale $Locale))
+            $end = $Markdown.IndexOf((Get-IdsText 'report.overview.technical_heading' -Locale $Locale))
+            $start | Should -BeGreaterOrEqual 0
+            $end | Should -BeGreaterThan $start
+            return $Markdown.Substring($start, $end - $start)
+        }
+        $script:emoji = @{
+            green = [char]::ConvertFromUtf32(0x1F7E2); orange = [char]::ConvertFromUtf32(0x1F7E0)
+            red = [char]::ConvertFromUtf32(0x1F534); warning = [char]::ConvertFromUtf32(0x26A0)
+        }
+    }
+
+    It 'opens the report with a summary per reference baseline before the technical evidence' {
+        $markdown = ConvertTo-IdsAssessmentMarkdown (New-OverviewResult) -Locale en-GB
+        $positions = @('# Policy configuration alignment assessment', '## Summary', '## Deviations at a glance',
+            '## Technical details', '## Run identity and user-selected context') | ForEach-Object { $markdown.IndexOf($_) }
+        $positions | Should -Not -Contain -1
+        ($positions | Sort-Object) | Should -Be $positions
+        $overview = Get-OverviewSection $markdown
+        $overview | Should -Match ([regex]::Escape("| Reference baseline | Verdict | Score | $($emoji.green) Aligned | $($emoji.red) Misaligned | $($emoji.orange) Missing |"))
+        $labelA = ConvertTo-IdsReportText 'Microsoft Synthetic 1 (Desktop)'
+        $labelB = ConvertTo-IdsReportText 'CIS v2 (Level 1)'
+        $rowA = "| $labelA | $($emoji.green) In good order | 95% | 19 | 1 | 0 | 0 | 0 | 20 of 20 |"
+        $rowB = "| $labelB | $($emoji.red) Needs attention | 50% | 2 | 1 | 1 | 0 | 6 | 4 of 10 $($emoji.warning) |"
+        $overview.IndexOf($rowA) | Should -BeGreaterThan 0
+        $overview.IndexOf($rowB) | Should -BeGreaterThan $overview.IndexOf($rowA) -Because 'baselines follow the selected pack order'
+        $overview | Should -Match ([regex]::Escape("from 90%, $($emoji.orange) from 70%, $($emoji.red) below 70%. $($emoji.warning) means less than 80%"))
+    }
+
+    It 'lists deviations by severity in plain language and escapes customer text' {
+        $overview = Get-OverviewSection (ConvertTo-IdsAssessmentMarkdown (New-OverviewResult) -Locale en-GB)
+        $labelB = ConvertTo-IdsReportText 'CIS v2 (Level 1)'
+        $gatekeeper = "| $labelB | Gatekeeper | Enabled | Disabled | $($emoji.red) Misaligned |"
+        $firewall = "| $labelB | $(ConvertTo-IdsReportText '<Firewall> | pipe') | at least 2 rules | Not set | $($emoji.orange) Missing |"
+        $overview.IndexOf($gatekeeper) | Should -BeGreaterThan 0
+        $overview.IndexOf($firewall) | Should -BeGreaterThan $overview.IndexOf($gatekeeper)
+        $overview | Should -Not -Match '<Firewall>|Screen lock|Not relevant'
+    }
+
+    It 'uses the recorded thresholds, and the defaults when none or invalid thresholds were recorded' {
+        $overview = Get-OverviewSection (ConvertTo-IdsAssessmentMarkdown (New-OverviewResult @{ good = 40; attention = 30; coverage = 10 }) -Locale en-GB)
+        $overview | Should -Match ([regex]::Escape("$($emoji.green) In good order | 50% |"))
+        $overview | Should -Not -Match ($emoji.warning + ' \|')
+        $overview | Should -Match ([regex]::Escape("from 40%, $($emoji.orange) from 30%"))
+        foreach ($thresholds in $null, @{ good = 60; attention = 60; coverage = 10 }) {
+            $overview = Get-OverviewSection (ConvertTo-IdsAssessmentMarkdown (New-OverviewResult $thresholds) -Locale en-GB)
+            $overview | Should -Match ([regex]::Escape("$($emoji.red) Needs attention | 50% |"))
+            $overview | Should -Match ([regex]::Escape("from 90%, $($emoji.orange) from 70%"))
+        }
+    }
+
+    It 'states when there are no deviations and localizes the overview' {
+        $overview = Get-OverviewSection (ConvertTo-IdsAssessmentMarkdown (New-OverviewResult -Aligned) -Locale en-GB)
+        $overview | Should -Match ([regex]::Escape((Get-IdsText 'report.overview.no_deviations' -Locale en-GB)))
+        $overview | Should -Not -Match ([regex]::Escape('| Reference baseline | Topic |'))
+        $dutch = Get-OverviewSection (ConvertTo-IdsAssessmentMarkdown (New-OverviewResult) -Locale nl-NL) nl-NL
+        $dutch | Should -Match '## Samenvatting'
+        $dutch | Should -Match ([regex]::Escape("$($emoji.red) Aandacht nodig"))
+        $dutch | Should -Match ([regex]::Escape('4 van 10'))
+    }
+}

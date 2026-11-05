@@ -366,14 +366,14 @@ details:not(.disclosure) > summary { cursor: pointer; color: var(--accent); }
 
 label { display: block; margin-bottom: 14px; font-size: 13px; }
 label small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
-input[type=text], select {
+input[type=text], input[type=number], select {
   width: 100%; margin-top: 6px; padding: 10px 12px;
   background: var(--bg); color: var(--text);
   border: 1px solid var(--border-strong); border-radius: 8px;
   font-family: inherit; font-size: 13px;
   transition: border-color .15s ease, box-shadow .15s ease;
 }
-input[type=text]:focus, select:focus {
+input[type=text]:focus, input[type=number]:focus, select:focus {
   outline: none; border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(74, 158, 255, .25);
 }
@@ -510,6 +510,104 @@ table.counts td:last-child { text-align: right; color: var(--muted); }
 .assessment-settings th, .assessment-settings td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
 .assessment-settings th { color: var(--muted); font-weight: 600; }
 
+/* --- Plain-language overview and comparison ----------------------------- */
+
+.tone-ok { --c: var(--ok); }
+.tone-warn { --c: var(--warn); }
+.tone-err { --c: var(--err); }
+.tone-conflict { --c: var(--accent-2); }
+.tone-info { --c: var(--accent); }
+.tone-muted { --c: var(--muted); }
+.pill[class*="tone-"] {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px 2px 3px;
+  font-size: 12px; font-weight: 600; color: var(--c);
+  background: color-mix(in srgb, var(--c) 16%, transparent);
+  border-color: color-mix(in srgb, var(--c) 45%, transparent);
+}
+.pill.plain { padding: 2px 10px; }
+.pill-icon {
+  width: 18px; height: 18px; border-radius: 50%; display: inline-grid; place-items: center; flex: none;
+  background: var(--c, var(--muted)); color: var(--bg); font-size: 11px; font-weight: 800; line-height: 1;
+}
+.tag {
+  display: inline-block; align-self: flex-start; font-size: 11px; color: var(--muted);
+  border: 1px solid var(--border-strong); border-radius: 6px; padding: 0 6px;
+}
+
+.assessment-overview, .assessment-comparison { margin-top: 22px; }
+.assessment-overview h4, .assessment-comparison h4 { margin: 0 0 12px; font-size: 15px; }
+.overview-headline { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 16px; }
+.overview-sentence { font-family: var(--font-display); font-size: 18px; font-weight: 600; }
+.overview-totals { display: flex; flex-wrap: wrap; gap: 6px 14px; flex-basis: 100%; font-size: 12px; color: var(--muted); }
+.overview-totals > span { display: inline-flex; align-items: center; gap: 6px; }
+.score-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 14px; }
+.score-card {
+  display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; overflow-wrap: anywhere;
+  background: var(--surface-2); border: 1px solid var(--border); border-top: 3px solid var(--c);
+  border-radius: var(--radius);
+}
+.score-name { margin: 0; font-size: 14px; font-weight: 600; }
+.donut-wrap { position: relative; width: 120px; height: 120px; margin: 8px auto 4px; }
+.donut { display: block; width: 100%; height: 100%; }
+.donut-track, .donut-value { fill: none; stroke-width: 4.5; }
+.donut-track { stroke: var(--surface-3); }
+.donut-value { stroke: var(--c); stroke-linecap: round; }
+.donut-label { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; line-height: 1.2; }
+.donut-label b { font-family: var(--font-display); font-size: 24px; }
+.donut-label small { font-size: 10.5px; color: var(--muted); }
+.score-verdict, .score-coverage { margin: 0; text-align: center; }
+.score-coverage { font-size: 12px; color: var(--muted); }
+.score-coverage.low { color: var(--warn); }
+.mini-counts {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 10px;
+  margin: 8px 0 0; padding: 10px 0 0; list-style: none; border-top: 1px solid var(--border); font-size: 12px;
+}
+.mini-counts li { display: flex; align-items: center; gap: 6px; }
+#assessmentThresholdNote { margin: 12px 0 0; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px 4px 5px; border-radius: 999px;
+  font: inherit; font-size: 12px; cursor: pointer;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border-strong);
+}
+.chip:first-child { padding-left: 12px; }
+.chip:hover { border-color: var(--accent); }
+.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+.chip[aria-pressed="true"] .pill-icon { background: var(--bg); color: var(--accent); }
+.comparison-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+.comparison-table { width: 100%; min-width: 860px; border-collapse: collapse; font-size: 13px; }
+.comparison-table th, .comparison-table td {
+  border-top: 1px solid var(--border); padding: 10px 12px; text-align: left; vertical-align: top; overflow-wrap: anywhere;
+}
+.comparison-table thead th { border-top: 0; background: var(--surface-2); color: var(--muted); font-weight: 600; }
+.comparison-table tbody tr:not(.comparison-group):hover td { background: rgba(255, 255, 255, .025); }
+.comparison-group td { background: var(--surface); padding: 12px; }
+.group-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.group-line strong { font-size: 14px; }
+.mini-bar { display: block; width: 160px; height: 8px; border-radius: 4px; background: var(--surface-3); }
+.mini-bar rect { fill: var(--c); }
+.comparison-table .value { font-weight: 600; white-space: pre-wrap; }
+.comparison-table .value.diff { color: var(--c); }
+.comparison-table td.status-cell { border-left: 3px solid var(--c); white-space: nowrap; }
+.comparison-table .control-id { display: block; margin-top: 2px; font-family: var(--mono); font-size: 11px; }
+.comparison-table details { margin-top: 6px; font-size: 12px; color: var(--muted); }
+.comparison-table summary { cursor: pointer; color: var(--accent); }
+.comparison-table details p { margin: 4px 0 0; }
+#assessmentComparisonEmpty { margin: 12px 0 0; }
+.disclosure.technical-details { margin-top: 24px; }
+
+.settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 0 18px; }
+.settings-preview {
+  margin-top: 6px; padding: 12px 14px; border-radius: var(--radius);
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.verdict-legend { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.verdict-legend li { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.settings-error { margin: 0; color: #ffb3ae; font-size: 13px; }
+.settings-status { min-height: 1.4em; margin: 12px 0 0; font-size: 13px; color: var(--muted); }
+
 /* --- Stopped page ------------------------------------------------------- */
 
 .stopped {
@@ -553,6 +651,8 @@ table.counts td:last-child { text-align: right; color: var(--muted); }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stepper li { padding: 8px 10px; gap: 8px; font-size: 13px; }
   .actions .btn { width: 100%; }
+  .overview-sentence { font-size: 16px; }
+  .mini-bar { width: 120px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

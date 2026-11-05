@@ -51,6 +51,14 @@ chosen output folder. It is not a hosted service.
   A new `assessment-<generated-id>` directory contains `assessment.md` and
   `assessment.json` for each successful run. Reports do not change exporter
   pages/manifests, prune previous runs, or automatically upload, commit, or push.
+- Application preferences, currently the assessment verdict thresholds, live in
+  `%LOCALAPPDATA%\IntuneDocsStudio\settings.json`. The file contains no tenant
+  data, tokens, or customer output and is not part of the output backup. Changes
+  are accepted only from the dashboard origin and are validated before an atomic
+  write. A missing, invalid, or oversized file is ignored with a warning and the
+  defaults apply; delete the file to restore the defaults. Each assessment
+  records the thresholds in force at admission, so later changes do not relabel
+  saved reports.
 
 ## Language settings and output
 

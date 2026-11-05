@@ -21,7 +21,7 @@ const signedIn = (extra = {}) => ({
   ...extra
 });
 const signedOut = (extra = {}) => ({ build, auth: { connected: false }, ...extra });
-const viewIds = ['viewLoading', 'viewLanding', 'viewImport', 'viewPolicies', 'viewHome', 'viewDocument', 'viewAssess'];
+const viewIds = ['viewLoading', 'viewLanding', 'viewImport', 'viewPolicies', 'viewHome', 'viewDocument', 'viewAssess', 'viewSettings'];
 const requestedIds = new Set();
 
 function shell({ hash = '', search = '', respond = () => ({}), seed = () => {}, locale = {} } = {}) {
@@ -211,7 +211,7 @@ test('failed loading offers retry and never leaves old workflow choices enabled'
 });
 
 test('signed-out operators see only the landing page whatever the route', async () => {
-  for (const hash of ['', '#/', '#/document', '#/assess', '#/unknown']) {
+  for (const hash of ['', '#/', '#/document', '#/assess', '#/settings', '#/unknown']) {
     const d = shell({ hash, respond: stateOnly(signedOut()) });
     await d.settle();
     assert.deepEqual(d.visibleViews(), ['viewLanding'], hash);
@@ -224,7 +224,7 @@ test('signed-out operators see only the landing page whatever the route', async 
 test('signed-in routes show exactly one workspace view and mark the active link', async () => {
   const cases = [
     ['', 'viewHome', 'navHome'], ['#/', 'viewHome', 'navHome'], ['#/document', 'viewDocument', 'navDocument'],
-    ['#/assess', 'viewAssess', 'navAssess'], ['#/unknown', 'viewHome', 'navHome']
+    ['#/assess', 'viewAssess', 'navAssess'], ['#/settings', 'viewSettings', 'navSettings'], ['#/unknown', 'viewHome', 'navHome']
   ];
   for (const [hash, view, link] of cases) {
     const d = shell({ hash, respond: stateOnly(signedIn()) });
@@ -232,7 +232,7 @@ test('signed-in routes show exactly one workspace view and mark the active link'
     assert.deepEqual(d.visibleViews(), [view], hash);
     assert.equal(d.visible('appNav'), true, hash);
     assert.equal(d.visible('sessionControls'), true, hash);
-    for (const other of ['navHome', 'navDocument', 'navAssess']) {
+    for (const other of ['navHome', 'navDocument', 'navAssess', 'navSettings']) {
       assert.equal(d.element(other).getAttribute('aria-current'), other === link ? 'page' : null, `${hash} ${other}`);
     }
   }
@@ -464,6 +464,70 @@ test('the assessment wizard opens with platforms only and every wizard element e
     'assessmentContextWindows11', 'assessmentContextMacos', 'assessmentContextIosIpados',
     'assessmentContextAndroidEnterprise', 'assessmentContextEnrollment', 'assessmentContextIosOwnership'];
   for (const id of added) assert.equal(html.split(` id="${id}"`).length - 1, 1, id);
+});
+
+test('settings load saved thresholds, validate input, save and restore defaults', async () => {
+  const defaults = { good: 90, attention: 70, coverage: 80 };
+  let saveResponse = null;
+  const d = shell({ hash: '#/settings', respond(url, request) {
+    if (url === '/api/state') return signedIn();
+    if (url === '/api/settings' && request.method === 'GET') {
+      return { settings: { verdictThresholds: { good: 85, attention: 60, coverage: 75 } }, defaults: { verdictThresholds: defaults } };
+    }
+    if (url === '/api/settings') return saveResponse(request);
+    return {};
+  } });
+  await d.settle();
+  assert.deepEqual(d.visibleViews(), ['viewSettings']);
+  assert.equal(d.element('navSettings').getAttribute('aria-current'), 'page');
+  assert.deepEqual(['settingGood', 'settingAttention', 'settingCoverage'].map((id) => d.element(id).value), ['85', '60', '75']);
+  assert.equal(d.element('settingsStatus').textContent, '');
+  assert.match(d.element('settingsPreview').innerHTML, /Score of 85% or higher/);
+  assert.match(d.element('settingsPreview').innerHTML, /Score from 60%, below 85%/);
+  assert.equal(d.element('btnSettingsSave').disabled, false);
+
+  d.element('settingAttention').value = '85';
+  d.element('settingAttention').handlers.input();
+  assert.equal(d.element('btnSettingsSave').disabled, true);
+  assert.match(d.element('settingsPreview').innerHTML, /settings-error.*must be lower/);
+  d.element('settingAttention').value = '7.5';
+  d.element('settingAttention').handlers.input();
+  assert.match(d.element('settingsPreview').innerHTML, /whole numbers from 0 to 100/);
+  const before = d.requests.length;
+  await d.element('btnSettingsSave').handlers.click();
+  assert.equal(d.requests.length, before, 'invalid thresholds are never posted');
+
+  d.element('settingAttention').value = '65';
+  d.element('settingAttention').handlers.input();
+  saveResponse = () => ({ httpStatus: 400, body: { error: 'Synthetic server rejection' } });
+  await d.element('btnSettingsSave').handlers.click();
+  await d.settle();
+  assert.deepEqual(d.requests.at(-1).payload, { verdictThresholds: { good: 85, attention: 65, coverage: 75 } });
+  assert.equal(d.requests.at(-1).headers['Content-Type'], 'application/json');
+  assert.equal(d.element('settingsStatus').textContent, 'Synthetic server rejection');
+
+  saveResponse = (request) => ({ settings: request.payload, defaults: { verdictThresholds: defaults } });
+  await d.element('btnSettingsSave').handlers.click();
+  await d.settle();
+  assert.equal(d.element('settingsStatus').textContent, 'Settings saved.');
+  assert.deepEqual({ ...d.run('appSettings.verdictThresholds') }, { good: 85, attention: 65, coverage: 75 });
+  assert.equal(d.element('btnSettingsSave').disabled, false);
+
+  d.element('btnSettingsReset').handlers.click();
+  assert.deepEqual(['settingGood', 'settingAttention', 'settingCoverage'].map((id) => d.element(id).value), ['90', '70', '80']);
+  assert.match(d.element('settingsStatus').textContent, /Default values restored/);
+  assert.deepEqual({ ...d.run('appSettings.verdictThresholds') }, { good: 85, attention: 65, coverage: 75 }, 'reset is not saved');
+});
+
+test('unavailable settings fall back to the default thresholds with a visible message', async () => {
+  const d = shell({ hash: '#/settings', respond(url) {
+    if (url === '/api/state') return signedIn();
+    if (url === '/api/settings') return new Error('offline');
+    return {};
+  } });
+  await d.settle();
+  assert.deepEqual(['settingGood', 'settingAttention', 'settingCoverage'].map((id) => d.element(id).value), ['90', '70', '80']);
+  assert.match(d.element('settingsStatus').textContent, /could not be loaded/);
 });
 
 test('every element the script uses exists exactly once in the page', () => {

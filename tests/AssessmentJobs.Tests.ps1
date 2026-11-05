@@ -128,6 +128,27 @@ Describe 'Assessment job admission and session ownership' {
         }
     }
 
+    It 'records the verdict thresholds in force at admission in the result and both reports' {
+        $fixture = New-JobFixture
+        $fixture.state.Config.SettingsPath = Join-Path $TestDrive "$([guid]::NewGuid().ToString('N'))\settings.json"
+        $null = Set-IdsAppSettings -State $fixture.state -Settings @{ verdictThresholds = @{ good = 85; attention = 60; coverage = 75 } }
+        try {
+            Start-IdsAssessmentJob $fixture.state $fixture.options $fixture.root | Should -BeTrue
+            $null = Set-IdsAppSettings -State $fixture.state -Settings @{ verdictThresholds = @{ good = 99; attention = 98; coverage = 97 } }
+            Wait-Assessment $fixture.state
+            $a = $fixture.state.Assessment
+            $a.error | Should -BeNullOrEmpty
+            $a.result.verdictThresholds.good | Should -Be 85
+            $a.result.verdictThresholds.attention | Should -Be 60
+            $a.result.verdictThresholds.coverage | Should -Be 75
+            $json = [IO.File]::ReadAllText($a.reportPaths.jsonPath) | ConvertFrom-Json
+            $json.verdictThresholds.good | Should -Be 85
+            $markdown = [IO.File]::ReadAllText($a.reportPaths.markdownPath)
+            $markdown | Should -Match ([regex]::Escape('from 85%, ') + '.*' + [regex]::Escape('from 60%, ') + '.*' + [regex]::Escape('than 75%'))
+            $markdown | Should -Not -Match '99%'
+        } finally { Stop-IdsAssessmentJob $fixture.state }
+    }
+
     It 'runs real legacy policy evidence through normalization, evaluation and both reports without raw payloads' {
         $fixture = New-JobFixture
         $pack = [Text.Encoding]::UTF8.GetString((New-IdsTestPackBytes)) | ConvertFrom-Json
