@@ -668,7 +668,8 @@ test('admission validates missing packs/platforms, handles 409 and report errors
   await selectAll(d);
   boxes(d, 'assessmentPacks')[2].checked = false;
   await d.element('btnAssessmentRun').handlers.click();
-  assert.match(d.element('assessmentError').textContent, /Every selected platform/);
+  assert.match(d.element('assessmentError').textContent, /No reference baseline selected for: iOS\/iPadOS\./);
+  assert.doesNotMatch(d.element('assessmentError').textContent, /Windows|macOS|Android/);
   assert.equal(d.requests.filter((r) => r.method === 'POST').length, 0);
   boxes(d, 'assessmentPacks')[2].checked = true;
   await d.element('btnAssessmentRun').handlers.click();
@@ -1115,8 +1116,8 @@ test('wizard Next and Back validate the current step, mark the stepper and focus
   expectStep(d, 3, 'baselinesTitle');
   boxes(d, 'assessmentPacks')[0].checked = true;
   click(d, 'btnAssessBaselinesNext');
-  assert.equal(d.element('assessmentError').textContent,
-    'Every selected platform requires a selected applicable pack; choose at least one platform.');
+  assert.match(d.element('assessmentError').textContent, /No reference baseline selected for: macOS\./);
+  assert.doesNotMatch(d.element('assessmentError').textContent, /Windows|choose at least one platform/i);
   expectStep(d, 3, 'baselinesTitle');
   boxes(d, 'assessmentPacks')[1].checked = true;
   click(d, 'btnAssessBaselinesNext');
@@ -1142,6 +1143,77 @@ test('wizard Next and Back validate the current step, mark the stepper and focus
   click(d, 'btnAssessBaselinesNext');
   assert.equal(d.element('assessmentError').textContent, 'Select 1–64 packs.');
   expectStep(d, 3);
+});
+
+for (const androidPackAvailable of [true, false]) {
+  test(`baseline validation identifies Android and allows recovery ${androidPackAvailable ? 'by selecting its pack' : 'by deselecting its platform'}`, async () => {
+    const d = await assessmentDashboard(url => url === '/api/state' ? connectedState() : {});
+    await new Promise(setImmediate);
+    renderCatalog(d, syntheticPacks().filter(pack => androidPackAvailable || pack.platform !== 'androidEnterprise'));
+    await d.context.window.IdsI18n.setLocale('nl-NL');
+    const platforms = boxes(d, 'assessmentPlatforms');
+    platforms[0].checked = true;
+    platforms[3].checked = true;
+    platforms[0].handlers.change();
+    click(d, 'btnAssessPlatformsNext');
+    click(d, 'btnAssessImportNext');
+    boxes(d, 'assessmentPacks')[0].checked = true;
+    click(d, 'btnAssessBaselinesNext');
+    const message = d.element('assessmentError').textContent;
+    assert.match(message, /Geen referentiebaseline geselecteerd voor: Android Enterprise\./);
+    assert.match(message, /Referentiebaselines/);
+    assert.match(message, /Platformen.*deselecteer/);
+    assert.doesNotMatch(message, /Windows|kies minimaal één platform/i);
+    expectStep(d, 3);
+    assert.equal(d.element('btnAssessStepPlatforms').disabled, false);
+
+    const requestsBeforeLocale = d.requests.length;
+    await d.context.window.IdsI18n.setLocale('en-GB');
+    assert.match(d.element('assessmentError').textContent, /No reference baseline selected for: Android Enterprise\./);
+    assert.match(d.element('assessmentError').textContent, /Baselines.*Platforms.*deselect/);
+    assert.equal(d.requests.length, requestsBeforeLocale);
+    assert.equal(boxes(d, 'assessmentPacks')[0].checked, true);
+
+    if (androidPackAvailable) {
+      boxes(d, 'assessmentPacks')[3].checked = true;
+    } else {
+      click(d, 'btnAssessStepPlatforms');
+      expectStep(d, 1, 'platformsTitle');
+      const android = boxes(d, 'assessmentPlatforms')[3];
+      android.checked = false;
+      android.handlers.change();
+      click(d, 'btnAssessPlatformsNext');
+      click(d, 'btnAssessImportNext');
+    }
+    click(d, 'btnAssessBaselinesNext');
+    expectStep(d, 4, 'contextTitle');
+    assert.equal(isHidden(d, 'assessmentError'), true);
+    assert.equal(boxes(d, 'assessmentPacks')[0].checked, true);
+    assert.equal(d.requests.some(r => r.url === '/api/assessment' && r.method === 'POST'), false);
+  });
+}
+
+test('assessment admission distinguishes no platform from multiple platforms missing a baseline', async () => {
+  const d = await assessmentDashboard(url => url === '/api/state' ? connectedState() : {});
+  await new Promise(setImmediate);
+  renderCatalog(d);
+  await click(d, 'btnAssessmentRun');
+  assert.equal(d.element('assessmentError').textContent, 'Choose at least one platform to assess.');
+  const platforms = boxes(d, 'assessmentPlatforms');
+  platforms[0].checked = true;
+  platforms[1].checked = true;
+  platforms[3].checked = true;
+  platforms[0].handlers.change();
+  boxes(d, 'assessmentPacks')[0].checked = true;
+  click(d, 'btnAssessPlatformsNext');
+  click(d, 'btnAssessImportNext');
+  click(d, 'btnAssessBaselinesNext');
+  const message = d.element('assessmentError').textContent;
+  assert.match(message, /No reference baseline selected for: macOS, Android Enterprise\./);
+  assert.doesNotMatch(message, /Windows|iOS|choose at least one platform/i);
+  await click(d, 'btnAssessmentRun');
+  assert.equal(d.element('assessmentError').textContent, message);
+  assert.equal(d.requests.some(r => r.url === '/api/assessment' && r.method === 'POST'), false);
 });
 
 test('step buttons navigate back without losing choices, never skip forward and block during active work', async () => {

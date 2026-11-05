@@ -79,7 +79,7 @@
     "text.assessment_did_not_start": "La valutazione non è iniziata.",
     "text.check_the_selected_report_folder_and_context_before_trying": "Verifica la cartella dei report e il contesto prima di riprovare.",
     "text.select_164_packs_and_an_absolute_assessment_report_destination": "Seleziona 1–64 pacchetti e una cartella assoluta per i report di valutazione.",
-    "text.every_selected_platform_requires_a_selected_applicable_pack_choose": "Ogni piattaforma scelta richiede un pacchetto applicabile selezionato; scegli almeno una piattaforma.",
+    "text.select_baselines_for_missing_platforms": "Nessuna baseline di riferimento selezionata per: {platforms}. In {baselinesStep}, seleziona almeno un pacchetto compatibile per piattaforma, oppure torna a {platformsStep} e deseleziona queste piattaforme.",
     "text.load_policies_before_assessing": "Carica i criteri prima della valutazione.",
     "text.sign_in_or_import_a_policy_set_before_assessing": "Accedi o importa un set di criteri prima della valutazione.",
     "text.an_export_or_assessment_is_already_running": "È già in corso un’esportazione o una valutazione.",

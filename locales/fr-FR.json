@@ -79,7 +79,7 @@
     "text.assessment_did_not_start": "L’évaluation n’a pas démarré.",
     "text.check_the_selected_report_folder_and_context_before_trying": "Vérifiez le dossier de rapports et le contexte avant de réessayer.",
     "text.select_164_packs_and_an_absolute_assessment_report_destination": "Sélectionnez 1 à 64 packs et un dossier absolu pour les rapports d’évaluation.",
-    "text.every_selected_platform_requires_a_selected_applicable_pack_choose": "Chaque plateforme sélectionnée exige un pack applicable sélectionné ; choisissez au moins une plateforme.",
+    "text.select_baselines_for_missing_platforms": "Aucune référence sélectionnée pour : {platforms}. Dans {baselinesStep}, sélectionnez au moins un pack adapté par plateforme, ou revenez à {platformsStep} et désélectionnez ces plateformes.",
     "text.load_policies_before_assessing": "Chargez des stratégies avant l’évaluation.",
     "text.sign_in_or_import_a_policy_set_before_assessing": "Connectez-vous ou importez un jeu de stratégies avant l’évaluation.",
     "text.an_export_or_assessment_is_already_running": "Une exportation ou une évaluation est déjà en cours.",
