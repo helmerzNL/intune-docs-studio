@@ -1,4 +1,5 @@
 . (Join-Path $PSScriptRoot 'Localization.ps1')
+. (Join-Path $PSScriptRoot 'AppSettings.ps1')
 
 function Test-IdsWorkActive {
     param([hashtable]$State)
@@ -105,6 +106,9 @@ function Start-IdsAssessmentJob {
     if ($State.Assessment.job) { return $false }
     $resolved = Resolve-IdsAssessmentOptions $State $Options $Root
     $resolved.Locale = Get-IdsLocale
+    # The verdict thresholds in force at admission travel with the result, so later
+    # settings changes never relabel an already recorded run.
+    $resolved.VerdictThresholds = (Get-IdsAppSettings $State).verdictThresholds
     $State.Assessment.locale = $resolved.Locale
     $loadedPolicies = if ($State.Policies) { Get-IdsLoadedPolicies $State } else { $null }
     $assessment = $State.Assessment
@@ -176,6 +180,7 @@ function Start-IdsAssessmentJob {
                 context = $Options.context; packs = @($Options.packs)
                 summaries = @($evaluation.summaries); controls = @($evaluation.controls)
                 policies = @($snapshot.policies); collectionIssues = @($snapshot.issues); sources = @($snapshot.sources)
+                verdictThresholds = $Options.VerdictThresholds
             })
             if ($a.epoch -ne $Epoch -or $a.runId -ne $RunId) { throw (Get-IdsText -Key 'text.assessment_session_expired') }
             $a.phase = (Get-IdsText -Key 'text.writing_reports'); $a.percent = 85

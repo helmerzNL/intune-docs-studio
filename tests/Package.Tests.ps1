@@ -56,6 +56,7 @@ BeforeAll {
         'docs\assessment-rule-packs.md'
         'docs\operations.md'
         'docs\publishing.md'
+        'lib\AppSettings.ps1'
         'lib\Assessment.ps1'
         'lib\AssessmentApi.ps1'
         'lib\AssessmentCollection.ps1'

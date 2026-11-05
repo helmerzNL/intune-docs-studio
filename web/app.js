@@ -94,10 +94,10 @@ const setHidden = (id, hidden) => {
 
 // --- Navigation ------------------------------------------------------------
 
-const views = { loading: 'viewLoading', landing: 'viewLanding', import: 'viewImport', policies: 'viewPolicies', home: 'viewHome', document: 'viewDocument', assess: 'viewAssess' };
-const viewHeadings = { landing: 'landingTitle', import: 'policyImportTitle', policies: 'policyLoadTitle', home: 'homeTitle', document: 'documentTitle', assess: 'assessTitle' };
-const navLinks = { home: 'navHome', document: 'navDocument', assess: 'navAssess' };
-const routes = { '#/document': 'document', '#/assess': 'assess' };
+const views = { loading: 'viewLoading', landing: 'viewLanding', import: 'viewImport', policies: 'viewPolicies', home: 'viewHome', document: 'viewDocument', assess: 'viewAssess', settings: 'viewSettings' };
+const viewHeadings = { landing: 'landingTitle', import: 'policyImportTitle', policies: 'policyLoadTitle', home: 'homeTitle', document: 'documentTitle', assess: 'assessTitle', settings: 'settingsTitle' };
+const navLinks = { home: 'navHome', document: 'navDocument', assess: 'navAssess', settings: 'navSettings' };
+const routes = { '#/document': 'document', '#/assess': 'assess', '#/settings': 'settings' };
 let lastRoute = 'home';
 
 // In-page anchors such as the skip link (#main) keep the current route.
@@ -944,6 +944,201 @@ const assessmentValue = (value) => typeof value === 'string' ? value : JSON.stri
 const assessmentPercent = (value) => value == null ? t("text.not_available") :
   i18n.formatNumber(Number(value) / 100, { style: 'percent', maximumFractionDigits: 2 });
 
+// --- Plain-language overview and comparison --------------------------------
+
+const defaultVerdictThresholds = Object.freeze({ good: 90, attention: 70, coverage: 80 });
+const verdictTones = { good: 'ok', attention: 'warn', poor: 'err', unknown: 'muted' };
+const statusTones = {
+  aligned: 'ok', misaligned: 'err', missing: 'warn', potentialConflict: 'conflict', notAssessed: 'info', notApplicable: 'muted'
+};
+const statusIcons = { aligned: '✓', misaligned: '✕', missing: '!', potentialConflict: '⇄', notAssessed: '?', notApplicable: '–' };
+const deviationOrder = ['misaligned', 'missing', 'potentialConflict', 'notAssessed', 'aligned', 'notApplicable'];
+const barOrder = ['aligned', 'misaligned', 'missing', 'potentialConflict', 'notAssessed', 'notApplicable'];
+const plainOperators = {
+  ne: 'comparison.operator_ne', gte: 'comparison.operator_gte', lte: 'comparison.operator_lte', in: 'comparison.operator_in',
+  setEquals: 'comparison.operator_set_equals', containsAll: 'comparison.operator_contains_all'
+};
+let comparisonFilter = '';
+
+function validThresholds(value) {
+  if (!value || typeof value !== 'object') return null;
+  const thresholds = {};
+  for (const key of Object.keys(defaultVerdictThresholds)) {
+    if (!Number.isInteger(value[key]) || value[key] < 0 || value[key] > 100) return null;
+    thresholds[key] = value[key];
+  }
+  return thresholds.attention < thresholds.good ? thresholds : null;
+}
+// A result records the thresholds it was assessed with; older results follow the current settings.
+const resultThresholds = (result) => validThresholds(result?.verdictThresholds) ||
+  validThresholds(appSettings.verdictThresholds) || { ...defaultVerdictThresholds };
+const overviewPercent = (value) => value == null ? '–' :
+  i18n.formatNumber(Number(value) / 100, { style: 'percent', maximumFractionDigits: 1 });
+const thresholdPercent = (value) => i18n.formatNumber(value / 100, { style: 'percent', maximumFractionDigits: 0 });
+
+function assessmentVerdict(summary, thresholds) {
+  const alignment = summary?.alignmentPercent;
+  const verdict = !summary?.assessed || alignment == null ? 'unknown'
+    : alignment >= thresholds.good ? 'good' : alignment >= thresholds.attention ? 'attention' : 'poor';
+  return { verdict, coverageLow: summary?.coveragePercent != null && summary.coveragePercent < thresholds.coverage };
+}
+
+const statusIcon = (status) => `<span class="pill-icon" aria-hidden="true">${statusIcons[status] || '?'}</span>`;
+const statusPill = (status) =>
+  `<span class="pill tone-${statusTones[status] || 'muted'}">${statusIcon(status)}${escapeHtml(assessmentStatuses[status] || status)}</span>`;
+const verdictPill = (verdict) => `<span class="pill plain tone-${verdictTones[verdict]}">${h(`verdict.${verdict}`)}</span>`;
+
+function assessmentPackOrder(result) {
+  const order = new Map();
+  (result.packs || []).forEach((pack, index) => { if (pack?.id && !order.has(pack.id)) order.set(pack.id, index); });
+  return (packId) => order.has(packId) ? order.get(packId) : order.size;
+}
+
+function assessmentPackLabel(result, packId) {
+  const pack = (result.packs || []).find((p) => p?.id === packId);
+  if (!pack) return packId || '';
+  const name = [pack.framework, pack.frameworkVersion].filter(Boolean).join(' ') || pack.id;
+  return pack.profile && pack.profile !== name ? `${name} (${pack.profile})` : name;
+}
+
+function scoreDonut(percent) {
+  const value = Math.max(0, Math.min(100, Number(percent) || 0));
+  const arc = value > 0 ? `<circle class="donut-value" cx="21" cy="21" r="15.915" stroke-dasharray="${value} ${100 - value}" stroke-dashoffset="25"></circle>` : '';
+  return `<svg class="donut" viewBox="0 0 42 42" aria-hidden="true" focusable="false">
+    <circle class="donut-track" cx="21" cy="21" r="15.915"></circle>${arc}</svg>`;
+}
+
+function statusBar(counts) {
+  const total = barOrder.reduce((sum, key) => sum + (Number(counts?.[key]) || 0), 0);
+  if (!total) return '';
+  let offset = 0;
+  const segments = barOrder.filter((key) => Number(counts[key]) > 0).map((key) => {
+    const width = 100 * Number(counts[key]) / total;
+    const segment = `<rect class="tone-${statusTones[key]}" x="${offset}" y="0" width="${width}" height="8"></rect>`;
+    offset += width;
+    return segment;
+  }).join('');
+  return `<svg class="mini-bar" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true" focusable="false">${segments}</svg>`;
+}
+
+function plainExpectation(expected) {
+  if (!Array.isArray(expected)) return expected == null ? t("text.not_available") : assessmentValue(expected);
+  const values = expected.map((mapping) => {
+    const value = mapping?.displayValue ?? assessmentValue(mapping?.expected ?? '');
+    return plainOperators[mapping?.operator] ? t(plainOperators[mapping.operator], { value }) : value;
+  }).filter((value) => value !== '');
+  return values.length ? values.join('; ') : t("text.not_available");
+}
+
+function plainObservation(observed) {
+  const values = (Array.isArray(observed) ? observed : []).map((observation) => observation?.displayValue ??
+    (observation?.configured === false ? t("comparison.not_configured")
+      : observation?.secret === true || observation?.supported === false ? t("text.unavailable_secret_or_unsupported_evidence")
+        : assessmentValue(observation?.value ?? '')));
+  const unique = [...new Set(values.filter((value) => value !== ''))];
+  return unique.length ? unique.join('; ') : t("comparison.not_set");
+}
+
+function renderAssessmentOverview() {
+  const result = assessmentResult || {};
+  const thresholds = resultThresholds(result);
+  const packOrder = assessmentPackOrder(result);
+  const summaries = [...(result.summaries || [])].sort((a, b) => packOrder(a.packId) - packOrder(b.packId));
+  const verdicts = summaries.map((s) => assessmentVerdict(s, thresholds).verdict);
+  const needing = verdicts.filter((v) => v === 'attention' || v === 'poor').length;
+  const overall = ['poor', 'attention', 'good'].find((v) => verdicts.includes(v)) || 'unknown';
+  const totals = Object.fromEntries(deviationOrder.map((key) => [key,
+    summaries.reduce((sum, s) => sum + (Number(s.counts?.[key]) || 0), 0)]));
+  const sentence = !summaries.length ? t("overview.headline_empty")
+    : needing ? t(`overview.headline_attention_${i18n.plural(needing)}`, { count: needing, total: summaries.length })
+      : overall === 'good' ? t("overview.headline_good") : t("overview.headline_unknown");
+  const details = summaries.length ? ['misaligned', 'missing', 'potentialConflict', 'notAssessed']
+    .map((key) => `<span class="tone-${statusTones[key]}">${statusIcon(key)}${escapeHtml(assessmentStatuses[key])}: ${number(totals[key])}</span>`) : [];
+  $('assessmentHeadline').innerHTML = `${verdictPill(overall)}<span class="overview-sentence">${escapeHtml(sentence)}</span>
+    ${details.length ? `<span class="overview-totals">${details.join('')}</span>` : ''}`;
+  $('assessmentScorecards').innerHTML = summaries.map((s) => {
+    const { verdict, coverageLow } = assessmentVerdict(s, thresholds);
+    const counts = s.counts || {};
+    const coverage = { assessed: number(s.assessed), total: number(s.coverageDenominator) };
+    return `<article class="score-card tone-${verdictTones[verdict]}">
+      <span class="tag">${escapeHtml(assessmentPlatforms[s.platform] || s.platform || '')}</span>
+      <h5 class="score-name">${escapeHtml(assessmentPackLabel(result, s.packId))}</h5>
+      <div class="donut-wrap">${scoreDonut(s.alignmentPercent)}
+        <span class="donut-label"><b>${escapeHtml(overviewPercent(s.alignmentPercent))}</b><small>${h("overview.in_order")}</small></span></div>
+      <p class="score-verdict">${verdictPill(verdict)}</p>
+      <p class="score-coverage${coverageLow ? ' low' : ''}">${coverageLow
+        ? `<span aria-hidden="true">⚠</span> ${h("overview.coverage_low", coverage)}` : h("overview.assessed_of", coverage)}</p>
+      <ul class="mini-counts">${deviationOrder.map((key) => `<li class="tone-${statusTones[key]}">${statusIcon(key)}
+        ${escapeHtml(assessmentStatuses[key])}: ${number(counts[key])}</li>`).join('')}</ul>
+    </article>`;
+  }).join('');
+  writeText($('assessmentThresholdNote'), summaries.length ? t("overview.thresholds_note", {
+    good: thresholdPercent(thresholds.good), attention: thresholdPercent(thresholds.attention),
+    coverage: thresholdPercent(thresholds.coverage)
+  }) : '');
+}
+
+function syncComparisonChips() {
+  Array.from($('assessmentComparisonFilter').children).forEach((chip) => {
+    chip.setAttribute('aria-pressed', String((chip.dataset?.status || '') === comparisonFilter));
+  });
+}
+
+function renderComparisonRows() {
+  const result = assessmentResult || {};
+  const thresholds = resultThresholds(result);
+  const packOrder = assessmentPackOrder(result);
+  const rank = (status) => { const index = deviationOrder.indexOf(status); return index < 0 ? deviationOrder.length : index; };
+  const policies = new Map((result.policies || []).map((p) => [p.key, p]));
+  const summaries = new Map((result.summaries || []).map((s) => [s.packId, s]));
+  const rows = (result.controls || []).filter((c) => !comparisonFilter || c.status === comparisonFilter)
+    .sort((a, b) => packOrder(a.packId) - packOrder(b.packId) || rank(a.status) - rank(b.status));
+  let packId;
+  $('assessmentComparison').innerHTML = rows.map((c) => {
+    let group = '';
+    if (c.packId !== packId) {
+      packId = c.packId;
+      const summary = summaries.get(packId);
+      const verdict = assessmentVerdict(summary, thresholds).verdict;
+      group = `<tr class="comparison-group"><td colspan="5"><div class="group-line">
+        <strong>${escapeHtml(assessmentPackLabel(result, packId))}</strong>
+        <span class="tag">${escapeHtml(assessmentPlatforms[c.platform] || c.platform || '')}</span>
+        ${summary ? `${statusBar(summary.counts)}<span class="muted small">${h("comparison.group_score", { percent: overviewPercent(summary.alignmentPercent) })}</span>
+        ${verdictPill(verdict)}` : ''}</div></td></tr>`;
+    }
+    const reason = c.displayReason ?? c.reason;
+    const names = [...new Set((c.policyResults || []).map((p) => policies.get(p.policyKey)?.name || p.policyKey).filter(Boolean))];
+    const more = reason || names.length ? `<details><summary>${h("comparison.more")}</summary>
+      ${reason ? `<p>${escapeHtml(reason)}</p>` : ''}${names.length ? `<p>${h("comparison.policies", { names: names.join(', ') })}</p>` : ''}</details>` : '';
+    return `${group}<tr class="tone-${statusTones[c.status] || 'muted'}">
+      <td><strong>${escapeHtml(c.title || c.controlId)}</strong>${c.title && c.controlId ? `<span class="muted small control-id">${escapeHtml(c.controlId)}</span>` : ''}</td>
+      <td><span class="value">${escapeHtml(plainExpectation(c.expected))}</span></td>
+      <td><span class="value${c.status === 'aligned' ? '' : ' diff'}">${escapeHtml(plainObservation(c.observed))}</span></td>
+      <td class="status-cell">${statusPill(c.status)}</td>
+      <td>${statusIcons[c.status] ? h(`comparison.explain_${c.status}`) : ''}${more}</td></tr>`;
+  }).join('');
+  setHidden('assessmentComparisonEmpty', rows.length > 0);
+}
+
+function renderAssessmentComparison() {
+  const controls = assessmentResult?.controls || [];
+  const counts = Object.fromEntries(deviationOrder.map((key) => [key, controls.filter((c) => c.status === key).length]));
+  if (comparisonFilter && !counts[comparisonFilter]) comparisonFilter = '';
+  const filters = [['', controls.length], ...deviationOrder.filter((key) => counts[key]).map((key) => [key, counts[key]])];
+  $('assessmentComparisonFilter').innerHTML = filters.map(([key, count]) =>
+    `<button type="button" class="chip" data-status="${key}" aria-pressed="${comparisonFilter === key}">${key
+      ? `${statusIcon(key)}${escapeHtml(assessmentStatuses[key])}` : h("comparison.all")} (${number(count)})</button>`).join('');
+  renderComparisonRows();
+}
+
+$('assessmentComparisonFilter').addEventListener('click', (event) => {
+  const chip = event.target?.closest?.('button[data-status]');
+  if (!chip) return;
+  comparisonFilter = chip.dataset.status || '';
+  syncComparisonChips();
+  renderComparisonRows();
+});
+
 function renderAssessmentPacks(catalog) {
   const selected = new Set(assessmentPackBoxes().filter((b) => b.checked).map((b) => b.value));
   const platforms = new Set(assessmentPlatformBoxes().filter((b) => b.checked).map((b) => b.value));
@@ -1227,9 +1422,12 @@ function syncJobAdmission() {
 
 function clearAssessmentEvidence() {
   assessmentResult = null;
-  ['assessmentResults', 'assessmentSummary', 'assessmentPolicies'].forEach((id) => { $(id).innerHTML = ''; });
+  comparisonFilter = '';
+  ['assessmentResults', 'assessmentSummary', 'assessmentPolicies', 'assessmentHeadline', 'assessmentScorecards',
+    'assessmentComparisonFilter', 'assessmentComparison'].forEach((id) => { $(id).innerHTML = ''; });
   ['assessmentReportPaths', 'assessmentContextResult', 'assessmentPackResult', 'assessmentIssues',
-    'assessmentProgress'].forEach((id) => { writeText($(id), ''); });
+    'assessmentProgress', 'assessmentThresholdNote'].forEach((id) => { writeText($(id), ''); });
+  setHidden('assessmentComparisonEmpty', true);
   $('assessmentBar').style.width = '0%';
 }
 
@@ -1659,6 +1857,8 @@ function renderAssessmentResult(result) {
       <details><summary>${h("text.technical_policy_and_assignment_evidence")}</summary>
         <pre class="assessment-text">${assessmentText({ ...p, settingsTables: undefined, settingsNote: undefined })}</pre>
       </details></div>`).join('');
+  renderAssessmentOverview();
+  renderAssessmentComparison();
   renderAssessmentEvidence();
 }
 
@@ -1727,8 +1927,121 @@ function renderLocale() {
   if ($('assessmentReview').innerHTML) renderAssessmentReview();
   if (assessmentResult) renderAssessmentResult(assessmentResult);
   if (documentSummary) renderSummary(documentSummary);
+  renderSettingsPreview();
 }
 i18n.subscribe(renderLocale);
+
+// --- Settings ----------------------------------------------------------------
+
+const thresholdFields = { good: 'settingGood', attention: 'settingAttention', coverage: 'settingCoverage' };
+let appSettings = { verdictThresholds: { ...defaultVerdictThresholds } };
+let appSettingsDefaults = { ...defaultVerdictThresholds };
+let settingsSaving = false;
+
+function readThresholdInputs() {
+  return Object.fromEntries(Object.entries(thresholdFields).map(([key, id]) => {
+    const raw = String($(id).value ?? '').trim();
+    return [key, /^\d{1,3}$/.test(raw) ? Number(raw) : NaN];
+  }));
+}
+
+function thresholdProblem(values) {
+  if (Object.values(values).some((value) => !Number.isInteger(value) || value < 0 || value > 100)) {
+    return () => t("settings.invalid_number");
+  }
+  return values.attention < values.good ? null : () => t("settings.invalid_order");
+}
+
+function fillSettingsForm(thresholds) {
+  Object.entries(thresholdFields).forEach(([key, id]) => { $(id).value = String(thresholds[key]); });
+}
+
+function renderSettingsPreview() {
+  const values = readThresholdInputs();
+  const problem = thresholdProblem(values);
+  $('btnSettingsSave').disabled = !!problem || settingsSaving;
+  $('btnSettingsReset').disabled = settingsSaving;
+  if (problem) {
+    $('settingsPreview').innerHTML = `<p class="settings-error">${escapeHtml(problem())}</p>`;
+    return;
+  }
+  const ranges = [
+    ['good', t("settings.range_good", { value: thresholdPercent(values.good) })],
+    ['attention', t("settings.range_attention", { from: thresholdPercent(values.attention), to: thresholdPercent(values.good) })],
+    ['poor', t("settings.range_poor", { value: thresholdPercent(values.attention) })]
+  ];
+  $('settingsPreview').innerHTML = `<ul class="verdict-legend">${ranges.map(([verdict, range]) =>
+    `<li>${verdictPill(verdict)}<span>${escapeHtml(range)}</span></li>`).join('')}
+    <li><span class="pill plain tone-warn"><span aria-hidden="true">⚠</span></span><span>${h("settings.range_coverage", { value: thresholdPercent(values.coverage) })}</span></li></ul>`;
+}
+
+function applyAppSettings(body) {
+  const defaults = validThresholds(body?.defaults?.verdictThresholds);
+  if (defaults) appSettingsDefaults = defaults;
+  const saved = validThresholds(body?.settings?.verdictThresholds);
+  appSettings = { verdictThresholds: saved || { ...appSettingsDefaults } };
+  return !!saved;
+}
+
+function refreshThresholdViews() {
+  fillSettingsForm(appSettings.verdictThresholds);
+  renderSettingsPreview();
+  if (assessmentResult && !validThresholds(assessmentResult.verdictThresholds)) {
+    renderAssessmentOverview();
+    renderComparisonRows();
+  }
+}
+
+async function loadAppSettings() {
+  let loaded = false;
+  try {
+    const r = await api('/api/settings');
+    loaded = r.ok && applyAppSettings(r.body);
+  } catch (e) { loaded = false; }
+  refreshThresholdViews();
+  if (loaded) writeText($('settingsStatus'), '');
+  else showMessage($('settingsStatus'), () => t("settings.load_failed"));
+}
+
+Object.values(thresholdFields).forEach((id) => {
+  $(id).addEventListener('input', () => {
+    writeText($('settingsStatus'), '');
+    renderSettingsPreview();
+  });
+});
+
+$('btnSettingsReset').addEventListener('click', () => {
+  fillSettingsForm(appSettingsDefaults);
+  renderSettingsPreview();
+  showMessage($('settingsStatus'), () => t("settings.restored"));
+});
+
+$('btnSettingsSave').addEventListener('click', async () => {
+  if (settingsSaving) return;
+  const values = readThresholdInputs();
+  const problem = thresholdProblem(values);
+  if (problem) {
+    showMessage($('settingsStatus'), problem);
+    return;
+  }
+  settingsSaving = true;
+  renderSettingsPreview();
+  try {
+    let r = null;
+    try { r = await post('/api/settings', { verdictThresholds: values }); } catch (e) { r = null; }
+    if (r?.ok && applyAppSettings(r.body)) {
+      refreshThresholdViews();
+      showMessage($('settingsStatus'), () => t("settings.saved"));
+    } else if (typeof r?.body?.error === 'string' && r.body.error) {
+      showMessage($('settingsStatus'), r.body.error);
+    } else {
+      showMessage($('settingsStatus'), () => t("settings.save_failed"));
+    }
+  } finally {
+    settingsSaving = false;
+    renderSettingsPreview();
+  }
+});
 
 // --- Boot ------------------------------------------------------------------
 
@@ -1753,6 +2066,7 @@ async function start() {
     if (!(await loadInitialState())) return;
     await refreshAssessment();
     await loadAssessmentCatalog();
+    await loadAppSettings();
     const { body } = await api('/api/export/log?from=0');
     if (body && body.running) {
       $('cardRun').classList.remove('hidden');
@@ -1769,6 +2083,8 @@ $('btnRetryState').addEventListener('click', start);
 (async function init() {
   await i18n.ready;
   renderAssessmentPacks({ packs: [], errors: [] });
+  fillSettingsForm(appSettings.verdictThresholds);
+  renderSettingsPreview();
   const params = new URLSearchParams(window.location.search);
   if (params.has('signin')) {
     window.history.replaceState({}, '', '/' + (window.location.hash || ''));

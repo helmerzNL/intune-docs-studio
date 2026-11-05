@@ -227,6 +227,87 @@ test('evidence shows every status, typed values, assignment limits, sources and 
   assert.match(element('assessmentSummary').innerHTML, /not available/);
 });
 
+test('overview scorecards and the plain comparison table explain results for non-technical readers', async () => {
+  const d = await assessmentDashboard((url) => url === '/api/settings' ? {
+    settings: { verdictThresholds: { good: 40, attention: 30, coverage: 10 } },
+    defaults: { verdictThresholds: { good: 90, attention: 70, coverage: 80 } }
+  } : {});
+  const { element, run } = d;
+  for (let i = 0; i < 10; i++) await new Promise(setImmediate);
+  await run('loadAppSettings()');
+  assert.deepEqual({ ...run('appSettings.verdictThresholds') }, { good: 40, attention: 30, coverage: 10 });
+  const result = {
+    verdictThresholds: { good: 90, attention: 70, coverage: 80 },
+    packs: [
+      { id: 'pack-a', framework: 'Microsoft', frameworkVersion: 'Synthetic 1', profile: 'Synthetic 1', platform: 'windows11' },
+      { id: 'pack-b', framework: 'CIS', frameworkVersion: 'Synthetic 2', profile: 'Level 1', platform: 'macos' }
+    ],
+    summaries: [
+      { packId: 'pack-b', platform: 'macos', assessed: 4, coverageDenominator: 10, coveragePercent: 40, alignmentPercent: 50,
+        counts: { aligned: 2, misaligned: 1, missing: 1, notAssessed: 6 } },
+      { packId: 'pack-a', platform: 'windows11', assessed: 20, coverageDenominator: 20, coveragePercent: 100,
+        alignmentPercent: 95, counts: { aligned: 19, misaligned: 1 } }
+    ],
+    controls: [
+      { packId: 'pack-a', platform: 'windows11', controlId: 'A-1', title: 'Screen lock', status: 'aligned',
+        expected: [{ operator: 'lte', displayValue: '15 minutes' }], observed: [{ displayValue: '10 minutes' }], policyResults: [] },
+      { packId: 'pack-b', platform: 'macos', controlId: 'B-2', title: '<Firewall>', status: 'missing', reason: 'No policy',
+        expected: [{ operator: 'eq', displayValue: 'On' }], observed: [], policyResults: [] },
+      { packId: 'pack-b', platform: 'macos', controlId: 'B-1', title: 'Gatekeeper', status: 'misaligned',
+        expected: [{ operator: 'eq', displayValue: 'Enabled' }], observed: [{ policyKey: 'p1', displayValue: 'Disabled' }],
+        policyResults: [{ policyKey: 'p1' }] }
+    ],
+    policies: [{ key: 'p1', name: 'macOS <baseline>' }]
+  };
+  run(`renderAssessmentResult(${JSON.stringify(result)})`);
+  const headline = element('assessmentHeadline').innerHTML;
+  assert.match(headline, /tone-err">Needs attention/);
+  assert.match(headline, /1 of 2 reference baselines is not yet in good order\./);
+  const cards = element('assessmentScorecards').innerHTML;
+  assert.ok(cards.indexOf('Microsoft Synthetic 1') < cards.indexOf('CIS Synthetic 2 (Level 1)'), 'catalog order, recorded thresholds win');
+  assert.match(cards, /95%.*In good order.*20 of 20 topics assessed/s);
+  assert.match(cards, /50%.*Needs attention.*Only 4 of 10 topics could be assessed/s);
+  assert.match(cards, /stroke-dasharray="95 5"/);
+  assert.match(element('assessmentThresholdNote').textContent, /In good order from 90%, largely aligned from 70%\. Coverage below 80%/);
+  const rows = element('assessmentComparison').innerHTML;
+  assert.ok(rows.indexOf('Screen lock') < rows.indexOf('Gatekeeper'), 'baselines follow the catalog order');
+  assert.ok(rows.indexOf('Gatekeeper') < rows.indexOf('&lt;Firewall&gt;'), 'deviations are ranked by severity');
+  assert.match(rows, /class="value">at most 15 minutes/);
+  assert.match(rows, /class="value">10 minutes/);
+  assert.match(rows, /class="value diff">Disabled/);
+  assert.match(rows, /class="value diff">Not set/);
+  assert.match(rows, /This setting is not configured in any assessed policy\./);
+  assert.match(rows, /Policies: macOS &lt;baseline&gt;/);
+  assert.doesNotMatch(rows, /<Firewall>|<baseline>/);
+  assert.equal(element('assessmentComparisonEmpty').classList.contains('hidden'), true);
+  const chips = element('assessmentComparisonFilter').innerHTML;
+  assert.match(chips, /data-status="" aria-pressed="true">All \(3\)/);
+  assert.match(chips, /data-status="missing" aria-pressed="false">/);
+  assert.doesNotMatch(chips, /data-status="potentialConflict"/);
+
+  element('assessmentComparisonFilter').handlers.click({ target: { closest: () => ({ dataset: { status: 'missing' } }) } });
+  assert.equal(run('comparisonFilter'), 'missing');
+  assert.match(element('assessmentComparison').innerHTML, /&lt;Firewall&gt;/);
+  assert.doesNotMatch(element('assessmentComparison').innerHTML, /Gatekeeper|Screen lock/);
+
+  const requestCount = d.requests.length;
+  await run("window.IdsI18n.setLocale('nl-NL')");
+  assert.equal(d.requests.length, requestCount, 'switching language does not reload results or settings');
+  assert.match(element('assessmentHeadline').innerHTML, /Aandacht nodig.*1 van 2 referentiebaselines is nog niet goed op orde\./s);
+  assert.match(element('assessmentComparisonFilter').innerHTML, /data-status="missing" aria-pressed="true">/);
+  assert.doesNotMatch(element('assessmentComparison').innerHTML, /Gatekeeper/);
+  await run("window.IdsI18n.setLocale('en-GB')");
+
+  const legacy = { ...result };
+  delete legacy.verdictThresholds;
+  run(`renderAssessmentResult(${JSON.stringify(legacy)})`);
+  assert.match(element('assessmentScorecards').innerHTML, /50%.*In good order.*4 of 10 topics assessed/s,
+    'results without recorded thresholds follow the current settings');
+  run(`renderAssessmentResult(${JSON.stringify({ ...result, controls: [] })})`);
+  assert.equal(run('comparisonFilter'), '');
+  assert.equal(element('assessmentComparisonEmpty').classList.contains('hidden'), false);
+});
+
 const syntheticPacks = () => ['windows11', 'macos', 'iosIpados', 'androidEnterprise'].map((platform, i) => ({
   schemaVersion: 1, id: `synthetic-${platform.toLowerCase()}`, version: '1.0.0', sha256: String(i).repeat(64),
   origin: i === 3 ? 'imported' : 'bundled',
@@ -724,7 +805,9 @@ test('clearWorkspace clears assessment evidence, context and report destination 
   d.run('clearWorkspace()');
   release({ running: false, done: true, percent: 100, reportPaths: { markdownPath: 'stale', jsonPath: 'stale' } });
   await polling;
-  for (const id of ['assessmentResults', 'assessmentSummary']) assert.equal(d.element(id).innerHTML, '');
+  for (const id of ['assessmentResults', 'assessmentSummary', 'assessmentHeadline', 'assessmentScorecards',
+    'assessmentComparisonFilter', 'assessmentComparison']) assert.equal(d.element(id).innerHTML, '', id);
+  assert.equal(d.element('assessmentThresholdNote').textContent, '');
   for (const id of ['assessmentReportPaths', 'assessmentOutputPath', 'assessmentOsMacos']) {
     assert.equal(d.element(id).value || d.element(id).textContent, '');
   }

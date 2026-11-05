@@ -1,4 +1,5 @@
 . (Join-Path $PSScriptRoot 'Localization.ps1')
+. (Join-Path $PSScriptRoot 'AppSettings.ps1')
 
 <#
     Standalone, customer-owned assessment evidence. Both formats use the same
@@ -208,8 +209,9 @@ function Copy-IdsReportRecord {
         Result { [ordered]@{
             schemaVersion = 'number'; runId = 'text'; generatedAt = 'text'; policySnapshotAt = 'text'; policySource = 'PolicySource'; tenant = 'Tenant'; context = 'Context'
             packs = 'Pack[]'; summaries = 'Summary[]'; controls = 'Control[]'; policies = 'Policy[]'
-            collectionIssues = 'Issue[]'; sources = 'Source[]'
+            collectionIssues = 'Issue[]'; sources = 'Source[]'; verdictThresholds = 'VerdictThresholds'
         } }
+        VerdictThresholds { [ordered]@{ good = 'number'; attention = 'number'; coverage = 'number' } }
         Tenant { [ordered]@{ id = 'text'; tenantId = 'text'; name = 'text'; displayName = 'text'; defaultDomain = 'text' } }
         PolicySource { [ordered]@{ kind = 'text'; name = 'text'; importedAt = 'text'; format = 'text' } }
         Context { [ordered]@{ platforms = 'text[]'; osVersions = 'Platforms'; enrollmentModes = 'Platforms' } }
@@ -424,11 +426,169 @@ function Format-IdsReadableAssessmentEvidence {
     return $lines -join "`n"
 }
 
+function Get-IdsAssessmentVerdictThresholds {
+    param($Result)
+    # Results recorded before thresholds were snapshotted, or with invalid values, use the defaults.
+    $recorded = Get-IdsReportMember $Result 'verdictThresholds'
+    if ($null -ne $recorded) {
+        try { return ConvertTo-IdsVerdictThresholds $recorded } catch { }
+    }
+    return (Get-IdsDefaultAppSettings).verdictThresholds
+}
+
+function Get-IdsAssessmentVerdict {
+    param($Summary, $Thresholds)
+    $alignment = $Summary.alignmentPercent
+    $verdict = if (-not $Summary.assessed -or $null -eq $alignment) { 'unknown' }
+        elseif ($alignment -ge $Thresholds.good) { 'good' }
+        elseif ($alignment -ge $Thresholds.attention) { 'attention' }
+        else { 'poor' }
+    return [pscustomobject]@{
+        verdict = $verdict
+        coverageLow = ($null -ne $Summary.coveragePercent -and $Summary.coveragePercent -lt $Thresholds.coverage)
+    }
+}
+
+function Format-IdsReportPercent {
+    param([AllowNull()]$Value)
+    if ($null -eq $Value) { return (Get-IdsText -Key 'text.not_available') }
+    $format = if ([double]$Value % 1 -eq 0) { 'P0' } else { 'P1' }
+    return Format-IdsLocaleNumber ([double]$Value / 100) -Format $format
+}
+
+function Get-IdsAssessmentPackLabel {
+    param($Pack, [string]$PackId)
+    if (-not $Pack) { return $PackId }
+    $name = @($Pack.framework, $Pack.frameworkVersion | Where-Object { $_ }) -join ' '
+    if (-not $name) { $name = $Pack.id }
+    if ($Pack.profile -and $Pack.profile -cne $name) { return '{0} ({1})' -f $name, $Pack.profile }
+    return $name
+}
+
+function Format-IdsAssessmentPlainExpectation {
+    param($Mapping)
+    $value = if ($null -ne $Mapping.displayValue) { $Mapping.displayValue }
+        else { ConvertTo-Json -InputObject $Mapping.expected -Depth 64 -Compress }
+    $key = switch -CaseSensitive ($Mapping.operator) {
+        ne { 'report.overview.operator_ne' }
+        gte { 'report.overview.operator_gte' }
+        lte { 'report.overview.operator_lte' }
+        in { 'report.overview.operator_in' }
+        setEquals { 'report.overview.operator_set_equals' }
+        containsAll { 'report.overview.operator_contains_all' }
+        default { $null }
+    }
+    if (-not $key) { return $value }
+    return Get-IdsText -Key $key -Arguments @{ value = $value }
+}
+
+function Format-IdsAssessmentPlainObservation {
+    param($Observed)
+    $values = @(foreach ($observation in $Observed) {
+        if ($null -ne $observation.displayValue) { $observation.displayValue }
+        elseif ($observation.configured -eq $false) { Get-IdsText -Key 'text.not_configured' }
+        else { ConvertTo-Json -InputObject $observation.value -Depth 64 -Compress }
+    }) | Select-Object -Unique
+    if (@($values).Count -eq 0) { return (Get-IdsText -Key 'report.overview.not_set') }
+    return @($values) -join '; '
+}
+
+function Add-IdsAssessmentOverviewMarkdown {
+    param([Collections.Generic.List[string]]$Lines, $Result)
+    $thresholds = Get-IdsAssessmentVerdictThresholds $Result
+    $emoji = @{
+        aligned = [char]::ConvertFromUtf32(0x1F7E2); misaligned = [char]::ConvertFromUtf32(0x1F534)
+        missing = [char]::ConvertFromUtf32(0x1F7E0); potentialConflict = [char]::ConvertFromUtf32(0x1F7E3)
+        notAssessed = [char]::ConvertFromUtf32(0x2754); notApplicable = [char]::ConvertFromUtf32(0x26AA)
+        good = [char]::ConvertFromUtf32(0x1F7E2); attention = [char]::ConvertFromUtf32(0x1F7E0)
+        poor = [char]::ConvertFromUtf32(0x1F534); unknown = [char]::ConvertFromUtf32(0x26AA)
+        warning = [char]::ConvertFromUtf32(0x26A0)
+    }
+    $statusKeys = @{
+        aligned = 'text.aligned'; misaligned = 'text.misaligned'; missing = 'text.missing'
+        potentialConflict = 'text.potential_conflict'; notApplicable = 'text.not_applicable'; notAssessed = 'text.not_assessed'
+    }
+    $verdictKeys = @{
+        good = 'report.overview.verdict_good'; attention = 'report.overview.verdict_attention'
+        poor = 'report.overview.verdict_poor'; unknown = 'report.overview.verdict_unknown'
+    }
+    $statusLabel = { param($status) '{0} {1}' -f $emoji[$status], (Get-IdsText -Key $statusKeys[$status]) }
+    $packs = @($Result.packs)
+    $packIndex = [Collections.Generic.Dictionary[string, int]]::new([StringComparer]::Ordinal)
+    for ($index = 0; $index -lt $packs.Count; $index++) {
+        if ($packs[$index].id -and -not $packIndex.ContainsKey($packs[$index].id)) { $packIndex[$packs[$index].id] = $index }
+    }
+    $orderOf = { param($packId) if ($packId -and $packIndex.ContainsKey($packId)) { $packIndex[$packId] } else { $packs.Count } }
+    $labelOf = { param($packId)
+        $pack = if ($packId -and $packIndex.ContainsKey($packId)) { $packs[$packIndex[$packId]] } else { $null }
+        Get-IdsAssessmentPackLabel $pack $packId
+    }
+
+    $Lines.Add((Get-IdsText -Key 'report.overview.heading'))
+    $Lines.Add('')
+    $Lines.Add((Get-IdsText -Key 'report.overview.disclaimer'))
+    $Lines.Add('')
+    $columns = @('aligned', 'misaligned', 'missing', 'potentialConflict', 'notAssessed')
+    $Lines.Add((Get-IdsText -Key 'report.overview.summary_header' -Arguments @{
+        aligned = (& $statusLabel aligned); misaligned = (& $statusLabel misaligned); missing = (& $statusLabel missing)
+        potentialConflict = (& $statusLabel potentialConflict); notAssessed = (& $statusLabel notAssessed)
+    }))
+    $Lines.Add('| --- | --- | ---: | ' + (($columns | ForEach-Object { '---:' }) -join ' | ') + ' | --- |')
+    $summaries = @($Result.summaries | Sort-Object -Stable { & $orderOf $_.packId })
+    foreach ($summary in $summaries) {
+        $verdict = Get-IdsAssessmentVerdict $summary $thresholds
+        $assessed = Get-IdsText -Key 'report.overview.assessed_of' -Arguments @{
+            assessed = [int]$summary.assessed; total = [int]$summary.coverageDenominator
+        }
+        if ($verdict.coverageLow) { $assessed = '{0} {1}' -f $assessed, $emoji.warning }
+        $counts = @($columns | ForEach-Object { [string][int]$summary.counts.$_ })
+        $Lines.Add('| ' + (@(
+            (ConvertTo-IdsReportText (& $labelOf $summary.packId))
+            ('{0} {1}' -f $emoji[$verdict.verdict], (ConvertTo-IdsReportText (Get-IdsText -Key $verdictKeys[$verdict.verdict])))
+            (ConvertTo-IdsReportText (Format-IdsReportPercent $summary.alignmentPercent))
+        ) + $counts + @(ConvertTo-IdsReportText $assessed) -join ' | ') + ' |')
+    }
+    if ($summaries.Count -eq 0) { $Lines.Add((Get-IdsText -Key 'text.no_entries_supplied')) }
+    $Lines.Add('')
+    $Lines.Add((Get-IdsText -Key 'report.overview.deviations_heading'))
+    $Lines.Add('')
+    $rank = @{ misaligned = 0; missing = 1; potentialConflict = 2; notAssessed = 3 }
+    $deviations = @($Result.controls | Where-Object { $_.status -cin @($rank.Keys) } |
+        Sort-Object -Stable { & $orderOf $_.packId }, { $rank[$_.status] })
+    if ($deviations.Count -eq 0) {
+        $Lines.Add((Get-IdsText -Key 'report.overview.no_deviations'))
+    } else {
+        $Lines.Add((Get-IdsText -Key 'report.overview.deviations_header'))
+        $Lines.Add('| --- | --- | --- | --- | --- |')
+        foreach ($control in $deviations) {
+            $title = if ($control.title) { $control.title } else { $control.controlId }
+            $expected = @($control.expected | ForEach-Object { Format-IdsAssessmentPlainExpectation $_ }) -join '; '
+            if (-not $expected) { $expected = Get-IdsText -Key 'text.not_available' }
+            $Lines.Add('| ' + (@(
+                (ConvertTo-IdsReportText (& $labelOf $control.packId))
+                (ConvertTo-IdsReportText $title)
+                (ConvertTo-IdsReportText $expected)
+                (ConvertTo-IdsReportText (Format-IdsAssessmentPlainObservation $control.observed))
+                ('{0} {1}' -f $emoji[$control.status], (ConvertTo-IdsReportText (Get-IdsText -Key $statusKeys[$control.status])))
+            ) -join ' | ') + ' |')
+        }
+    }
+    $Lines.Add('')
+    $Lines.Add((Get-IdsText -Key 'report.overview.footnote' -Arguments @{
+        good = (Format-IdsReportPercent $thresholds.good); attention = (Format-IdsReportPercent $thresholds.attention)
+        coverage = (Format-IdsReportPercent $thresholds.coverage)
+    }))
+    $Lines.Add('')
+    $Lines.Add((Get-IdsText -Key 'report.overview.technical_heading'))
+    $Lines.Add('')
+}
+
 function ConvertTo-IdsProjectedAssessmentMarkdown {
     param($Result)
     $lines = [Collections.Generic.List[string]]::new()
     $lines.Add((Get-IdsText -Key 'text.policy_configuration_alignment_assessment'))
     $lines.Add('')
+    Add-IdsAssessmentOverviewMarkdown $lines $Result
     $lines.Add((Get-IdsText -Key 'text.this_is_configuration_alignment_not_effective_device_compliance_or_certification_assignments_are_evi'))
     $lines.Add((Get-IdsText -Key 'text.pack_origin_distinguishes_application_reviewed_bundled_resources_from_customer_imported_packs_import'))
     $lines.Add('')

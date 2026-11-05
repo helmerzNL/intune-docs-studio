@@ -227,10 +227,23 @@ fouten verschijnen onder de stappenbalk.
    **doelmap voor beoordelingsrapporten**, gescheiden van zowel de installatiemap als de
    documentatie-exportmappen, en klik dan op **Geselecteerd beleid beoordelen**. Er kan één export of
    beoordeling tegelijk draaien; wacht voordat u zich afmeldt, reset of stopt.
-6. Lees bij **Resultaten** de samenvatting, filter het bewijs op status, bekijk het bewijs van beleid en
-   toewijzingen, verzamelproblemen en redenen, en open de getoonde paden van `assessment.md` en
+6. Begin bij **Resultaten** met het overzicht in gewone taal: per referentiebaseline toont een scorekaart
+   de score, een oordeel (**Goed op orde**, **Grotendeels in lijn**, **Aandacht nodig** of **Niet te
+   beoordelen**) en hoeveel onderwerpen beoordeeld konden worden (⚠ bij lage dekking). Daaronder zet een
+   vergelijkingstabel per baseline de aanbeveling naast wat nu is ingesteld, met afwijkingen bovenaan en
+   filterknoppen per resultaat. Klap **Technische details** open om het bewijs op status te filteren en
+   het bewijs van beleid en toewijzingen, verzamelproblemen en redenen te bekijken. Open daarna de getoonde
+   paden van `assessment.md` en
    `assessment.json`. Elke run maakt een nieuwe rapportsubmap. **Nieuwe beoordeling** keert terug naar
    **Platformen** en behoudt uw keuzes; het is uitgeschakeld terwijl een beoordeling draait.
+
+`assessment.md` begint met hetzelfde overzicht als tabellen met emoji: een samenvatting per
+referentiebaseline en de afwijkingen in één oogopslag, vóór het technische bewijs. De score is het aandeel
+beoordeelde onderwerpen dat overeenkomt met de baseline. De drempels voor het oordeel (standaard: goed op
+orde vanaf 90%, grotendeels in lijn vanaf 70%, dekkingswaarschuwing onder 80%) wijzigt u bij
+**Instellingen**. Elke run legt de gebruikte drempels vast, zodat latere wijzigingen opgeslagen resultaten
+niet anders labelen. Instellingen zijn lokale voorkeuren in
+`%LOCALAPPDATA%\IntuneDocsStudio\settings.json` en bevatten geen tenantgegevens.
 
 **Beoordelingsdekking** gaat over beoordeelde, opgesomde controles, niet over de hele bronbenchmark.
 **Configuratie-afstemming** gaat over afgestemde versus beoordeelde controles. Onbekend, handmatig,

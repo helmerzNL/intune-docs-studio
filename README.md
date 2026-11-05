@@ -244,11 +244,26 @@ below the stepper.
    **assessment report destination**, separate from both the installation and
    documentation export folders, then **Assess selected policies**. One export or
    assessment can run at a time; wait before sign-out, reset, or stop.
-6. On **Results**, read the summary, filter evidence by status, inspect
-   policy/assignment evidence, collection issues and reasons, then open the
-   displayed `assessment.md` and `assessment.json` paths. Each run creates a new
+6. On **Results**, start with the plain-language overview: one scorecard per
+   reference baseline shows its score, a verdict (**In good order**, **Largely
+   aligned**, **Needs attention**, or **Cannot be assessed**) and how many topics
+   could be assessed (⚠ when coverage is low). Below it, a comparison table lists
+   per baseline what the baseline recommends next to what is currently set, with
+   deviations first and filter chips per result. Expand **Technical details** to
+   filter evidence by status, inspect policy/assignment evidence, collection
+   issues and reasons. Then open the displayed `assessment.md` and
+   `assessment.json` paths. Each run creates a new
    report subdirectory. **New assessment** returns to **Platforms** and keeps your
    choices; it is disabled while an assessment runs.
+
+`assessment.md` opens with the same overview as emoji tables, a summary per
+reference baseline and the deviations at a glance, before the technical
+evidence. The score is the share of assessed topics that match the baseline.
+The verdict thresholds (by default: in good order from 90%, largely aligned from
+70%, coverage warning below 80%) can be changed under **Settings**. Each run
+records the thresholds in use, so later changes do not relabel saved results.
+Settings are local preferences in `%LOCALAPPDATA%\IntuneDocsStudio\settings.json`
+and contain no tenant data.
 
 **Assessment coverage** concerns assessed listed controls, not the entire source
 benchmark. **Configuration alignment** concerns aligned versus assessed controls.

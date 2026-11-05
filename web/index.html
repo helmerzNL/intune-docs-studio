@@ -27,7 +27,8 @@
     <a id="navHome" href="#/"><span data-i18n="text.home">Home</span></a>
     <a id="navDocument" href="#/document"><span data-i18n="text.document_policies">Document policies</span><span id="navDocumentBusy" class="activity hidden"><span class="activity-dot" aria-hidden="true"></span><span class="sr-only"><span data-i18n="text.export_running">(export running)</span></span></span></a>
     <a id="navAssess" href="#/assess"><span data-i18n="text.assess_policies">Assess policies</span><span id="navAssessBusy" class="activity hidden"><span class="activity-dot" aria-hidden="true"></span><span class="sr-only"><span data-i18n="text.assessment_running">(assessment running)</span></span></span></a>
-  </nav>
+        <a id="navSettings" href="#/settings"><span data-i18n="settings.title">Settings</span></a>
+      </nav>
 
   <div class="topright">
     <div class="locale-picker" id="localePicker">
@@ -524,35 +525,59 @@
         </div>
         <p id="assessmentReportPaths" class="assessment-text"></p>
         <p id="assessmentLimitations" class="muted"></p>
-        <div id="assessmentSummary"></div>
-        <details class="disclosure">
-          <summary><span data-i18n="text.assessment_context_pack_identities_and_collection_completeness">Assessment context, pack identities and collection completeness</span></summary>
+        <section class="assessment-overview" aria-labelledby="overviewTitle">
+          <h4 id="overviewTitle"><span data-i18n="overview.title">Overview per reference baseline</span></h4>
+          <div id="assessmentHeadline" class="overview-headline"></div>
+          <div id="assessmentScorecards" class="score-grid"></div>
+          <p id="assessmentThresholdNote" class="muted small"></p>
+        </section>
+        <section class="assessment-comparison" aria-labelledby="comparisonTitle">
+          <h4 id="comparisonTitle"><span data-i18n="comparison.title">Current settings compared with the reference baselines</span></h4>
+          <div id="assessmentComparisonFilter" class="chips" role="group" aria-label="Show topics by result" data-i18n-aria-label="comparison.filter_label"></div>
+          <div class="comparison-wrap">
+            <table class="comparison-table" aria-labelledby="comparisonTitle">
+              <thead><tr><th scope="col"><span data-i18n="comparison.topic">Topic</span></th><th scope="col"><span data-i18n="comparison.recommends">Baseline recommends</span></th>
+                <th scope="col"><span data-i18n="comparison.current">Currently set</span></th><th scope="col"><span data-i18n="comparison.result">Result</span></th>
+                <th scope="col"><span data-i18n="comparison.explanation">Explanation</span></th></tr></thead>
+              <tbody id="assessmentComparison"></tbody>
+            </table>
+          </div>
+          <p id="assessmentComparisonEmpty" class="muted hidden"><span data-i18n="comparison.empty">No topics to show for this selection.</span></p>
+        </section>
+        <details class="disclosure technical-details">
+          <summary><span data-i18n="overview.technical_details">Technical details</span></summary>
           <div class="disclosure-body">
-            <p id="assessmentContextResult" class="assessment-text"></p>
-            <p id="assessmentPackResult" class="assessment-text"></p>
-            <p id="assessmentIssues" class="assessment-text"></p>
-            <div id="assessmentPolicies"></div>
+            <div id="assessmentSummary"></div>
+            <details class="disclosure">
+              <summary><span data-i18n="text.assessment_context_pack_identities_and_collection_completeness">Assessment context, pack identities and collection completeness</span></summary>
+              <div class="disclosure-body">
+                <p id="assessmentContextResult" class="assessment-text"></p>
+                <p id="assessmentPackResult" class="assessment-text"></p>
+                <p id="assessmentIssues" class="assessment-text"></p>
+                <div id="assessmentPolicies"></div>
+              </div>
+            </details>
+            <label class="filter"><span data-i18n="text.filter_evidence_by_status">Filter evidence by status</span>
+              <select id="assessmentStatusFilter">
+                <option value="" data-i18n="text.all_statuses">All statuses</option>
+                <option value="aligned" data-i18n="text.aligned">Aligned</option>
+                <option value="misaligned" data-i18n="text.misaligned">Misaligned</option>
+                <option value="missing" data-i18n="text.missing">Missing</option>
+                <option value="potentialConflict" data-i18n="text.potential_conflict">Potential conflict</option>
+                <option value="notApplicable" data-i18n="text.not_applicable">Not applicable</option>
+                <option value="notAssessed" data-i18n="text.not_assessed">Not assessed</option>
+              </select>
+            </label>
+            <div class="assessment-table-wrap">
+              <table class="assessment-table">
+                <caption><span data-i18n="text.configured_policy_evidence_not_effective_device_targeting">Configured policy evidence — not effective device targeting</span></caption>
+                <thead><tr><th scope="col"><span data-i18n="text.control_references">Control / references</span></th><th scope="col"><span data-i18n="text.status_reason">Status / reason</span></th>
+                  <th scope="col"><span data-i18n="text.expected_configured_values">Expected / configured values</span></th><th scope="col"><span data-i18n="text.source_policies_assignments">Source policies / assignments</span></th></tr></thead>
+                <tbody id="assessmentResults"></tbody>
+              </table>
+            </div>
           </div>
         </details>
-        <label class="filter"><span data-i18n="text.filter_evidence_by_status">Filter evidence by status</span>
-          <select id="assessmentStatusFilter">
-            <option value="" data-i18n="text.all_statuses">All statuses</option>
-            <option value="aligned" data-i18n="text.aligned">Aligned</option>
-            <option value="misaligned" data-i18n="text.misaligned">Misaligned</option>
-            <option value="missing" data-i18n="text.missing">Missing</option>
-            <option value="potentialConflict" data-i18n="text.potential_conflict">Potential conflict</option>
-            <option value="notApplicable" data-i18n="text.not_applicable">Not applicable</option>
-            <option value="notAssessed" data-i18n="text.not_assessed">Not assessed</option>
-          </select>
-        </label>
-        <div class="assessment-table-wrap">
-          <table class="assessment-table">
-            <caption><span data-i18n="text.configured_policy_evidence_not_effective_device_targeting">Configured policy evidence — not effective device targeting</span></caption>
-            <thead><tr><th scope="col"><span data-i18n="text.control_references">Control / references</span></th><th scope="col"><span data-i18n="text.status_reason">Status / reason</span></th>
-              <th scope="col"><span data-i18n="text.expected_configured_values">Expected / configured values</span></th><th scope="col"><span data-i18n="text.source_policies_assignments">Source policies / assignments</span></th></tr></thead>
-            <tbody id="assessmentResults"></tbody>
-          </table>
-        </div>
       </section>
 
       <section class="card hidden" id="assessImportPanel" aria-labelledby="assessImportTitle">
@@ -587,6 +612,39 @@
           <button id="btnAssessImportNext" class="btn primary"><span data-i18n="text.continue_to_baselines">Continue to baselines</span></button></div>
       </section>
     </div>
+  </section>
+
+  <section id="viewSettings" class="view hidden" aria-labelledby="settingsTitle">
+    <header class="page-head">
+      <a class="back" href="#/"><span data-i18n="text.home_297">&larr; Home</span></a>
+      <h2 id="settingsTitle" tabindex="-1"><span data-i18n="settings.title">Settings</span></h2>
+      <p class="muted"><span data-i18n="settings.intro">Preferences for this computer. They are stored locally and contain no tenant data.</span></p>
+    </header>
+    <section class="card" aria-labelledby="thresholdsTitle">
+      <h3 id="thresholdsTitle" class="card-title"><span data-i18n="settings.thresholds_title">Assessment verdict thresholds</span></h3>
+      <p><span data-i18n="settings.thresholds_intro">The overview gives each reference baseline a plain-language verdict, based on the share of assessed topics that match the baseline.</span></p>
+      <div class="settings-grid">
+        <label for="settingGood"><span data-i18n="settings.good_label">In good order from (%)</span>
+          <input id="settingGood" type="number" min="0" max="100" step="1" inputmode="numeric" required aria-describedby="settingGoodHint">
+          <small id="settingGoodHint"><span data-i18n="settings.good_hint">A baseline with at least this score is in good order.</span></small>
+        </label>
+        <label for="settingAttention"><span data-i18n="settings.attention_label">Largely aligned from (%)</span>
+          <input id="settingAttention" type="number" min="0" max="100" step="1" inputmode="numeric" required aria-describedby="settingAttentionHint">
+          <small id="settingAttentionHint"><span data-i18n="settings.attention_hint">Must be lower than the previous value. A lower score needs attention.</span></small>
+        </label>
+        <label for="settingCoverage"><span data-i18n="settings.coverage_label">Minimum coverage (%)</span>
+          <input id="settingCoverage" type="number" min="0" max="100" step="1" inputmode="numeric" required aria-describedby="settingCoverageHint">
+          <small id="settingCoverageHint"><span data-i18n="settings.coverage_hint">If fewer topics could be assessed, the result is marked as incomplete.</span></small>
+        </label>
+      </div>
+      <div id="settingsPreview" class="settings-preview" aria-live="polite"></div>
+      <p class="muted small"><span data-i18n="settings.existing_note">New assessments record the thresholds in use. Saved results keep the thresholds they were assessed with.</span></p>
+      <p id="settingsStatus" class="settings-status" role="status"></p>
+      <div class="actions">
+        <button class="btn ghost" id="btnSettingsReset" type="button"><span data-i18n="settings.reset">Restore defaults</span></button>
+        <button class="btn primary" id="btnSettingsSave" type="button"><span data-i18n="settings.save">Save settings</span></button>
+      </div>
+    </section>
   </section>
 
 </main>
