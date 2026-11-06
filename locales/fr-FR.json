@@ -375,6 +375,7 @@
     "text.enter_the_actual_numeric_build_from_settings_system_about": "Saisissez le build numérique depuis Paramètres > Système > Informations ou winver, pas « 24H2 ». Il détermine l’applicabilité des stratégies Windows 10 et ultérieures à la comparaison Windows 11. Si inconnu, laissez vide : les contrôles concernés restent non évalués.",
     "text.recent_windows_11_builds_updated_2026_10_28": "Exemples de versions récentes (builds à jour au 28 octobre 2026) :",
     "text.recent_windows_11_builds": "Builds récents de Windows 11",
+    "text.use_windows_build": "Utiliser {version} · {build}",
     "text.windows_11_26h1_limited_to_new_devices": "La version 26H1 concerne uniquement les nouveaux appareils.",
     "text.microsoft_windows_11_release_information": "Informations Microsoft sur les versions de Windows 11",
     "text.macos_version": "Version de macOS",

@@ -1375,14 +1375,17 @@ $('btnAssessmentSelectAll').addEventListener('click', () => selectAssessmentPack
 $('btnAssessmentSelectNone').addEventListener('click', () => selectAssessmentPacks(false));
 $('assessmentOsWindows11').addEventListener('input', updateAssessmentContext);
 [
-  ['btnAssessmentWindowsBuild26H2', '10.0.26300.9818'],
-  ['btnAssessmentWindowsBuild26H1', '10.0.28000.3365'],
-  ['btnAssessmentWindowsBuild25H2', '10.0.26200.9818'],
-  ['btnAssessmentWindowsBuild24H2', '10.0.26100.9725']
-].forEach(([id, build]) => $(id).addEventListener('click', () => {
-  $('assessmentOsWindows11').value = build;
-  updateAssessmentContext();
-}));
+  ['btnAssessmentWindowsBuild26H2', '26H2', '10.0.26300.9818'],
+  ['btnAssessmentWindowsBuild26H1', '26H1', '10.0.28000.3365'],
+  ['btnAssessmentWindowsBuild25H2', '25H2', '10.0.26200.9818'],
+  ['btnAssessmentWindowsBuild24H2', '24H2', '10.0.26100.9725']
+].forEach(([id, version, build]) => {
+  localizeText($(id), () => t('text.use_windows_build', { version, build }));
+  $(id).addEventListener('click', () => {
+    $('assessmentOsWindows11').value = build;
+    updateAssessmentContext();
+  });
+});
 $('btnAssessPlatformsNext').addEventListener('click', () => {
   if (!assessmentSelection().platforms.length) blockAssessmentStep(() => t("text.choose_at_least_one_platform_to_assess"));
   else moveAssessmentStep('import');
