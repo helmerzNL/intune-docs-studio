@@ -224,7 +224,9 @@ below the stepper.
    baseline. Unsupported, incomplete, secret or conflicting settings are skipped.
    Custom references are never labeled CIS or certified.
 3. On **Baselines**, select 1–64 exact rule-pack versions/profiles, with an
-   applicable pack for every selected platform. Read their classification,
+   applicable pack for every selected platform. If a selection is missing, the
+   message names the affected platforms: select matching packs, or return to
+   **Platforms** in the step bar and deselect those platforms. Read their classification,
    partial coverage, source revisions, and SHA-256 identities. Profile labels
    include the baseline set and imported/bundled origin. Technical details are
    expandable. Imported library packs can be removed after confirmation; bundled

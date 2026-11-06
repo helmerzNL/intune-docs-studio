@@ -1307,8 +1307,13 @@ function assessmentSelection() {
 
 function assessmentSelectionError() {
   const { platforms, packs } = assessmentSelection();
-  if (!platforms.length || platforms.some((p) => !packs.some((pack) => pack.platform === p))) {
-    return () => t("text.every_selected_platform_requires_a_selected_applicable_pack_choose");
+  if (!platforms.length) return () => t("text.choose_at_least_one_platform_to_assess");
+  const missingPlatforms = platforms.filter((p) => !packs.some((pack) => pack.platform === p));
+  if (missingPlatforms.length) {
+    return () => t("text.select_baselines_for_missing_platforms", {
+      platforms: missingPlatforms.map((p) => assessmentPlatforms[p]).join(', '),
+      baselinesStep: t("text.baselines"), platformsStep: t("text.platforms")
+    });
   }
   return !packs.length || packs.length > 64 ? () => t("text.select_164_packs") : null;
 }
@@ -1556,12 +1561,13 @@ $('btnAssessmentRun').addEventListener('click', async () => {
     showAssessmentError(() => t("text.sign_in_or_import_a_policy_set_before_assessing")); return;
   }
   if (!policiesReady()) { showAssessmentError(() => t("text.load_policies_before_assessing")); return; }
-  const { platforms, packs: selectedPacks } = assessmentSelection();
-  if (!platforms.length || platforms.some((p) => !selectedPacks.some((pack) => pack.platform === p))) {
-    showAssessmentError(() => t("text.every_selected_platform_requires_a_selected_applicable_pack_choose"));
+  const selectionError = assessmentSelectionError();
+  if (selectionError) {
+    showAssessmentError(selectionError);
     return;
   }
-  if (!selectedPacks.length || selectedPacks.length > 64 || !$('assessmentOutputPath').value.trim()) {
+  const { platforms, packs: selectedPacks } = assessmentSelection();
+  if (!$('assessmentOutputPath').value.trim()) {
     showAssessmentError(() => t("text.select_164_packs_and_an_absolute_assessment_report_destination"));
     return;
   }

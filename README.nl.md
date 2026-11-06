@@ -210,7 +210,9 @@ fouten verschijnen onder de stappenbalk.
    importeren maakt geen baseline. Niet-ondersteunde, onvolledige, geheime of tegenstrijdige instellingen worden
    overgeslagen. Aangepaste referenties worden nooit als CIS of gecertificeerd aangeduid.
 3. Selecteer bij **Referentiebaselines** 1–64 exacte regelpakketversies of -profielen, met een toepasselijk pakket
-   voor elk geselecteerd platform. Lees hun classificatie, gedeeltelijke dekking, bronrevisies en SHA-256-identiteiten.
+   voor elk geselecteerd platform. Als een selectie ontbreekt, noemt de melding de betreffende platformen:
+   selecteer passende pakketten, of ga via de stappenbalk terug naar **Platformen** en deselecteer die platformen.
+   Lees hun classificatie, gedeeltelijke dekking, bronrevisies en SHA-256-identiteiten.
    Profiellabels bevatten de baselineset en of de herkomst geïmporteerd of meegeleverd is. Technische details zijn
    uitklapbaar. Geïmporteerde bibliotheekpakketten kunnen na bevestiging worden verwijderd; meegeleverde
    pakketten en opgeslagen rapporten zijn beschermd.
