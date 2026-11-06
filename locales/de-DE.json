@@ -375,6 +375,7 @@
     "text.enter_the_actual_numeric_build_from_settings_system_about": "Geben Sie die numerische Buildnummer aus Einstellungen > System > Info oder winver ein, nicht „24H2“. Dies bestimmt die Anwendbarkeit von Windows-10-und-höher-Richtlinien auf Ihren Windows-11-Vergleich. Unbekannt: leer lassen, betroffene Kontrollen bleiben ungeprüft.",
     "text.recent_windows_11_builds_updated_2026_10_28": "Beispiele aktueller Versionen (Builds mit Stand 28. Oktober 2026):",
     "text.recent_windows_11_builds": "Aktuelle Windows-11-Builds",
+    "text.use_windows_build": "{version} · {build} verwenden",
     "text.windows_11_26h1_limited_to_new_devices": "26H1 ist auf neue Geräte beschränkt.",
     "text.microsoft_windows_11_release_information": "Microsoft-Versionsinformationen zu Windows 11",
     "text.macos_version": "macOS-Version",

@@ -375,6 +375,7 @@
     "text.enter_the_actual_numeric_build_from_settings_system_about": "Enter the actual numeric build from Settings > System > About or winver, not “24H2”. This establishes applicability of Windows 10-and-later policies to your Windows 11 comparison. Leave blank if unknown: affected controls remain not assessed.",
     "text.recent_windows_11_builds_updated_2026_10_28": "Recent version examples (builds current through 28 October 2026):",
     "text.recent_windows_11_builds": "Recent Windows 11 builds",
+    "text.use_windows_build": "Use {version} · {build}",
     "text.windows_11_26h1_limited_to_new_devices": "26H1 is scoped to new devices.",
     "text.microsoft_windows_11_release_information": "Microsoft Windows 11 release information",
     "text.macos_version": "macOS version",

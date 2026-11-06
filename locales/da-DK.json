@@ -375,6 +375,7 @@
     "text.enter_the_actual_numeric_build_from_settings_system_about": "Angiv det numeriske buildnummer fra Indstillinger > System > Om eller winver, ikke »24H2«. Det afgør anvendeligheden af Windows 10-og-nyere-politikker i Windows 11-sammenligningen. Lad være tomt, hvis ukendt: berørte kontroller vurderes ikke.",
     "text.recent_windows_11_builds_updated_2026_10_28": "Eksempler på nyere versioner (builds opdateret til 28. oktober 2026):",
     "text.recent_windows_11_builds": "Nyeste Windows 11-builds",
+    "text.use_windows_build": "Brug {version} · {build}",
     "text.windows_11_26h1_limited_to_new_devices": "26H1 er kun beregnet til nye enheder.",
     "text.microsoft_windows_11_release_information": "Microsofts versionsoplysninger om Windows 11",
     "text.macos_version": "macOS-version",
