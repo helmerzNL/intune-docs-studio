@@ -463,6 +463,8 @@ test('the assessment wizard opens with platforms only and every wizard element e
     'assessmentPacksEmpty', 'assessmentContextWarning', 'assessmentReview', 'assessmentImportSummary',
     'assessmentContextWindows11', 'assessmentContextMacos', 'assessmentContextIosIpados',
     'assessmentContextAndroidEnterprise', 'assessmentContextEnrollment', 'assessmentContextIosOwnership'];
+  added.push('btnAssessmentWindowsBuild26H2', 'btnAssessmentWindowsBuild26H1',
+    'btnAssessmentWindowsBuild25H2', 'btnAssessmentWindowsBuild24H2');
   for (const id of added) assert.equal(html.split(` id="${id}"`).length - 1, 1, id);
 });
 

@@ -1374,6 +1374,15 @@ function moveAssessmentStep(step) {
 $('btnAssessmentSelectAll').addEventListener('click', () => selectAssessmentPacks(true));
 $('btnAssessmentSelectNone').addEventListener('click', () => selectAssessmentPacks(false));
 $('assessmentOsWindows11').addEventListener('input', updateAssessmentContext);
+[
+  ['btnAssessmentWindowsBuild26H2', '10.0.26300.9818'],
+  ['btnAssessmentWindowsBuild26H1', '10.0.28000.3365'],
+  ['btnAssessmentWindowsBuild25H2', '10.0.26200.9818'],
+  ['btnAssessmentWindowsBuild24H2', '10.0.26100.9725']
+].forEach(([id, build]) => $(id).addEventListener('click', () => {
+  $('assessmentOsWindows11').value = build;
+  updateAssessmentContext();
+}));
 $('btnAssessPlatformsNext').addEventListener('click', () => {
   if (!assessmentSelection().platforms.length) blockAssessmentStep(() => t("text.choose_at_least_one_platform_to_assess"));
   else moveAssessmentStep('import');

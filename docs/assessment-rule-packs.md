@@ -98,7 +98,13 @@ workspace reset return the wizard to **Platforms** and clear the import summary.
    explains that Windows policies targeting Windows 10 and later, such as the
    Settings Catalog policies that CIS build-kit packs map to, are assessed only
    when a Windows 11 build is entered (for example `10.0.22631` or
-   `10.0.26100`). Otherwise their controls are reported as not assessed.
+   `10.0.26100`). The context screen also offers clickable current-build examples
+   for Windows 11 versions 26H2, 26H1, 25H2 and 24H2; choose the version matching
+   the intended comparison target rather than assuming the newest version.
+   Version 26H1 is scoped to new devices. The examples link to Microsoft's
+   [Windows 11 release information](https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information)
+   and are dated, so verify the actual target build in Settings > System > About
+   or `winver`. Otherwise affected controls are reported as not assessed.
 6. **Review & run.** Check the structured per-platform summary: each exact
    pack/version/profile, framework/set and origin, active target source/capture
    time, and every context value
