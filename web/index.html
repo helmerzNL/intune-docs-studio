@@ -462,9 +462,21 @@
         <p class="muted"><span data-i18n="text.not_discovered_device_inventory_leave_unknown_values_blank_controls">Not discovered device inventory. Leave unknown values blank; controls requiring unknown context
           remain not assessed. The catalog does not include per-control applicability bounds.</span></p>
         <div class="grid2">
-          <label id="assessmentContextWindows11"><span data-i18n="text.windows_11_os_build">Windows 11 OS build</span> <input type="text" id="assessmentOsWindows11" placeholder="Unknown (for example 10.0.26100)" data-i18n-placeholder="text.unknown_for_example_10026100">
-            <small><span data-i18n="text.enter_the_actual_numeric_build_from_settings_system_about">Enter the actual numeric build from Settings &gt; System &gt; About or winver, not “24H2”.
-              This establishes applicability of Windows 10-and-later policies to your Windows 11 comparison. Leave blank if unknown: affected controls remain not assessed.</span></small></label>
+          <div id="assessmentContextWindows11" class="assessment-context-field">
+            <label for="assessmentOsWindows11"><span data-i18n="text.windows_11_os_build">Windows 11 OS build</span>
+              <input type="text" id="assessmentOsWindows11" placeholder="Unknown (for example 10.0.26100)" data-i18n-placeholder="text.unknown_for_example_10026100">
+              <small><span data-i18n="text.enter_the_actual_numeric_build_from_settings_system_about">Enter the actual numeric build from Settings &gt; System &gt; About or winver, not “24H2”.
+                This establishes applicability of Windows 10-and-later policies to your Windows 11 comparison. Leave blank if unknown: affected controls remain not assessed.</span></small></label>
+            <p class="muted assessment-build-label" data-i18n="text.recent_windows_11_builds_updated_2026_10_28">Recent version examples (builds current through 28 October 2026):</p>
+            <div class="assessment-build-suggestions" role="group" aria-label="Recent Windows 11 builds" data-i18n-aria-label="text.recent_windows_11_builds">
+              <button type="button" class="btn ghost small" id="btnAssessmentWindowsBuild26H2">26H2 · 26300.9818</button>
+              <button type="button" class="btn ghost small" id="btnAssessmentWindowsBuild26H1" title="26H1 is scoped to new devices" data-i18n-title="text.windows_11_26h1_limited_to_new_devices">26H1 · 28000.3365</button>
+              <button type="button" class="btn ghost small" id="btnAssessmentWindowsBuild25H2">25H2 · 26200.9818</button>
+              <button type="button" class="btn ghost small" id="btnAssessmentWindowsBuild24H2">24H2 · 26100.9725</button>
+            </div>
+            <small><span data-i18n="text.windows_11_26h1_limited_to_new_devices">26H1 is scoped to new devices.</span>
+              <a href="https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information" target="_blank" rel="noopener noreferrer" data-i18n="text.microsoft_windows_11_release_information">Microsoft Windows 11 release information</a></small>
+          </div>
           <label id="assessmentContextMacos"><span data-i18n="text.macos_version">macOS version</span> <input type="text" id="assessmentOsMacos" placeholder="Unknown (for example 14.0)" data-i18n-placeholder="text.unknown_for_example_140">
             <small><span data-i18n="text.find_it_in_apple_menu_about_this_mac_use">Find it in Apple menu &gt; About This Mac. Use a numeric version to evaluate OS-specific scope; blank keeps that scope unknown.</span></small></label>
           <label id="assessmentContextIosIpados"><span data-i18n="text.iosipados_version">iOS/iPadOS version</span> <input type="text" id="assessmentOsIosIpados" placeholder="Unknown (for example 18.0)" data-i18n-placeholder="text.unknown_for_example_180">

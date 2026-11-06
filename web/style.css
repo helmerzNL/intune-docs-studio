@@ -564,6 +564,11 @@ table.counts td:last-child { text-align: right; color: var(--muted); }
 }
 .mini-counts li { display: flex; align-items: center; gap: 6px; }
 #assessmentThresholdNote { margin: 12px 0 0; }
+.assessment-context-field { display: grid; align-content: start; gap: 8px; }
+.assessment-context-field label { margin: 0; }
+.assessment-build-label { margin: 0; font-size: 12px; }
+.assessment-build-suggestions { display: flex; flex-wrap: wrap; gap: 6px; }
+.assessment-context-field > small { color: var(--muted); line-height: 1.5; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .chip {

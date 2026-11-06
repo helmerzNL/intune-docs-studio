@@ -1453,6 +1453,16 @@ test('context shows only the selected platforms\' fields and warns while the Win
   d.element('assessmentOsWindows11').handlers.input();
   assert.equal(isHidden(d, 'assessmentContextWarning'), true);
   assert.equal(d.element('assessmentContextWarning').textContent, '');
+  for (const [id, build] of [
+    ['btnAssessmentWindowsBuild26H2', '10.0.26300.9818'],
+    ['btnAssessmentWindowsBuild26H1', '10.0.28000.3365'],
+    ['btnAssessmentWindowsBuild25H2', '10.0.26200.9818'],
+    ['btnAssessmentWindowsBuild24H2', '10.0.26100.9725']
+  ]) {
+    d.element(id).handlers.click();
+    assert.equal(d.element('assessmentOsWindows11').value, build, id);
+    assert.equal(isHidden(d, 'assessmentContextWarning'), true, id);
+  }
   d.element('assessmentOsWindows11').value = '   ';
   d.element('assessmentOsWindows11').handlers.input();
   assert.equal(isHidden(d, 'assessmentContextWarning'), false);
