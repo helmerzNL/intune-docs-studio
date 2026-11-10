@@ -268,7 +268,7 @@
     "text.import_a_policy_source": "Importer une source de stratégies",
     "text.this_is_the_environment_to_document_or_assess_not": "Il s’agit de l’environnement à documenter ou évaluer, pas d’une référence. Aucune connexion Microsoft. Une importation réussie remplace la source active ; un échec la conserve.",
     "text.policy_zip_file": "Fichier ZIP de stratégies",
-    "text.intune_docs_studio_policy_set_or_legacy_raw_export": "Jeu Intune Docs Studio ou ancienne exportation _raw. ZIP : 32 MiB maximum ; JSON : 500 fichiers, 10 MiB chacun, 64 MiB au total.",
+    "text.intune_docs_studio_policy_set_or_legacy_raw_export": "Jeu de stratégies Intune Docs Studio ou export de documentation avec JSON _raw. ZIP : 32 MiB maximum ; JSON : 500 fichiers, 64 MiB chacun, 256 MiB au total.",
     "text.or_choose_a_folder_on_the_computer_running_this": "Ou choisissez un dossier sur l’ordinateur exécutant l’application :",
     "text.policy_folder_or_zip_path": "Dossier de stratégies ou chemin ZIP",
     "text.absolute_path_on_the_application_host": "Chemin absolu sur l’hôte de l’application",

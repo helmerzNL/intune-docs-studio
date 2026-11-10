@@ -268,7 +268,7 @@
     "text.import_a_policy_source": "Import a policy source",
     "text.this_is_the_environment_to_document_or_assess_not": "This is the environment to document or assess, not a reference baseline. No Microsoft connection is made. A successful import replaces the active source; a failed import keeps it unchanged.",
     "text.policy_zip_file": "Policy ZIP file",
-    "text.intune_docs_studio_policy_set_or_legacy_raw_export": "Intune Docs Studio policy set or legacy _raw export. Maximum 32 MiB ZIP; JSON limits: 500 files, 10 MiB each, 64 MiB total.",
+    "text.intune_docs_studio_policy_set_or_legacy_raw_export": "Intune Docs Studio policy set or documentation export with _raw JSON. Maximum 32 MiB ZIP; JSON limits: 500 files, 64 MiB each, 256 MiB total.",
     "text.or_choose_a_folder_on_the_computer_running_this": "Or choose a folder on the computer running this application:",
     "text.policy_folder_or_zip_path": "Policy folder or ZIP path",
     "text.absolute_path_on_the_application_host": "Absolute path on the application host",

@@ -268,7 +268,7 @@
     "text.import_a_policy_source": "Importar uma origem de políticas",
     "text.this_is_the_environment_to_document_or_assess_not": "Este é o ambiente a documentar ou avaliar, não uma referência. Sem ligação Microsoft. Uma importação bem-sucedida substitui a origem ativa; uma falha mantém-na.",
     "text.policy_zip_file": "Ficheiro ZIP de políticas",
-    "text.intune_docs_studio_policy_set_or_legacy_raw_export": "Conjunto Intune Docs Studio ou exportação _raw antiga. ZIP até 32 MiB; JSON: 500 ficheiros, 10 MiB cada, 64 MiB no total.",
+    "text.intune_docs_studio_policy_set_or_legacy_raw_export": "Conjunto de políticas do Intune Docs Studio ou exportação de documentação com JSON _raw. ZIP até 32 MiB; JSON: 500 ficheiros, 64 MiB cada, 256 MiB no total.",
     "text.or_choose_a_folder_on_the_computer_running_this": "Ou escolha uma pasta no computador que executa a aplicação:",
     "text.policy_folder_or_zip_path": "Pasta de políticas ou caminho ZIP",
     "text.absolute_path_on_the_application_host": "Caminho absoluto no anfitrião da aplicação",

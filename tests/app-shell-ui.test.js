@@ -161,6 +161,39 @@ test('an explicit offline source enables both workflows without authentication o
   assert.equal(d.requests.some((r) => /\/api\/(probe|signin)/.test(r.url)), false);
 });
 
+test('importing a chosen host folder sends its path and opens the offline workspace', async () => {
+  let imported = false;
+  const folder = 'C:\\synthetic\\documentation\\_raw';
+  const d = shell({ respond(url, request) {
+    if (url === '/api/folders/picker') {
+      return request.method === 'POST' ? { started: true } : { status: 'selected', path: folder };
+    }
+    if (url === '/api/policies/import') { imported = true; return { started: true }; }
+    if (url === '/api/policies/transfer') {
+      return { status: 'completed', running: false, result: { policies: 1 } };
+    }
+    if (url === '/api/state') {
+      const policies = imported
+        ? { status: 'partial', count: 1, families: [], issues: [], source: { kind: 'offline', name: 'Synthetic' } }
+        : { status: 'idle' };
+      return signedOut({ policies });
+    }
+    return {};
+  } });
+  await d.settle();
+  d.element('btnOpenPolicyImport').handlers.click();
+  assert.deepEqual(d.visibleViews(), ['viewImport']);
+  await d.element('btnBrowsePolicyImport').handlers.click();
+  assert.equal(d.element('policyImportPath').value, folder);
+  await d.element('btnImportPolicySource').handlers.click();
+  const request = d.requests.find((item) => item.url === '/api/policies/import');
+  assert.equal(request.payload.path, folder);
+  assert.equal(request.payload.replace, false);
+  assert.equal(request.payload.archive, undefined);
+  assert.deepEqual(d.visibleViews(), ['viewHome']);
+  assert.equal(d.run('state.policies.count'), 1);
+});
+
 test('signed-in Home is available without policies while deep-linked workflows remain gated', async () => {
   for (const status of ['idle', 'loading', 'failed', undefined]) {
     const d = shell({ hash: '#/assess', respond: stateOnly(signedIn({ policies: { status } })) });

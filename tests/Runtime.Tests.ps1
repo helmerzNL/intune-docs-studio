@@ -186,6 +186,43 @@ Describe 'PowerShell runtime requirements' {
             }
         }
 
+        It 'imports a selected raw folder with a long policy value over localhost while signed out' {
+            $rawRoot = Join-Path $TestDrive 'http-import\_raw'
+            $folder = Join-Path $rawRoot 'configuration\custom'
+            [void][IO.Directory]::CreateDirectory($folder)
+            $policy = @{
+                id = 'synthetic-policy'; displayName = 'Synthetic policy'
+                '@odata.type' = '#microsoft.graph.windows10CustomConfiguration'
+                omaSettings = @(@{
+                    '@odata.type' = '#microsoft.graph.omaSettingString'
+                    displayName = 'Synthetic setting'; omaUri = './Device/Vendor/MSFT/Synthetic'
+                    value = ('x' * 32769)
+                })
+            }
+            [IO.File]::WriteAllText((Join-Path $folder 'synthetic.json'), (ConvertTo-Json $policy -Depth 10))
+            Invoke-LocalServer -Name 'offline-raw-import' -Check {
+                param($base)
+                $headers = @{ Origin = $base; 'X-Ids-Locale' = 'nl-NL' }
+                $body = ConvertTo-Json @{ path = $rawRoot; replace = $false } -Compress
+                $started = Invoke-WebRequest "$base/api/policies/import" -Method Post -Headers $headers `
+                    -Body $body -ContentType application/json -SkipHttpErrorCheck
+                $started.StatusCode | Should -Be 202
+                $deadline = [datetime]::UtcNow.AddSeconds(20)
+                do {
+                    $transfer = Invoke-RestMethod "$base/api/policies/transfer" -Headers $headers
+                    if ($transfer.status -in @('completed', 'failed')) { break }
+                    Start-Sleep -Milliseconds 50
+                } while ([datetime]::UtcNow -lt $deadline)
+                $transfer.error | Should -BeNullOrEmpty
+                $transfer.status | Should -BeExactly 'completed'
+                $state = Invoke-RestMethod "$base/api/state" -Headers $headers
+                $state.auth.connected | Should -BeFalse
+                $state.policies.source.kind | Should -BeExactly 'offline'
+                $state.policies.status | Should -BeExactly 'partial'
+                $state.policies.count | Should -Be 1
+            }
+        }
+
         It 'keeps the default customer pack location outside the application installation' {
             Invoke-LocalServer -Name 'pack-storage' -Configure {
                 param($folder)

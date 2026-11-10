@@ -268,7 +268,7 @@
     "text.import_a_policy_source": "Importa un’origine dei criteri",
     "text.this_is_the_environment_to_document_or_assess_not": "È l’ambiente da documentare o valutare, non una baseline di riferimento. Nessuna connessione Microsoft. L’importazione riuscita sostituisce l’origine attiva; in caso di errore rimane invariata.",
     "text.policy_zip_file": "File ZIP di criteri",
-    "text.intune_docs_studio_policy_set_or_legacy_raw_export": "Set Intune Docs Studio o esportazione _raw precedente. ZIP massimo 32 MiB; JSON: 500 file, 10 MiB ciascuno, 64 MiB totali.",
+    "text.intune_docs_studio_policy_set_or_legacy_raw_export": "Set di criteri Intune Docs Studio o esportazione della documentazione con JSON _raw. ZIP massimo 32 MiB; JSON: 500 file, 64 MiB ciascuno, 256 MiB totali.",
     "text.or_choose_a_folder_on_the_computer_running_this": "Oppure scegli una cartella sul computer che esegue l’applicazione:",
     "text.policy_folder_or_zip_path": "Cartella dei criteri o percorso ZIP",
     "text.absolute_path_on_the_application_host": "Percorso assoluto sull’host dell’applicazione",

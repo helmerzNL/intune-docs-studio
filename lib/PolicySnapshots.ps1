@@ -10,7 +10,8 @@ function Read-IdsPolicyJson {
     $options = [Text.Json.JsonDocumentOptions]::new()
     $options.MaxDepth = 64
     $document = [Text.Json.JsonDocument]::Parse((ConvertFrom-IdsBaselineArchiveText $Bytes), $options)
-    try { return ConvertFrom-IdsPackJsonElement $document.RootElement }
+    # Policy values are bounded by the policy JSON byte limit, not the rule-pack string limit.
+    try { return ConvertFrom-IdsPackJsonElement $document.RootElement -AllowLongStringValues }
     finally { $document.Dispose() }
 }
 
@@ -276,6 +277,18 @@ function Export-IdsPolicySnapshot {
     return @{ path = $destination; files = $files.Count }
 }
 
+function Get-IdsLegacyPolicyFamily {
+    param([string]$Name)
+    switch -Regex ($Name) {
+        '(^|/)_raw/configuration/settings-catalog/' { return 'settingsCatalog' }
+        '(^|/)_raw/configuration/(templates|custom)/' { return 'deviceConfiguration' }
+        '(^|/)_raw/configuration/administrative-templates/' { return 'admx' }
+        '(^|/)_raw/compliance/' { return 'compliance' }
+        '(^|/)_raw/endpoint-security/' { return 'intent' }
+    }
+    return $null
+}
+
 function Import-IdsLegacyPolicySnapshot {
     param($Entries)
     $collection = [ordered]@{ policies = @(); sources = @(); issues = @(); documentation = @{}; documentationIssues = @() }
@@ -288,14 +301,11 @@ function Import-IdsLegacyPolicySnapshot {
             $collection.sources += @{ family = $family; platform = $platform; complete = $false; errors = @($issue) }
         }
     }
+    $hasEmbeddedRaw = @($Entries.Keys | Where-Object { Get-IdsLegacyPolicyFamily $_ }).Count -gt 0
     foreach ($name in $Entries.Keys | Sort-Object -CaseSensitive) {
-        $family = switch -Regex ($name) {
-            '(^|/)_raw/configuration/settings-catalog/' { 'settingsCatalog'; break }
-            '(^|/)_raw/configuration/(templates|custom)/' { 'deviceConfiguration'; break }
-            '(^|/)_raw/configuration/administrative-templates/' { 'admx'; break }
-            '(^|/)_raw/compliance/' { 'compliance'; break }
-            '(^|/)_raw/endpoint-security/' { 'intent'; break }
-            default { $null }
+        $family = Get-IdsLegacyPolicyFamily $name
+        if (-not $family -and -not $hasEmbeddedRaw) {
+            $family = Get-IdsLegacyPolicyFamily "_raw/$name"
         }
         if (-not $family) { continue }
         $raw = Read-IdsPolicyJson $Entries[$name]

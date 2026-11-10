@@ -268,7 +268,7 @@
     "text.import_a_policy_source": "Een beleidsbron importeren",
     "text.this_is_the_environment_to_document_or_assess_not": "Dit is de omgeving om te documenteren of beoordelen, geen referentiebaseline. Er wordt geen Microsoft-verbinding gemaakt. Een geslaagde import vervangt de actieve bron; een mislukte import laat deze ongewijzigd.",
     "text.policy_zip_file": "Beleids-ZIP-bestand",
-    "text.intune_docs_studio_policy_set_or_legacy_raw_export": "Intune Docs Studio-beleidsset of oudere _raw-export. ZIP maximaal 32 MiB; JSON-limieten: 500 bestanden, 10 MiB per bestand, 64 MiB totaal.",
+    "text.intune_docs_studio_policy_set_or_legacy_raw_export": "Intune Docs Studio-beleidsset of documentatie-export met _raw-JSON. ZIP maximaal 32 MiB; JSON-limieten: 500 bestanden, 64 MiB per bestand, 256 MiB totaal.",
     "text.or_choose_a_folder_on_the_computer_running_this": "Of kies een map op de computer waarop deze toepassing draait:",
     "text.policy_folder_or_zip_path": "Beleidsmap of ZIP-pad",
     "text.absolute_path_on_the_application_host": "Absoluut pad op de applicatiehost",

@@ -76,7 +76,7 @@ function ConvertTo-IdsPackNumberKey {
 }
 
 function ConvertFrom-IdsPackJsonElement {
-    param([System.Text.Json.JsonElement]$Element, [string]$Path = '$')
+    param([System.Text.Json.JsonElement]$Element, [string]$Path = '$', [switch]$AllowLongStringValues)
     switch ($Element.ValueKind.ToString()) {
         Object {
             $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -84,7 +84,7 @@ function ConvertFrom-IdsPackJsonElement {
             foreach ($member in $Element.EnumerateObject()) {
                 if (-not $names.Add($member.Name)) { throw (Get-IdsText -Key 'text.pack_json_duplicate_member_at_arg0' -Arguments @{ arg0 = ($Path) }) }
                 if ($member.Name.Length -gt 32768) { throw (Get-IdsText -Key 'text.pack_string_limit_32768_characters_at_arg0' -Arguments @{ arg0 = ($Path) }) }
-                $object[$member.Name] = ConvertFrom-IdsPackJsonElement $member.Value "$Path.$($member.Name)"
+                $object[$member.Name] = ConvertFrom-IdsPackJsonElement $member.Value "$Path.$($member.Name)" -AllowLongStringValues:$AllowLongStringValues
             }
             return $object
         }
@@ -94,13 +94,13 @@ function ConvertFrom-IdsPackJsonElement {
             }
             $items = [Collections.Generic.List[object]]::new()
             foreach ($item in $Element.EnumerateArray()) {
-                $items.Add((ConvertFrom-IdsPackJsonElement $item "$Path[]"))
+                $items.Add((ConvertFrom-IdsPackJsonElement $item "$Path[]" -AllowLongStringValues:$AllowLongStringValues))
             }
             return ,($items.ToArray())
         }
         String {
             $text = $Element.GetString()
-            if ($text.Length -gt 32768) { throw (Get-IdsText -Key 'text.pack_string_limit_32768_characters_at_arg0' -Arguments @{ arg0 = ($Path) }) }
+            if (-not $AllowLongStringValues -and $text.Length -gt 32768) { throw (Get-IdsText -Key 'text.pack_string_limit_32768_characters_at_arg0' -Arguments @{ arg0 = ($Path) }) }
             return $text
         }
         Number {

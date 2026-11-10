@@ -118,6 +118,19 @@ Describe 'Explicit policy sources and portable snapshots' {
         $policy.lastModifiedDateTime | Should -BeOfType datetimeoffset
     }
 
+    It 'round-trips a long policy value in exported folders and ZIPs' {
+        $snapshot = New-TestPolicySource
+        $policy = $snapshot.collection.documentation.deviceConfiguration[0].policy
+        $policy | Add-Member NoteProperty description ('x' * 32769)
+        $export = Export-IdsPolicySnapshot $snapshot (Join-Path $TestDrive 'long-policy-set') $script:root
+        $folder = Import-IdsPolicySnapshot -Path $export.path
+        $folder.collection.documentation.deviceConfiguration[0].policy.description | Should -BeExactly ('x' * 32769)
+        $zip = Join-Path $TestDrive 'long-policy-set.zip'
+        [IO.Compression.ZipFile]::CreateFromDirectory($export.path, $zip)
+        $uploaded = Import-IdsPolicySnapshot -Archive ([IO.File]::ReadAllBytes($zip))
+        $uploaded.collection.documentation.deviceConfiguration[0].policy.description | Should -BeExactly ('x' * 32769)
+    }
+
     It 'round-trips policy families larger than 10 MiB and a policy set larger than 64 MiB' {
         $snapshot = New-TestPolicySource
         $padding = @(1..320 | ForEach-Object { 'x' * 32768 })
@@ -152,6 +165,11 @@ Describe 'Explicit policy sources and portable snapshots' {
         $json.Length | Should -Be 64MB
         (Read-IdsPolicyJson $json).synthetic | Should -BeTrue
         { Read-IdsPolicyJson ([byte[]]::new(64MB + 1)) } | Should -Throw '*64 MiB*'
+    }
+
+    It 'still rejects policy JSON member names longer than 32768 characters' {
+        $json = '{"' + ('x' * 32769) + '":true}'
+        { Read-IdsPolicyJson ([Text.Encoding]::UTF8.GetBytes($json)) } | Should -Throw '*32768*'
     }
 
     It 'enforces the 64 MiB entry and 256 MiB expanded budgets without changing pack defaults' {
@@ -259,6 +277,102 @@ Describe 'Explicit policy sources and portable snapshots' {
         $reimported = Import-IdsPolicySnapshot -Path $roundtrip.path
         $reimported.capturedAt | Should -BeNullOrEmpty
         $reimported.source.origin.format | Should -BeExactly 'legacy-raw'
+    }
+
+    It 'imports <Family> policy JSON from a selected raw folder' -ForEach @(
+        @{ Family = 'settingsCatalog'; Folder = 'configuration\settings-catalog\windows10'; Type = 'deviceManagementConfigurationPolicy' }
+        @{ Family = 'deviceConfiguration'; Folder = 'configuration\templates'; Type = 'windows10EndpointProtectionConfiguration' }
+        @{ Family = 'deviceConfiguration'; Folder = 'configuration\custom'; Type = 'windows10CustomConfiguration' }
+        @{ Family = 'admx'; Folder = 'configuration\administrative-templates'; Type = 'groupPolicyConfiguration' }
+        @{ Family = 'compliance'; Folder = 'compliance\windows'; Type = 'windows10CompliancePolicy' }
+        @{ Family = 'intent'; Folder = 'endpoint-security\general'; Type = 'deviceManagementIntent' }
+    ) {
+        $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $folder = Join-Path $root $Folder
+        [void][IO.Directory]::CreateDirectory($folder)
+        $policy = @{ id = 'synthetic-policy'; name = 'Synthetic policy'; displayName = 'Synthetic policy'
+            platforms = 'windows10'; '@odata.type' = "#microsoft.graph.$Type"; assignments = @() }
+        [IO.File]::WriteAllText((Join-Path $folder 'synthetic.json'), (ConvertTo-Json $policy -Compress))
+        $snapshot = Import-IdsPolicySnapshot -Path $root
+        $snapshot.collection.policies.Count | Should -Be 1
+        $snapshot.collection.policies[0].family | Should -BeExactly $Family
+        $snapshot.collection.policies[0].id | Should -BeExactly 'synthetic-policy'
+    }
+
+    It 'ignores sibling JSON when a documentation export contains raw policy files' {
+        $root = Join-Path $TestDrive 'mixed-documentation'
+        $rawFolder = Join-Path $root '_raw\configuration\templates'
+        $otherFolder = Join-Path $root 'configuration\templates'
+        [void][IO.Directory]::CreateDirectory($rawFolder)
+        [void][IO.Directory]::CreateDirectory($otherFolder)
+        [IO.File]::WriteAllText((Join-Path $rawFolder 'policy.json'),
+            '{"id":"synthetic-policy","displayName":"Synthetic policy","@odata.type":"#microsoft.graph.windows10EndpointProtectionConfiguration"}')
+        [IO.File]::WriteAllText((Join-Path $otherFolder 'unrelated.json'), '{"id":"unrelated"}')
+        $snapshot = Import-IdsPolicySnapshot -Path $root
+        $snapshot.collection.policies.Count | Should -Be 1
+        $snapshot.collection.policies[0].id | Should -BeExactly 'synthetic-policy'
+    }
+
+    It 'imports <SelectedFolder> from a generated documentation export through the source route' -ForEach @(
+        @{ SelectedFolder = 'the documentation folder'; Subfolder = ''; AsZip = $false }
+        @{ SelectedFolder = 'the _raw folder'; Subfolder = '_raw'; AsZip = $false }
+        @{ SelectedFolder = 'a ZIP of the _raw folder'; Subfolder = '_raw'; AsZip = $true }
+    ) {
+        $snapshot = New-TestPolicySource
+        $snapshot.source.kind = 'offline'
+        $state = New-TestSourceState
+        $options = @{ OutputPath = (Join-Path $TestDrive 'generated-docs'); Sections = @('deviceConfigs')
+            IncludeRawFiles = $true; IncludeRaw = $true; GitCommit = $false; FrontMatter = $true; AdoWikiOrder = $false }
+        Start-IdsExport $state $options $snapshot
+        $state.Export.error | Should -BeNullOrEmpty
+        $inputPath = if ($Subfolder) { Join-Path $options.OutputPath $Subfolder } else { $options.OutputPath }
+        if ($AsZip) {
+            $zip = Join-Path $TestDrive 'raw-export.zip'
+            [IO.Compression.ZipFile]::CreateFromDirectory($inputPath, $zip)
+            $request = New-TestSourceRequest @{ archive = [Convert]::ToBase64String([IO.File]::ReadAllBytes($zip)) }
+        } else {
+            $request = New-TestSourceRequest @{ path = $inputPath }
+        }
+        try {
+            (Invoke-IdsPolicyRoute POST '/api/policies/import' $request $state $script:root).status | Should -Be 202
+            Wait-TestSourceTransfer $state
+            $state.PolicyTransfer.error | Should -BeNullOrEmpty
+            $state.PolicyTransfer.status | Should -Be 'completed'
+            $state.Policies.snapshot.collection.policies.Count | Should -Be 1
+            $state.Policies.snapshot.collection.policies[0].id | Should -BeExactly 'synthetic-policy'
+        } finally {
+            $request.InputStream.Dispose()
+            Stop-IdsPolicyTransfer $state
+        }
+    }
+
+    It 'imports a generated documentation folder containing a long OMA-URI value' {
+        $snapshot = New-TestPolicySource
+        $snapshot.source.kind = 'offline'
+        $policy = $snapshot.collection.documentation.deviceConfiguration[0].policy
+        $policy.'@odata.type' = '#microsoft.graph.windows10CustomConfiguration'
+        $policy | Add-Member NoteProperty omaSettings @([pscustomobject]@{
+            '@odata.type' = '#microsoft.graph.omaSettingString'
+            displayName = 'Synthetic setting'; omaUri = './Device/Vendor/MSFT/Synthetic'
+            value = ('x' * 32769)
+        })
+        $state = New-TestSourceState
+        $options = @{ OutputPath = (Join-Path $TestDrive 'long-oma-docs'); Sections = @('deviceConfigs')
+            IncludeRawFiles = $true; IncludeRaw = $true; GitCommit = $false; FrontMatter = $true; AdoWikiOrder = $false }
+        Start-IdsExport $state $options $snapshot
+        $state.Export.error | Should -BeNullOrEmpty
+        $request = New-TestSourceRequest @{ path = $options.OutputPath }
+        try {
+            (Invoke-IdsPolicyRoute POST '/api/policies/import' $request $state $script:root).status | Should -Be 202
+            Wait-TestSourceTransfer $state
+            $state.PolicyTransfer.error | Should -BeNullOrEmpty
+            $state.PolicyTransfer.status | Should -Be 'completed'
+            $state.Policies.snapshot.collection.policies[0].rawSettings[0].omaSettings[0].value |
+                Should -BeExactly ('x' * 32769)
+        } finally {
+            $request.InputStream.Dispose()
+            Stop-IdsPolicyTransfer $state
+        }
     }
 
     It 'documents imported policies without Graph or authentication and preserves incomplete prior pages' {

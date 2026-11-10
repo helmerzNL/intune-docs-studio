@@ -48,6 +48,16 @@ test('all ten UI catalogs have exact nonempty key and placeholder parity with no
   }
 });
 
+test('policy import help shows the supported input limits in every language', () => {
+  for (const id of ids) {
+    const help = catalog(id)['text.intune_docs_studio_policy_set_or_legacy_raw_export'];
+    for (const limit of ['32 MiB', '500', '64 MiB', '256 MiB']) {
+      assert.ok(help.includes(limit), `${id}: missing ${limit}`);
+    }
+    assert.doesNotMatch(help, /10 MiB/, `${id}: rule-pack limit does not apply to policy JSON`);
+  }
+});
+
 test('flags are exactly the ten packaged, local SVG files and both scripts load in the correct order', () => {
   assert.deepEqual(fs.readdirSync(path.join(root, 'web', 'flags')).sort(), ids.map(id => `${id}.svg`).sort());
   for (const id of ids) {

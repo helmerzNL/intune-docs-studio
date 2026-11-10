@@ -65,19 +65,21 @@ discards the live snapshot. Other selected documentation areas are collected on 
 
 **Already have an export?** Choose **Import an existing policy export** on the
 landing page instead of signing in. Select a host JSON folder/ZIP or upload its
-ZIP. Supported inputs are a versioned Intune Docs Studio policy set and older
-exports containing `_raw` policy JSON; Markdown alone is insufficient. Import is
-transactional: a failed replacement keeps the current source. Offline Home shows
-the source, environment, dates, family counts and limitations, independently of
-any later sign-in. Both documentation and Assessment work without network/auth.
+ZIP. Supported inputs are a versioned Intune Docs Studio policy set and
+documentation exports containing `_raw` policy JSON. Select the documentation
+export folder or its `_raw` subfolder, or zip either one; Markdown alone is
+insufficient. Import is transactional: a failed replacement keeps the current
+source. Offline Home shows the source, environment, dates, family counts and
+limitations, independently of any later sign-in. Both documentation and
+Assessment work without network/auth.
 To reconnect, use **Sign in for live policies** on offline Home. You can return
 to the active offline workspace without signing in; successful sign-in still
 requires explicit collection consent and confirmation before replacing its data.
 
 Use **Export policy set** on Home to write a new JSON subfolder for re-import or
 manual zipping. This preserves available policy evidence, names and completeness,
-not credentials or recognized secrets. Legacy inventories/settings may be incomplete
-and their capture date unknown. Do not treat unknown data as absent configuration.
+not credentials or recognized secrets. Inventories imported from `_raw` are incomplete
+and their capture date is unknown. Do not treat unknown data as absent configuration.
 Only the five policy families are available for offline documentation; apps,
 scripts and other live-only categories are disabled. Existing incomplete-family
 output is preserved.

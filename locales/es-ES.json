@@ -268,7 +268,7 @@
     "text.import_a_policy_source": "Importar un origen de directivas",
     "text.this_is_the_environment_to_document_or_assess_not": "Este es el entorno para documentar o evaluar, no una referencia. No se conecta a Microsoft. Una importación correcta sustituye el origen activo; un error lo deja intacto.",
     "text.policy_zip_file": "Archivo ZIP de directivas",
-    "text.intune_docs_studio_policy_set_or_legacy_raw_export": "Conjunto Intune Docs Studio o exportación _raw antigua. ZIP máximo 32 MiB; JSON: 500 archivos, 10 MiB cada uno, 64 MiB total.",
+    "text.intune_docs_studio_policy_set_or_legacy_raw_export": "Conjunto de directivas de Intune Docs Studio o exportación de documentación con JSON _raw. ZIP máximo 32 MiB; JSON: 500 archivos, 64 MiB cada uno, 256 MiB total.",
     "text.or_choose_a_folder_on_the_computer_running_this": "O elija una carpeta en el equipo que ejecuta la aplicación:",
     "text.policy_folder_or_zip_path": "Carpeta de directivas o ruta ZIP",
     "text.absolute_path_on_the_application_host": "Ruta absoluta en el host de la aplicación",
