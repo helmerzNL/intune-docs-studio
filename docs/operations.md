@@ -163,10 +163,11 @@ The command-line export remains a direct collection path.
 
 ### Portable offline policy sources
 
-Landing import accepts version-1 Intune Docs Studio JSON folders, the same folder
-as ZIP, and older `_raw` policy JSON exports; Markdown-only or other-tool formats
-fail explicitly. Validation completes before replacing an active source. Failed
-imports retain it; confirmed successful replacement clears dependent in-memory
+Landing import accepts version-1 Intune Docs Studio JSON folders and documentation
+exports with `_raw` policy JSON, as folders or ZIPs. For documentation exports,
+select the output folder or its `_raw` subfolder. Markdown-only or other-tool
+formats fail explicitly. Validation completes before replacing an active source.
+Failed imports retain it; confirmed successful replacement clears dependent in-memory
 results but not report files. Home exports to a fresh `policy-set-<time>-<id>`
 subfolder with `policyset.json`, five family JSON files and `references.json`.
 SHA-256 hashes, settings/definitions/templates, assignment/reference metadata,
@@ -177,9 +178,9 @@ the new import time describes the current import rather than replacing that evid
 
 Offline documentation and Assessment make no Graph/auth requests, including
 lazy group-name lookups. Only the five policy families can be documented;
-unavailable names/settings stay unknown. Legacy inventories are incomplete and
-undated. Existing incomplete-family pages/raw files are preserved; new offline
-pages show limitations. Never interpret incomplete evidence as removal or a pass.
+unavailable names/settings stay unknown. Inventories imported from `_raw` are
+incomplete and undated. Existing incomplete-family pages/raw files are preserved;
+new offline pages show limitations. Never interpret incomplete evidence as removal or a pass.
 Use the separate reference kind in the pack queue to generate supported typed
 Custom reference checks, not to replace the target source.
 

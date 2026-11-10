@@ -149,11 +149,13 @@ The command-line export still collects directly.
 
 ### Offline policy sets
 
-The landing page accepts an Intune Docs Studio JSON folder, that same folder
-zipped, or an older export containing usable `_raw` policy JSON. Markdown-only
-exports and other tools' formats are not supported. Home displays the active
-environment, source, timestamps, family counts and completeness. Failed imports
-leave the current source unchanged; replacing a loaded source requires confirmation.
+The landing page accepts an Intune Docs Studio policy-set JSON folder or a
+documentation export containing usable `_raw` policy JSON. For documentation
+exports, select either the export folder or its `_raw` subfolder; either can
+also be zipped. Markdown-only exports and other tools' formats are not supported.
+Home displays the active environment, source, timestamps, family counts and
+completeness. Failed imports leave the current source unchanged; replacing a
+loaded source requires confirmation.
 
 **Export policy set** writes a new uniquely named JSON subfolder, never overwriting
 an existing export. Its version-1 `policyset.json` manifest lists SHA-256 hashes for
@@ -167,11 +169,11 @@ Both workflows operate offline with **no Graph/authentication requests**. Offlin
 documentation supports only the five policy families; apps, scripts and other live
 sections are disabled. Missing settings/names stay explicitly unknown. Incomplete
 families preserve existing pages/raw files and never justify pruning; newly
-documented offline policies show their limitations. Legacy `_raw` inventories are
-always incomplete and their collection date remains unknown.
+documented offline policies show their limitations. Inventories imported from
+`_raw` files are always incomplete and their collection date remains unknown.
 
-Inputs are bounded to 32 MiB ZIP, 1,000 entries, 500 JSON files, 10 MiB per JSON,
-64 MiB total JSON and 64 JSON levels (folder nesting: 16). Unsafe paths, links,
+Inputs are bounded to 32 MiB ZIP, 1,000 entries, 500 JSON files, 64 MiB per JSON,
+256 MiB total JSON and 64 JSON levels (folder nesting: 16). Unsafe paths, links,
 duplicates and invalid manifests/hashes are rejected. **Choose folder** opens a
 Windows dialog on the **application host**, not an upload browser; cancellation
 keeps the previous path. Editable host paths remain available if the dialog fails.

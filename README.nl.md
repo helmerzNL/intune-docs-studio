@@ -143,8 +143,9 @@ momentopnamen worden gewist bij afsluiten. De export via de opdrachtregel verzam
 
 ### Offline beleidssets
 
-De aanmeldpagina accepteert een JSON-map van Intune Docs Studio, dezelfde map als ZIP, of een oudere export met
-bruikbare `_raw`-beleids-JSON. Exports met alleen Markdown en formaten van andere tools worden niet ondersteund.
+De aanmeldpagina accepteert een JSON-map met een Intune Docs Studio-beleidsset of een documentatie-export met
+bruikbare `_raw`-beleids-JSON. Kies bij een documentatie-export de exportmap of de submap `_raw`; beide kunnen
+ook als ZIP worden geïmporteerd. Exports met alleen Markdown en formaten van andere tools worden niet ondersteund.
 De startpagina toont de actieve omgeving, bron, tijdstempels, aantallen per familie en volledigheid. Mislukte
 imports laten de huidige bron ongewijzigd; het vervangen van een geladen bron vraagt om bevestiging.
 
@@ -159,9 +160,10 @@ Beide workflows werken offline **zonder Graph- of authenticatieverzoeken**. Offl
 alleen de vijf beleidsfamilies; apps, scripts en andere live onderdelen zijn uitgeschakeld. Ontbrekende
 instellingen en namen blijven expliciet onbekend. Onvolledige families behouden bestaande pagina's en
 raw-bestanden en rechtvaardigen nooit opschonen; nieuw gedocumenteerd offlinebeleid toont zijn beperkingen.
-Oudere `_raw`-inventarissen zijn altijd onvolledig en hun verzameldatum blijft onbekend.
+Inventarissen die uit `_raw`-bestanden worden geïmporteerd zijn altijd onvolledig en hun verzameldatum blijft
+onbekend.
 
-Invoer is begrensd tot een ZIP van 32 MiB, 1.000 items, 500 JSON-bestanden, 10 MiB per JSON, 64 MiB JSON in
+Invoer is begrensd tot een ZIP van 32 MiB, 1.000 items, 500 JSON-bestanden, 64 MiB per JSON, 256 MiB JSON in
 totaal en 64 JSON-niveaus (mapnesting: 16). Onveilige paden, koppelingen, duplicaten en ongeldige
 manifesten of hashes worden geweigerd. **Map kiezen** opent een Windows-dialoogvenster op de
 **applicatiehost**, geen uploadvenster; annuleren behoudt het vorige pad. Bewerkbare hostpaden blijven

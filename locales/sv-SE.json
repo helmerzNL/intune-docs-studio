@@ -268,7 +268,7 @@
     "text.import_a_policy_source": "Importera en principkälla",
     "text.this_is_the_environment_to_document_or_assess_not": "Detta är miljön som ska dokumenteras eller bedömas, inte en referensbaslinje. Ingen Microsoft-anslutning görs. Lyckad import ersätter aktiv källa; misslyckad import lämnar den oförändrad.",
     "text.policy_zip_file": "ZIP-fil med principer",
-    "text.intune_docs_studio_policy_set_or_legacy_raw_export": "Intune Docs Studio-uppsättning eller äldre _raw-export. ZIP högst 32 MiB; JSON: 500 filer, 10 MiB vardera, totalt 64 MiB.",
+    "text.intune_docs_studio_policy_set_or_legacy_raw_export": "Intune Docs Studio-principuppsättning eller dokumentationsexport med _raw-JSON. ZIP högst 32 MiB; JSON: 500 filer, 64 MiB vardera, totalt 256 MiB.",
     "text.or_choose_a_folder_on_the_computer_running_this": "Eller välj en mapp på datorn som kör programmet:",
     "text.policy_folder_or_zip_path": "Principmapp eller ZIP-sökväg",
     "text.absolute_path_on_the_application_host": "Absolut sökväg på programvärden",

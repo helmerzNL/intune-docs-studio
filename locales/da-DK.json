@@ -268,7 +268,7 @@
     "text.import_a_policy_source": "Importér en politikkilde",
     "text.this_is_the_environment_to_document_or_assess_not": "Dette er miljøet til dokumentation eller vurdering, ikke en referencebaseline. Ingen Microsoft-forbindelse. Vellykket import erstatter aktiv kilde; fejl lader den være uændret.",
     "text.policy_zip_file": "ZIP-fil med politikker",
-    "text.intune_docs_studio_policy_set_or_legacy_raw_export": "Intune Docs Studio-sæt eller ældre _raw-eksport. ZIP højst 32 MiB; JSON: 500 filer, 10 MiB hver, 64 MiB i alt.",
+    "text.intune_docs_studio_policy_set_or_legacy_raw_export": "Intune Docs Studio-politiksæt eller dokumentationseksport med _raw-JSON. ZIP højst 32 MiB; JSON: 500 filer, 64 MiB hver, 256 MiB i alt.",
     "text.or_choose_a_folder_on_the_computer_running_this": "Eller vælg en mappe på computeren, der kører programmet:",
     "text.policy_folder_or_zip_path": "Politikmappe eller ZIP-sti",
     "text.absolute_path_on_the_application_host": "Absolut sti på programværten",

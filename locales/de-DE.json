@@ -268,7 +268,7 @@
     "text.import_a_policy_source": "Richtlinienquelle importieren",
     "text.this_is_the_environment_to_document_or_assess_not": "Dies ist die zu dokumentierende oder prüfende Umgebung, keine Referenzbaseline. Keine Microsoft-Verbindung. Erfolgreicher Import ersetzt die aktive Quelle; ein Fehler lässt sie unverändert.",
     "text.policy_zip_file": "Richtlinien-ZIP-Datei",
-    "text.intune_docs_studio_policy_set_or_legacy_raw_export": "Intune-Docs-Studio-Richtliniensatz oder älterer _raw-Export. ZIP maximal 32 MiB; JSON: 500 Dateien, je 10 MiB, insgesamt 64 MiB.",
+    "text.intune_docs_studio_policy_set_or_legacy_raw_export": "Intune-Docs-Studio-Richtliniensatz oder Dokumentationsexport mit _raw-JSON. ZIP maximal 32 MiB; JSON: 500 Dateien, je 64 MiB, insgesamt 256 MiB.",
     "text.or_choose_a_folder_on_the_computer_running_this": "Oder wählen Sie einen Ordner auf dem Anwendungscomputer:",
     "text.policy_folder_or_zip_path": "Richtlinienordner oder ZIP-Pfad",
     "text.absolute_path_on_the_application_host": "Absoluter Pfad auf dem Anwendungshost",
