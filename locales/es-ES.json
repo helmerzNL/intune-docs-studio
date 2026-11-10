@@ -1,5 +1,18 @@
 {
   "ui": {
+    "progress.reading_zip": "Leyendo archivo ZIP…",
+    "progress.preparing_zip": "Preparando archivo ZIP para importar…",
+    "progress.reading_files": "Leyendo archivos de directivas",
+    "progress.validating_files": "Validando archivos de directivas",
+    "progress.preparing_files": "Preparando archivos de directivas",
+    "progress.writing_files": "Escribiendo archivos de directivas",
+    "progress.finishing": "Finalizando transferencia de directivas",
+    "progress.files_total": "Archivos: {completed} / {total}",
+    "progress.files_count": "Archivos: {completed}",
+    "progress.starting_transfer": "Iniciando transferencia de directivas…",
+    "progress.unavailable_retrying": "Progreso temporalmente no disponible. Se sigue comprobando…",
+    "progress.starting_document": "Iniciando exportación de documentación…",
+    "progress.imported_refresh_failed": "Se importó el conjunto de directivas, pero no se pudo actualizar el área de trabajo. Vuelva a cargar la página.",
     "text.portal_browser": "Navegador del portal",
     "text.portal_browser_auto": "Automático (preferencia por Edge)",
     "text.portal_browser_note": "Use solo un navegador aprobado por TI. Automático usa Chrome solo si Edge no está instalado; los errores de directiva o conexión nunca cambian de navegador. Se comprueban las directivas locales y CDP antes del inicio de sesión. Cada navegador tiene su propia sesión guardada.",

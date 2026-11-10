@@ -448,6 +448,8 @@ legend { color: var(--muted); font-size: 13px; padding: 0 6px; }
 .progress { height: 6px; margin-top: 16px; background: var(--surface-2); border-radius: 99px; overflow: hidden; }
 .bar { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent-dim), var(--accent), var(--accent-2)); transition: width .3s ease; }
 .phase { font-size: 13px; margin: 10px 0 14px; }
+.transfer-status { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.transfer-status .spinner { width: 18px; height: 18px; flex: none; }
 
 .log, .preview {
   margin: 0; padding: 12px 14px;

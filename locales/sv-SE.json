@@ -1,5 +1,18 @@
 {
   "ui": {
+    "progress.reading_zip": "Läser ZIP-filen…",
+    "progress.preparing_zip": "Förbereder ZIP-filen för import…",
+    "progress.reading_files": "Läser principfiler",
+    "progress.validating_files": "Validerar principfiler",
+    "progress.preparing_files": "Förbereder principfiler",
+    "progress.writing_files": "Skriver principfiler",
+    "progress.finishing": "Slutför principöverföringen",
+    "progress.files_total": "Filer: {completed} / {total}",
+    "progress.files_count": "Filer: {completed}",
+    "progress.starting_transfer": "Startar principöverföringen…",
+    "progress.unavailable_retrying": "Förloppet är tillfälligt otillgängligt. Kontrollen fortsätter…",
+    "progress.starting_document": "Startar dokumentationsexport…",
+    "progress.imported_refresh_failed": "Principuppsättningen importerades, men arbetsytan kunde inte uppdateras. Läs in sidan igen.",
     "text.portal_browser": "Portalwebbläsare",
     "text.portal_browser_auto": "Automatiskt (Edge föredras)",
     "text.portal_browser_note": "Använd endast en IT-godkänd webbläsare. Automatiskt använder Chrome bara om Edge inte är installerad; policy- eller anslutningsfel byter aldrig webbläsare. Lokala policyer och CDP kontrolleras före inloggning. Varje webbläsare har en separat sparad session.",

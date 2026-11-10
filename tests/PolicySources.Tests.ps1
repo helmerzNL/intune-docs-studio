@@ -95,6 +95,97 @@ Describe 'Explicit policy sources and portable snapshots' {
         { Get-IdsLoadedPolicies $state } | Should -Throw '*import a policy set*'
     }
 
+    It 'reports actual file counts while exporting and importing a policy set' {
+        $updates = [Collections.Generic.List[object]]::new()
+        $progress = {
+            param($stage, $completed, $total)
+            [void]$updates.Add(@{ stage = $stage; completed = $completed; total = $total })
+        }.GetNewClosure()
+        $export = Export-IdsPolicySnapshot (New-TestPolicySource) (Join-Path $TestDrive 'progress') $script:root -Progress $progress
+        $preparing = @($updates | Where-Object stage -EQ 'preparing')
+        $writing = @($updates | Where-Object stage -EQ 'writing')
+        $preparing[0].completed | Should -Be 0
+        $preparing[-1].completed | Should -Be 6
+        $preparing[-1].total | Should -Be 6
+        $writing[0].completed | Should -Be 0
+        $writing[-1].completed | Should -Be $export.files
+        $writing[-1].total | Should -Be 7
+
+        $updates.Clear()
+        $imported = Import-IdsPolicySnapshot -Path $export.path -Progress $progress
+        $reading = @($updates | Where-Object stage -EQ 'reading')
+        $validating = @($updates | Where-Object stage -EQ 'validating')
+        $reading[-1].completed | Should -Be 7
+        $reading[-1].total | Should -BeNullOrEmpty
+        $validating[0].completed | Should -Be 0
+        $validating[-1].completed | Should -Be 7
+        $validating[-1].total | Should -Be 7
+        $imported.collection.policies.Count | Should -Be 1
+
+        $zip = Join-Path $TestDrive 'progress.zip'
+        [IO.Compression.ZipFile]::CreateFromDirectory($export.path, $zip)
+        foreach ($mode in 'archive', 'path') {
+            $updates.Clear()
+            $imported = if ($mode -eq 'archive') {
+                Import-IdsPolicySnapshot -Archive ([IO.File]::ReadAllBytes($zip)) -Progress $progress
+            } else {
+                Import-IdsPolicySnapshot -Path $zip -Progress $progress
+            }
+            $reading = @($updates | Where-Object stage -EQ 'reading')
+            $reading[0].completed | Should -Be 0
+            $reading[-1].completed | Should -Be 7
+            $reading[-1].total | Should -Be 7
+            $imported.collection.policies.Count | Should -Be 1
+        }
+
+        [IO.File]::WriteAllText((Join-Path $export.path 'families\settingsCatalog.json'), '{"synthetic":true}')
+        $updates.Clear()
+        { Import-IdsPolicySnapshot -Path $export.path -Progress $progress } | Should -Throw
+        $validating = @($updates | Where-Object stage -EQ 'validating')
+        $validating[-1].completed | Should -Be 1
+        $validating[-1].total | Should -Be 7
+        @($updates | Where-Object stage -EQ 'finishing').Count | Should -Be 0
+    }
+
+    It 'reports only recognized raw policies as validation progress' {
+        $root = Join-Path $TestDrive 'raw-progress'
+        $folder = Join-Path $root 'configuration\custom'
+        [void][IO.Directory]::CreateDirectory($folder)
+        [IO.File]::WriteAllText((Join-Path $folder 'one.json'),
+            '{"id":"one","displayName":"One","@odata.type":"#microsoft.graph.windows10CustomConfiguration"}')
+        [IO.File]::WriteAllText((Join-Path $folder 'two.json'),
+            '{"id":"two","displayName":"Two","@odata.type":"#microsoft.graph.windows10CustomConfiguration"}')
+        [IO.File]::WriteAllText((Join-Path $root 'unrelated.json'), '{"id":"unrelated"}')
+        $updates = [Collections.Generic.List[object]]::new()
+        $progress = {
+            param($stage, $completed, $total)
+            [void]$updates.Add(@{ stage = $stage; completed = $completed; total = $total })
+        }.GetNewClosure()
+        $imported = Import-IdsPolicySnapshot -Path $root -Progress $progress
+        $reading = @($updates | Where-Object stage -EQ 'reading')
+        $validating = @($updates | Where-Object stage -EQ 'validating')
+        $reading[-1].completed | Should -Be 3
+        $validating[-1].completed | Should -Be 2
+        $validating[-1].total | Should -Be 2
+        $imported.collection.policies.Count | Should -Be 2
+    }
+
+    It 'returns the real worker progress through the transfer endpoint' {
+        $state = New-TestSourceState
+        $snapshot = New-TestPolicySource
+        $snapshot.source.kind = 'offline'
+        Set-IdsActivePolicySnapshot $state $snapshot
+        try {
+            Start-IdsPolicyTransfer $state $script:root @{ operation = 'export'; path = (Join-Path $TestDrive 'worker-progress') } | Should -BeTrue
+            Wait-TestSourceTransfer $state
+            $response = Invoke-IdsPolicyRoute GET '/api/policies/transfer' $null $state $script:root
+            $response.body.status | Should -Be 'completed'
+            $response.body.progress.stage | Should -Be 'writing'
+            $response.body.progress.completed | Should -Be 7
+            $response.body.progress.total | Should -Be 7
+        } finally { Stop-IdsPolicyTransfer $state }
+    }
+
     It 'exports live policy timestamps without mutating evidence or losing date information' {
         $snapshot = New-TestPolicySource
         $utc = [datetime]::new(2026, 10, 29, 10, 20, 30, [DateTimeKind]::Utc)

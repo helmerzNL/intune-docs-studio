@@ -1,5 +1,18 @@
 {
   "ui": {
+    "progress.reading_zip": "ZIP-Datei wird gelesen…",
+    "progress.preparing_zip": "ZIP-Datei wird für den Import vorbereitet…",
+    "progress.reading_files": "Richtliniendateien werden gelesen",
+    "progress.validating_files": "Richtliniendateien werden geprüft",
+    "progress.preparing_files": "Richtliniendateien werden vorbereitet",
+    "progress.writing_files": "Richtliniendateien werden geschrieben",
+    "progress.finishing": "Richtlinienübertragung wird abgeschlossen",
+    "progress.files_total": "Dateien: {completed} / {total}",
+    "progress.files_count": "Dateien: {completed}",
+    "progress.starting_transfer": "Richtlinienübertragung wird gestartet…",
+    "progress.unavailable_retrying": "Fortschritt vorübergehend nicht verfügbar. Erneute Prüfung läuft…",
+    "progress.starting_document": "Dokumentationsexport wird gestartet…",
+    "progress.imported_refresh_failed": "Der Richtliniensatz wurde importiert, aber der Arbeitsbereich konnte nicht aktualisiert werden. Laden Sie die Seite neu.",
     "text.portal_browser": "Portal-Browser",
     "text.portal_browser_auto": "Automatisch (Edge bevorzugt)",
     "text.portal_browser_note": "Verwenden Sie nur einen von der IT genehmigten Browser. Automatisch nutzt Chrome nur, wenn Edge nicht installiert ist; bei Richtlinien- oder Verbindungsfehlern wird nie gewechselt. Lokale Richtlinien und CDP werden vor der Anmeldung geprüft. Jeder Browser hat eine eigene gespeicherte Sitzung.",

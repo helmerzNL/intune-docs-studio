@@ -1,5 +1,18 @@
 {
   "ui": {
+    "progress.reading_zip": "ZIP-bestand lezen…",
+    "progress.preparing_zip": "ZIP-bestand voorbereiden voor import…",
+    "progress.reading_files": "Beleidsbestanden lezen",
+    "progress.validating_files": "Beleidsbestanden valideren",
+    "progress.preparing_files": "Beleidsbestanden voorbereiden",
+    "progress.writing_files": "Beleidsbestanden schrijven",
+    "progress.finishing": "Beleidsoverdracht afronden",
+    "progress.files_total": "Bestanden: {completed} / {total}",
+    "progress.files_count": "Bestanden: {completed}",
+    "progress.starting_transfer": "Beleidsoverdracht starten…",
+    "progress.unavailable_retrying": "Voortgang tijdelijk niet beschikbaar. Opnieuw controleren…",
+    "progress.starting_document": "Documentatie-export starten…",
+    "progress.imported_refresh_failed": "Beleidsset geïmporteerd, maar de werkruimte kon niet worden vernieuwd. Vernieuw de pagina.",
     "text.portal_browser": "Portalbrowser",
     "text.portal_browser_auto": "Automatisch (voorkeur voor Edge)",
     "text.portal_browser_note": "Gebruik alleen een door IT goedgekeurde browser. Automatisch gebruikt Chrome alleen als Edge niet is geïnstalleerd; bij beleids- of verbindingsfouten wordt nooit gewisseld. Lokaal beleid en CDP worden vóór aanmelding gecontroleerd. Elke browser heeft een eigen opgeslagen sessie.",

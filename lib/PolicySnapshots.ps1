@@ -1,5 +1,10 @@
 . (Join-Path $PSScriptRoot 'Localization.ps1')
 
+function Send-IdsPolicyProgress {
+    param([scriptblock]$Progress, [string]$Stage, [int]$Completed, [Nullable[int]]$Total)
+    if ($Progress) { [void](& $Progress $Stage $Completed $Total) }
+}
+
 function Get-IdsPolicyFamilies {
     return @('settingsCatalog', 'deviceConfiguration', 'compliance', 'admx', 'intent')
 }
@@ -26,7 +31,8 @@ function Assert-IdsPolicyEntryName {
 function Read-IdsPolicyEntries {
     param([string]$Path, [byte[]]$Archive,
         [ValidateRange(1, 67108864)][long]$MaxFileBytes = 64MB,
-        [ValidateRange(1, 268435456)][long]$MaxTotalBytes = 256MB)
+        [ValidateRange(1, 268435456)][long]$MaxTotalBytes = 256MB,
+        [scriptblock]$Progress)
     $files = [Collections.Generic.Dictionary[string, byte[]]]::new([StringComparer]::OrdinalIgnoreCase)
     $budget = @{ read = 0L }
     if ($null -ne $Archive) {
@@ -40,6 +46,8 @@ function Read-IdsPolicyEntries {
             if ($entries.Count -gt 1000) { throw (Get-IdsText -Key 'text.policy_input_exceeds_1_000_entries') }
             $directory = @([Ids.BaselineZipReader]::ReadDirectory($Archive, $entries.Count))
             $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            $totalFiles = @($entries | Where-Object { $_.FullName.EndsWith('.json', [StringComparison]::OrdinalIgnoreCase) }).Count
+            Send-IdsPolicyProgress $Progress 'reading' 0 $totalFiles
             for ($i = 0; $i -lt $entries.Count; $i++) {
                 $entry = $entries[$i]; $info = $directory[$i]
                 $name = $entry.FullName.Replace('\', '/')
@@ -64,6 +72,7 @@ function Read-IdsPolicyEntries {
                     throw (Get-IdsText -Key 'text.policy_zip_expanded_size_exceeds_limits_or_does_not_match_its_directory')
                 }
                 $files.Add($name, $content)
+                Send-IdsPolicyProgress $Progress 'reading' $files.Count $totalFiles
             }
         } finally { if ($zip) { $zip.Dispose() }; $stream.Dispose() }
     } else {
@@ -72,13 +81,14 @@ function Read-IdsPolicyEntries {
         if ([IO.File]::Exists($Path)) {
             if ([IO.Path]::GetExtension($Path) -ine '.zip') { throw (Get-IdsText -Key 'text.choose_a_json_policy_folder_or_zip_file') }
             if ([IO.FileInfo]::new($Path).Length -gt 32MB) { throw (Get-IdsText -Key 'text.policy_zip_exceeds_32_mib') }
-            return Read-IdsPolicyEntries -Archive ([IO.File]::ReadAllBytes($Path)) -MaxFileBytes $MaxFileBytes -MaxTotalBytes $MaxTotalBytes
+            return Read-IdsPolicyEntries -Archive ([IO.File]::ReadAllBytes($Path)) -MaxFileBytes $MaxFileBytes -MaxTotalBytes $MaxTotalBytes -Progress $Progress
         }
         if (-not [IO.Directory]::Exists($Path)) { throw (Get-IdsText -Key 'text.policy_folder_does_not_exist_on_the_application_host') }
         $root = [IO.Path]::GetFullPath($Path).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
         $pending = [Collections.Generic.Queue[string]]::new()
         $pending.Enqueue($root)
         $count = 0
+        Send-IdsPolicyProgress $Progress 'reading' 0 $null
         while ($pending.Count) {
             foreach ($item in Get-ChildItem -LiteralPath $pending.Dequeue() -Force -ErrorAction Stop) {
                 $count++
@@ -96,6 +106,7 @@ function Read-IdsPolicyEntries {
                 $bytes = [IO.File]::ReadAllBytes($item.FullName)
                 if ($bytes.Length -ne $item.Length) { throw (Get-IdsText -Key 'text.policy_input_changed_while_reading_retry') }
                 $files.Add($name, $bytes)
+                Send-IdsPolicyProgress $Progress 'reading' $files.Count $null
             }
         }
     }
@@ -185,11 +196,14 @@ function Assert-IdsPolicyCollection {
 }
 
 function Import-IdsPolicySnapshot {
-    param([string]$Path, [byte[]]$Archive)
-    $entries = Read-IdsPolicyEntries -Path $Path -Archive $Archive
+    param([string]$Path, [byte[]]$Archive, [scriptblock]$Progress)
+    $entries = Read-IdsPolicyEntries -Path $Path -Archive $Archive -Progress $Progress
     $manifests = @($entries.Keys | Where-Object { $_ -match '(^|/)policyset\.json$' })
     if ($manifests.Count -gt 1) { throw (Get-IdsText -Key 'text.choose_one_policy_set_not_a_folder_containing_several_exports') }
-    if ($manifests.Count -eq 0) { return Import-IdsLegacyPolicySnapshot $entries }
+    if ($manifests.Count -eq 0) { return Import-IdsLegacyPolicySnapshot -Entries $entries -Progress $Progress }
+    $names = @((Get-IdsPolicyFamilies | ForEach-Object { "families/$_.json" })) + @('references.json')
+    $validationTotal = $names.Count + 1
+    Send-IdsPolicyProgress $Progress 'validating' 0 $validationTotal
     $manifestPath = $manifests[0]
     $prefix = $manifestPath.Substring(0, $manifestPath.Length - 'policyset.json'.Length)
     $manifest = Read-IdsPolicyJson $entries[$manifestPath]
@@ -201,13 +215,19 @@ function Import-IdsPolicySnapshot {
     if ($null -ne $manifest.capturedAt -and
         ($manifest.capturedAt -isnot [string] -or -not [datetimeoffset]::TryParse($manifest.capturedAt, [ref]$time))) { throw (Get-IdsText -Key 'text.policy_collection_timestamp_is_invalid') }
     $collection = [ordered]@{ policies = @(); sources = @(); issues = @(); documentation = @{}; documentationIssues = @() }
-    $names = @((Get-IdsPolicyFamilies | ForEach-Object { "families/$_.json" })) + @('references.json')
     Assert-IdsAssessmentFields $manifest.files $names $names
+    $validated = 1
+    Send-IdsPolicyProgress $Progress 'validating' $validated $validationTotal
     foreach ($name in $names) {
         if (-not $entries.ContainsKey("$prefix$name") -or $manifest.files[$name] -cnotmatch '\A[0-9a-f]{64}\z' -or
             (Get-IdsBuildKitSha256 $entries["$prefix$name"]) -cne $manifest.files[$name]) { throw (Get-IdsText -Key 'text.policy_set_file_is_missing_or_its_sha_256_does_not_match_the_manifest') }
         $value = Read-IdsPolicyJson $entries["$prefix$name"]
-        if ($name -eq 'references.json') { $references = $value; continue }
+        if ($name -eq 'references.json') {
+            $references = $value
+            $validated++
+            Send-IdsPolicyProgress $Progress 'validating' $validated $validationTotal
+            continue
+        }
         $family = [IO.Path]::GetFileNameWithoutExtension($name)
         Assert-IdsAssessmentFields $value @('family', 'policies', 'sources', 'issues', 'documentation', 'documentationIssues') @('family', 'policies', 'sources', 'issues', 'documentation', 'documentationIssues')
         if ($value.family -cne $family) { throw (Get-IdsText -Key 'text.policy_family_filename_does_not_match_its_payload') }
@@ -216,7 +236,10 @@ function Import-IdsPolicySnapshot {
             $collection[$field] += @($value[$field])
         }
         $collection.documentation[$family] = $value.documentation
+        $validated++
+        Send-IdsPolicyProgress $Progress 'validating' $validated $validationTotal
     }
+    Send-IdsPolicyProgress $Progress 'finishing' 0 $null
     Assert-IdsPolicyCollection $collection
     foreach ($family in Get-IdsPolicyFamilies) {
         $collection.documentation[$family] = @(foreach ($doc in $collection.documentation[$family]) { ConvertTo-IdsPolicyGraphObject $doc })
@@ -232,21 +255,29 @@ function Import-IdsPolicySnapshot {
 }
 
 function Export-IdsPolicySnapshot {
-    param($Snapshot, [string]$OutputPath, [string]$InstallRoot)
+    param($Snapshot, [string]$OutputPath, [string]$InstallRoot, [scriptblock]$Progress)
     $root = Get-IdsReportCanonicalRoot $OutputPath
     Assert-IdsReportDistinctRoots @($root, (Get-IdsReportCanonicalRoot $InstallRoot))
     $files = [ordered]@{}
     $hashes = [ordered]@{}
-    foreach ($family in Get-IdsPolicyFamilies) {
+    $families = @(Get-IdsPolicyFamilies)
+    $preparationTotal = $families.Count + 1
+    $prepared = 0
+    Send-IdsPolicyProgress $Progress 'preparing' $prepared $preparationTotal
+    foreach ($family in $families) {
         $payload = [ordered]@{ family = $family }
         foreach ($field in 'policies', 'sources', 'issues', 'documentationIssues') {
             $payload[$field] = @($Snapshot.collection.$field | Where-Object family -CEQ $family)
         }
         $payload.documentation = @($Snapshot.collection.documentation[$family])
         $files["families/$family.json"] = ConvertTo-IdsBuildKitJsonBytes (Copy-IdsPolicyPayload $payload) -Compress
+        $prepared++
+        Send-IdsPolicyProgress $Progress 'preparing' $prepared $preparationTotal
     }
     $refs = if ($Snapshot.references) { $Snapshot.references } else { @{} }
     $files['references.json'] = ConvertTo-IdsBuildKitJsonBytes (Copy-IdsPolicyPayload $refs) -Compress
+    $prepared++
+    Send-IdsPolicyProgress $Progress 'preparing' $prepared $preparationTotal
     $total = 0L
     foreach ($name in $files.Keys) {
         $total += $files[$name].Length
@@ -269,10 +300,15 @@ function Export-IdsPolicySnapshot {
     Assert-IdsReportDirectoryPath $root
     $destination = Join-Path $root ("policy-set-" + [datetime]::UtcNow.ToString('yyyyMMddTHHmmss') + '-' + [guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($destination)
+    $writeTotal = $files.Count
+    $written = 0
+    Send-IdsPolicyProgress $Progress 'writing' $written $writeTotal
     foreach ($name in $files.Keys) {
         $target = Join-Path $destination $name.Replace('/', '\')
         [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
         [IO.File]::WriteAllBytes($target, $files[$name])
+        $written++
+        Send-IdsPolicyProgress $Progress 'writing' $written $writeTotal
     }
     return @{ path = $destination; files = $files.Count }
 }
@@ -290,7 +326,7 @@ function Get-IdsLegacyPolicyFamily {
 }
 
 function Import-IdsLegacyPolicySnapshot {
-    param($Entries)
+    param($Entries, [scriptblock]$Progress)
     $collection = [ordered]@{ policies = @(); sources = @(); issues = @(); documentation = @{}; documentationIssues = @() }
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($family in Get-IdsPolicyFamilies) {
@@ -302,6 +338,11 @@ function Import-IdsLegacyPolicySnapshot {
         }
     }
     $hasEmbeddedRaw = @($Entries.Keys | Where-Object { Get-IdsLegacyPolicyFamily $_ }).Count -gt 0
+    $validationTotal = @($Entries.Keys | Where-Object {
+        (Get-IdsLegacyPolicyFamily $_) -or (-not $hasEmbeddedRaw -and (Get-IdsLegacyPolicyFamily "_raw/$_"))
+    }).Count
+    Send-IdsPolicyProgress $Progress 'validating' 0 $validationTotal
+    $validated = 0
     foreach ($name in $Entries.Keys | Sort-Object -CaseSensitive) {
         $family = Get-IdsLegacyPolicyFamily $name
         if (-not $family -and -not $hasEmbeddedRaw) {
@@ -326,8 +367,11 @@ function Import-IdsLegacyPolicySnapshot {
             osMin = $null; osMax = $null; osApplicabilityRule = $null; unsupportedApplicability = $true; enrollmentMode = $null
         }
         $collection.documentation[$family] += @{ policy = $raw; settings = $settings; template = $raw.templateReference }
+        $validated++
+        Send-IdsPolicyProgress $Progress 'validating' $validated $validationTotal
     }
     if ($collection.policies.Count -eq 0) { throw (Get-IdsText -Key 'text.no_usable_intune_docs_studio_policy_json_found_markdown_only_exports_cannot_be_imported_include_poli') }
+    Send-IdsPolicyProgress $Progress 'finishing' 0 $null
     foreach ($family in Get-IdsPolicyFamilies) {
         $collection.documentation[$family] = @(foreach ($doc in $collection.documentation[$family]) { ConvertTo-IdsPolicyGraphObject $doc })
     }

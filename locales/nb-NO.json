@@ -1,5 +1,18 @@
 {
   "ui": {
+    "progress.reading_zip": "Leser ZIP-filen…",
+    "progress.preparing_zip": "Klargjør ZIP-filen for import…",
+    "progress.reading_files": "Leser policyfiler",
+    "progress.validating_files": "Validerer policyfiler",
+    "progress.preparing_files": "Klargjør policyfiler",
+    "progress.writing_files": "Skriver policyfiler",
+    "progress.finishing": "Fullfører policyoverføringen",
+    "progress.files_total": "Filer: {completed} / {total}",
+    "progress.files_count": "Filer: {completed}",
+    "progress.starting_transfer": "Starter policyoverføringen…",
+    "progress.unavailable_retrying": "Fremdriften er midlertidig utilgjengelig. Fortsetter å kontrollere…",
+    "progress.starting_document": "Starter dokumentasjonseksport…",
+    "progress.imported_refresh_failed": "Policysettet ble importert, men arbeidsområdet kunne ikke oppdateres. Last inn siden på nytt.",
     "text.portal_browser": "Portalnettleser",
     "text.portal_browser_auto": "Automatisk (Edge foretrekkes)",
     "text.portal_browser_note": "Bruk bare en IT-godkjent nettleser. Automatisk bruker Chrome bare hvis Edge ikke er installert; policy- eller tilkoblingsfeil bytter aldri nettleser. Lokale policyer og CDP kontrolleres før pålogging. Hver nettleser har en egen lagret økt.",

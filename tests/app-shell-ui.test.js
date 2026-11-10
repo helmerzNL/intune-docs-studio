@@ -30,6 +30,7 @@ function shell({ hash = '', search = '', respond = () => ({}), seed = () => {}, 
   const listeners = {};
   const history = [];
   const alerts = [];
+  const timeouts = [];
   let focused = null;
   function element(id) {
     if (!elements.has(id)) {
@@ -74,6 +75,7 @@ function shell({ hash = '', search = '', respond = () => ({}), seed = () => {}, 
       scrollTo() {}
     },
     URLSearchParams, TextEncoder,
+    btoa: (text) => Buffer.from(text, 'binary').toString('base64'),
     fetch: async (url, options) => {
       const request = { url, method: options?.method || 'GET', payload: options?.body && JSON.parse(options.body),
         headers: options?.headers };
@@ -84,7 +86,8 @@ function shell({ hash = '', search = '', respond = () => ({}), seed = () => {}, 
       return { ok: status >= 200 && status < 300, status,
         json: async () => (response?.body === undefined ? (response ?? {}) : response.body) };
     },
-    setInterval() { return Symbol('timer'); }, clearInterval() {}, setTimeout() {},
+    setInterval() { return Symbol('timer'); }, clearInterval() {},
+    setTimeout(callback) { timeouts.push(callback); return timeouts.length; },
     alert(message) { alerts.push(message); }, confirm() { return true; }
   });
   seed(element);
@@ -94,6 +97,7 @@ function shell({ hash = '', search = '', respond = () => ({}), seed = () => {}, 
     element, requests, history, alerts,
     run: (code) => vm.runInContext(code, context),
     settle: () => new Promise(setImmediate),
+    runTimeout() { assert.ok(timeouts.length, 'expected a scheduled timeout'); timeouts.shift()(); },
     focused: () => focused,
     clearFocus() { focused = null; },
     navigate(next) { location.hash = next; listeners.hashchange(); },
@@ -192,6 +196,342 @@ test('importing a chosen host folder sends its path and opens the offline worksp
   assert.equal(request.payload.archive, undefined);
   assert.deepEqual(d.visibleViews(), ['viewHome']);
   assert.equal(d.run('state.policies.count'), 1);
+});
+
+test('policy ZIP import shows activity while reading and actual file progress while processing', async () => {
+  let releaseFile;
+  const fileRead = new Promise((resolve) => { releaseFile = resolve; });
+  let completed = false;
+  let polls = 0;
+  const d = shell({ respond(url) {
+    if (url === '/api/policies/import') return { started: true };
+    if (url === '/api/policies/transfer') {
+      polls++;
+      if (polls === 1) return { status: 'running', running: true,
+        progress: { stage: 'reading', completed: 2, total: null } };
+      if (polls === 2) return { status: 'running', running: true,
+        progress: { stage: 'validating', completed: 3, total: 7 } };
+      completed = true;
+      return { status: 'completed', running: false, result: { policies: 1 } };
+    }
+    if (url === '/api/state') return signedOut({ policies: completed
+      ? { status: 'partial', count: 1, families: [], issues: [], source: { kind: 'offline' } }
+      : { status: 'idle' } });
+    return {};
+  } });
+  await d.settle();
+  d.element('btnOpenPolicyImport').handlers.click();
+  d.element('policyImportZip').files = [{ name: 'synthetic.zip', size: 3, arrayBuffer: () => fileRead }];
+  const importing = d.element('btnImportPolicySource').handlers.click();
+  await d.settle();
+  assert.match(d.element('policyImportStatus').textContent, /read/i);
+  assert.equal(d.visible('policyImportProgress'), true);
+  assert.equal(d.element('btnImportPolicySource').disabled, true);
+  assert.equal(d.element('btnCancelPolicyImport').disabled, true);
+  assert.equal(d.requests.some((request) => request.url === '/api/policies/import'), false);
+
+  releaseFile(Uint8Array.from([1, 2, 3]).buffer);
+  await d.settle();
+  assert.match(d.element('policyImportStatus').textContent, /read.*2/i);
+  assert.doesNotMatch(d.element('policyImportStatus').textContent, /%/);
+  d.runTimeout();
+  await d.settle();
+  assert.match(d.element('policyImportStatus').textContent, /validat.*3\s*\/\s*7/i);
+  await d.run("window.IdsI18n.setLocale('nl-NL')");
+  assert.match(d.element('policyImportStatus').textContent, /valideren.*3\s*\/\s*7/i);
+  d.runTimeout();
+  await importing;
+  assert.equal(d.visible('policyImportProgress'), false);
+  assert.deepEqual(d.visibleViews(), ['viewHome']);
+});
+
+test('a resumed policy export opens its progress panel and reports real preparation counts', async () => {
+  let running = true;
+  let polls = 0;
+  const d = shell({ respond(url) {
+    if (url === '/api/state') return signedOut({
+      policies: { status: 'partial', count: 1, families: [], issues: [], source: { kind: 'offline' } },
+      transfer: { running, operation: 'export' }
+    });
+    if (url === '/api/policies/transfer') {
+      polls++;
+      if (polls === 1) return { status: 'running', running: true,
+        progress: { stage: 'preparing', completed: 1, total: 6 } };
+      running = false;
+      return { status: 'completed', running: false, result: { path: 'C:\\synthetic\\policy-set' } };
+    }
+    return {};
+  } });
+  await d.settle();
+  assert.equal(d.element('policyExportPanel').open, true);
+  assert.equal(d.visible('policyExportProgress'), true);
+  assert.match(d.element('policyExportStatus').textContent, /prepar.*1\s*\/\s*6/i);
+  d.runTimeout();
+  await d.settle();
+  assert.equal(d.visible('policyExportProgress'), false);
+  assert.match(d.element('policyExportStatus').textContent, /policy-set/);
+});
+
+test('policy transfer reports a temporary polling outage and resumes progress', async () => {
+  let polls = 0;
+  const d = shell({ respond(url) {
+    if (url === '/api/state') return signedOut({
+      policies: { status: 'partial', count: 1, families: [], issues: [], source: { kind: 'offline' } }
+    });
+    if (url === '/api/policies/export') return { started: true };
+    if (url === '/api/policies/transfer') {
+      polls++;
+      if (polls === 1) return new Error('Synthetic connection interruption');
+      return { status: 'completed', running: false, result: { path: 'C:\\synthetic\\policy-set' } };
+    }
+    return {};
+  } });
+  await d.settle();
+  d.element('btnShowPolicyExport').handlers.click();
+  const exporting = d.element('btnExportPolicySource').handlers.click();
+  await d.settle();
+  assert.equal(d.visible('policyExportProgress'), true);
+  assert.match(d.element('policyExportStatus').textContent, /unavailable.*checking/i);
+  d.runTimeout();
+  await exporting;
+  assert.equal(d.visible('policyExportProgress'), false);
+  assert.match(d.element('policyExportStatus').textContent, /policy-set/);
+});
+
+test('policy transfer retries a server error but surfaces a worker failure without an activity indicator', async () => {
+  let polls = 0;
+  const d = shell({ respond(url) {
+    if (url === '/api/state') return signedOut({
+      policies: { status: 'partial', count: 1, families: [], issues: [], source: { kind: 'offline' } }
+    });
+    if (url === '/api/policies/export') return { started: true };
+    if (url === '/api/policies/transfer') {
+      polls++;
+      if (polls === 1) return { httpStatus: 503, body: { error: 'Synthetic temporary outage' } };
+      return { status: 'failed', running: false, error: 'Synthetic worker failure' };
+    }
+    return {};
+  } });
+  await d.settle();
+  d.element('btnShowPolicyExport').handlers.click();
+  const exporting = d.element('btnExportPolicySource').handlers.click();
+  await d.settle();
+  assert.match(d.element('policyExportStatus').textContent, /unavailable.*checking/i);
+  assert.equal(d.visible('policyExportProgress'), true);
+  d.runTimeout();
+  await exporting;
+  assert.equal(d.visible('policyExportProgress'), false);
+  assert.match(d.element('policyExportStatus').textContent, /Synthetic worker failure/);
+});
+
+test('a stale policy export start failure cannot overwrite the reset workspace', async () => {
+  let release;
+  const d = shell({ respond(url) {
+    if (url === '/api/state') return signedOut({
+      policies: { status: 'partial', count: 1, families: [], issues: [], source: { kind: 'offline' } }
+    });
+    if (url === '/api/policies/export') return new Promise((resolve) => { release = resolve; });
+    return {};
+  } });
+  await d.settle();
+  d.element('btnShowPolicyExport').handlers.click();
+  const exporting = d.element('btnExportPolicySource').handlers.click();
+  await d.settle();
+  d.run('clearWorkspace()');
+  d.element('policyExportStatus').textContent = 'New workspace';
+  release(new Error('Synthetic stale start failure'));
+  await exporting;
+  assert.equal(d.element('policyExportStatus').textContent, 'New workspace');
+  assert.equal(d.visible('policyExportProgress'), false);
+});
+
+test('an imported policy source reports a failed workspace refresh', async () => {
+  for (const failure of [new Error('Synthetic refresh failure'), { httpStatus: 500, body: { error: 'Synthetic HTTP failure' } }]) {
+    let imported = false;
+    const d = shell({ respond(url) {
+      if (url === '/api/state') return imported ? failure
+        : signedOut({ policies: { status: 'idle' } });
+      if (url === '/api/policies/import') return { started: true };
+      if (url === '/api/policies/transfer') {
+        imported = true;
+        return { status: 'completed', running: false, result: { policies: 1 } };
+      }
+      return {};
+    } });
+    await d.settle();
+    d.element('btnOpenPolicyImport').handlers.click();
+    d.element('policyImportPath').value = 'C:\\synthetic\\policies';
+    await d.element('btnImportPolicySource').handlers.click();
+    assert.deepEqual(d.visibleViews(), ['viewImport']);
+    assert.equal(d.visible('policyImportProgress'), false);
+    assert.equal(d.visible('policyImportError'), true);
+    assert.match(d.element('policyImportError').textContent, /imported.*refresh.*reload/i);
+    assert.equal(d.run('policiesReady()'), false);
+  }
+});
+
+test('resetting the workspace during ZIP preparation never starts a stale import', async () => {
+  let releaseFile;
+  const fileRead = new Promise((resolve) => { releaseFile = resolve; });
+  const d = shell({ respond: stateOnly(signedOut({ policies: { status: 'idle' } })) });
+  await d.settle();
+  d.element('btnOpenPolicyImport').handlers.click();
+  d.element('policyImportZip').files = [{ name: 'synthetic.zip', size: 3, arrayBuffer: () => fileRead }];
+  const importing = d.element('btnImportPolicySource').handlers.click();
+  await d.settle();
+  d.run('clearWorkspace()');
+  releaseFile(Uint8Array.from([1, 2, 3]).buffer);
+  await importing;
+  assert.equal(d.requests.some((request) => request.url === '/api/policies/import'), false);
+  assert.equal(d.visible('policyImportProgress'), false);
+});
+
+test('large policy ZIP preparation yields to the UI and preserves the exact archive bytes', async () => {
+  const bytes = Uint8Array.from({ length: 3 * 0x4000 * 9 + 2 }, (_, index) => index % 256);
+  const d = shell({ respond(url) {
+    if (url === '/api/state') return signedOut({ policies: { status: 'idle' } });
+    if (url === '/api/policies/import') return { started: true };
+    if (url === '/api/policies/transfer') return { status: 'completed', running: false, result: { policies: 1 } };
+    return {};
+  } });
+  await d.settle();
+  d.element('btnOpenPolicyImport').handlers.click();
+  d.element('policyImportZip').files = [{ name: 'synthetic.zip', size: bytes.length, arrayBuffer: async () => bytes.buffer }];
+  const importing = d.element('btnImportPolicySource').handlers.click();
+  await d.settle();
+  assert.match(d.element('policyImportStatus').textContent, /prepar.*zip/i);
+  assert.equal(d.visible('policyImportProgress'), true);
+  assert.equal(d.requests.some((request) => request.url === '/api/policies/import'), false);
+  d.runTimeout();
+  await importing;
+  assert.equal(d.requests.find((request) => request.url === '/api/policies/import').payload.archive,
+    Buffer.from(bytes).toString('base64'));
+});
+
+test('resetting while encoding a large policy ZIP prevents its upload', async () => {
+  const bytes = new Uint8Array(3 * 0x4000 * 9 + 2);
+  const d = shell({ respond: stateOnly(signedOut({ policies: { status: 'idle' } })) });
+  await d.settle();
+  d.element('btnOpenPolicyImport').handlers.click();
+  d.element('policyImportZip').files = [{ name: 'synthetic.zip', size: bytes.length, arrayBuffer: async () => bytes.buffer }];
+  const importing = d.element('btnImportPolicySource').handlers.click();
+  await d.settle();
+  assert.equal(d.requests.some((request) => request.url === '/api/policies/import'), false);
+  d.run('clearWorkspace()');
+  d.runTimeout();
+  await importing;
+  assert.equal(d.requests.some((request) => request.url === '/api/policies/import'), false);
+  assert.equal(d.visible('policyImportProgress'), false);
+});
+
+test('documentation export displays activity while its start request is pending', async () => {
+  let releaseStart;
+  const start = new Promise((resolve) => { releaseStart = resolve; });
+  const d = shell({ hash: '#/document', respond(url) {
+    if (url === '/api/state') return signedIn();
+    if (url === '/api/export') return start;
+    if (url.startsWith('/api/export/log')) return { running: true, done: false, percent: 5, phase: 'Preparing' };
+    return {};
+  } });
+  await d.settle();
+  assert.equal(d.visible('documentExportStarting'), false);
+  const exporting = d.element('btnExport').handlers.click();
+  await d.settle();
+  assert.equal(d.visible('documentExportStarting'), true);
+  assert.equal(d.element('btnExport').disabled, true);
+  releaseStart({ started: true });
+  await exporting;
+  assert.equal(d.visible('documentExportStarting'), false);
+  assert.equal(d.visible('cardRun'), true);
+});
+
+test('documentation export surfaces a polling outage and clears it when progress returns', async () => {
+  let fail = false;
+  const d = shell({ respond(url) {
+    if (url === '/api/state') return signedIn();
+    if (url.startsWith('/api/export/log')) {
+      return fail ? new Error('Synthetic connection interruption')
+        : { running: true, done: false, percent: 35, phase: 'Collecting policies', entries: [] };
+    }
+    return {};
+  } });
+  await d.settle();
+  fail = true;
+  await d.run('pollLog()');
+  assert.equal(d.visible('documentExportProgressError'), true);
+  assert.match(d.element('documentExportProgressError').textContent, /progress.*unavailable/i);
+  fail = false;
+  await d.run('pollLog()');
+  assert.equal(d.visible('documentExportProgressError'), false);
+  assert.equal(d.element('bar').style.width, '35%');
+  assert.equal(d.element('phase').textContent, 'Collecting policies');
+});
+
+test('a resumed documentation export keeps retrying when its first log request fails', async () => {
+  let fail = true;
+  const d = shell({ hash: '#/document', respond(url) {
+    if (url === '/api/state') return signedIn({ export: { running: true } });
+    if (url.startsWith('/api/export/log')) {
+      return fail ? new Error('Synthetic connection interruption')
+        : { running: true, done: false, percent: 45, phase: 'Writing files', entries: [] };
+    }
+    return {};
+  } });
+  await d.settle();
+  assert.equal(d.visible('cardRun'), true);
+  assert.equal(d.visible('documentExportProgressError'), true);
+  assert.match(d.element('documentExportProgressError').textContent, /progress.*unavailable/i);
+  fail = false;
+  await d.run('pollLog()');
+  assert.equal(d.visible('documentExportProgressError'), false);
+  assert.equal(d.element('bar').style.width, '45%');
+});
+
+test('a resumed documentation export shows progress before other initialization finishes', async () => {
+  for (const delayedUrl of ['/api/assessment', '/api/assessment/packs', '/api/settings']) {
+    let release;
+    const pending = new Promise((resolve) => { release = resolve; });
+    const d = shell({
+      hash: '#/document',
+      seed(element) { element('cardRun').classList.add('hidden'); },
+      respond(url) {
+        if (url === '/api/state') return signedIn({ export: { running: true } });
+        if (url === delayedUrl) return pending;
+        if (url.startsWith('/api/export/log')) {
+          return { running: true, done: false, percent: 45, phase: 'Writing files', entries: [] };
+        }
+        return {};
+      }
+    });
+    await d.settle();
+    assert.ok(d.requests.some((request) => request.url === delayedUrl), `expected ${delayedUrl} to be pending`);
+    assert.equal(d.visible('cardRun'), true, `progress is visible while ${delayedUrl} is pending`);
+    assert.equal(d.element('bar').style.width, '45%');
+    assert.equal(d.element('phase').textContent, 'Writing files');
+    assert.equal(d.element('btnExport').disabled, true);
+    release({});
+    await d.settle();
+  }
+});
+
+test('a stale documentation progress response cannot restore a reset workspace', async () => {
+  let release;
+  let block = false;
+  const d = shell({ respond(url) {
+    if (url === '/api/state') return signedIn();
+    if (url.startsWith('/api/export/log') && block) return new Promise((resolve) => { release = resolve; });
+    return {};
+  } });
+  await d.settle();
+  block = true;
+  const polling = d.run('pollLog()');
+  await d.settle();
+  d.run('clearWorkspace()');
+  release({ running: true, percent: 75, phase: 'Old progress', entries: [] });
+  await polling;
+  assert.equal(d.element('bar').style.width, '0%');
+  assert.equal(d.visible('cardRun'), false);
+  assert.equal(d.visible('documentExportProgressError'), false);
 });
 
 test('signed-in Home is available without policies while deep-linked workflows remain gated', async () => {
