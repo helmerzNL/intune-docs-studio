@@ -73,6 +73,7 @@ const post = (path, payload) => api(path, {
 let state = null;
 let logCursor = 0;
 let logTimer = null;
+let logPolling = false;
 let deviceTimer = null;
 let workspaceGeneration = 0;
 let stateRequest = 0;
@@ -84,6 +85,7 @@ let policyPolling = false;
 let policyReloading = false;
 let sourceImportOpen = false;
 let sourceTransferBusy = false;
+let sourceTransferOperation = null;
 let folderPickerBusy = false;
 let documentSummary = null;
 
@@ -175,8 +177,12 @@ function renderBuild(build) {
 async function refreshState() {
   const generation = workspaceGeneration;
   const request = ++stateRequest;
-  const { body } = await api('/api/state');
-  if (!body || generation !== workspaceGeneration || request !== stateRequest) return;
+  const response = await api('/api/state');
+  if (generation !== workspaceGeneration || request !== stateRequest) return;
+  if (!response.ok || !response.body) {
+    throw new UiError(() => response.body?.error || t('text.the_local_server_is_not_responding_restart_intune_docs'));
+  }
+  const { body } = response;
   const awaitingPolicies = !!state && !policiesReady();
   const identity = (s) => JSON.stringify(s?.auth || {}, ['connected', 'tenantId', 'account', 'client', 'method']);
   if (state && identity(state) !== identity(body)) clearWorkspace();
@@ -186,8 +192,12 @@ async function refreshState() {
   if (body.transfer?.running && !sourceTransferBusy) {
     const operation = body.transfer.operation;
     if (operation === 'import') sourceImportOpen = true;
+    if (operation === 'export') $('policyExportPanel').open = true;
     const statusId = operation === 'import' ? 'policyImportStatus' : 'policyExportStatus';
-    void transferPolicySource(operation, null, statusId, true).catch((e) => { showMessage($(statusId), e); });
+    const transferGeneration = workspaceGeneration;
+    void transferPolicySource(operation, null, statusId, true).catch((e) => {
+      if (transferGeneration === workspaceGeneration) showMessage($(statusId), e);
+    });
   }
   const policiesArrived = awaitingPolicies && policiesReady();
   if (policiesArrived) {
@@ -359,37 +369,117 @@ for (const [button, input, status] of [
   });
 }
 
-async function transferPolicySource(operation, payload, statusId, resume = false) {
+const policyProgressKeys = {
+  reading: 'progress.reading_files',
+  validating: 'progress.validating_files',
+  preparing: 'progress.preparing_files',
+  writing: 'progress.writing_files',
+  finishing: 'progress.finishing'
+};
+
+function showPolicyTransferProgress(statusId, progress, phase) {
+  const key = policyProgressKeys[progress?.stage];
+  if (!key) {
+    if (phase) writeText($(statusId), phase);
+    else localizeText($(statusId), () => t('progress.starting_transfer'));
+    return;
+  }
+  localizeText($(statusId), () => {
+    const label = t(key);
+    if (progress.stage === 'finishing' || !Number.isInteger(progress.completed) || progress.completed < 0) return label;
+    const args = { completed: progress.completed };
+    const count = Number.isInteger(progress.total) && progress.total >= 0
+      ? t('progress.files_total', { ...args, total: progress.total })
+      : t('progress.files_count', args);
+    return `${label} · ${count}`;
+  });
+}
+
+async function preparePolicyArchive(buffer, generation) {
+  const bytes = new Uint8Array(buffer);
+  const chunks = [];
+  const chunkSize = 3 * 0x4000; // Only the final Base64 chunk may contain padding.
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    if (generation !== workspaceGeneration) return null;
+    chunks.push(assessmentArchiveBase64(bytes.subarray(offset, offset + chunkSize)));
+    if (chunks.length % 8 === 0 && offset + chunkSize < bytes.length) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+  return chunks.join('');
+}
+
+async function transferPolicySource(operation, payload, statusId, resume = false, preparingZip = false) {
   if (sourceTransferBusy || exportBusy || assessmentBusy || assessmentImporting) return;
+  const generation = workspaceGeneration;
+  let completionGeneration = null;
   sourceTransferBusy = true;
+  sourceTransferOperation = operation;
   syncJobAdmission();
-  localizeText($(statusId), () => operation === 'import' ? t("text.reading_and_validating_policy_files") : t("text.writing_policy_json_files"));
+  localizeText($(statusId), () => preparingZip ? t('progress.reading_zip') : t('progress.starting_transfer'));
   try {
     if (!resume) {
-      const started = await post(`/api/policies/${operation}`, payload);
+      const prepared = typeof payload === 'function' ? await payload() : payload;
+      if (generation !== workspaceGeneration) return;
+      localizeText($(statusId), () => t('progress.starting_transfer'));
+      const started = await post(`/api/policies/${operation}`, prepared);
+      if (generation !== workspaceGeneration) return;
       if (!started.ok) throw new UiError(() => started.body?.error || t("text.could_not_start_policy_transfer"));
     }
-    while (true) {
-      const r = await api('/api/policies/transfer');
+    while (generation === workspaceGeneration) {
+      let r;
+      try { r = await api('/api/policies/transfer'); }
+      catch (e) {
+        if (generation !== workspaceGeneration) return;
+        localizeText($(statusId), () => t('progress.unavailable_retrying'));
+        await waitForLocalJob();
+        continue;
+      }
+      if (generation !== workspaceGeneration) return;
+      if (!r.ok && r.status >= 500) {
+        localizeText($(statusId), () => t('progress.unavailable_retrying'));
+        await waitForLocalJob();
+        continue;
+      }
       if (!r.ok || r.body?.status === 'failed') throw new UiError(() => r.body?.error || t("text.policy_transfer_failed"));
-      writeText($(statusId), r.body?.phase || 'Working…');
       if (r.body?.status === 'completed') {
         localizeText($(statusId), () => operation === 'export' ? t("text.policy_set_written_to", { v0: r.body.result?.path }) : t("text.policy_set_imported"));
         if (operation === 'import') {
           sourceImportOpen = false;
           clearWorkspace();
+          completionGeneration = workspaceGeneration;
           lastRoute = 'home'; window.location.hash = '#/';
         }
         break;
       }
       if (!r.body?.running) throw new UiError(() => t("text.policy_transfer_ended_without_a_completed_result"));
+      showPolicyTransferProgress(statusId, r.body.progress, r.body.phase);
       await waitForLocalJob();
     }
   } finally {
-    sourceTransferBusy = false; syncJobAdmission(); await refreshState();
+    if (generation === workspaceGeneration || (completionGeneration !== null && completionGeneration === workspaceGeneration)) {
+      sourceTransferBusy = false;
+      sourceTransferOperation = null;
+      syncJobAdmission();
+      try { await refreshState(); }
+      catch (e) {
+        if (completionGeneration !== null && completionGeneration === workspaceGeneration) {
+          if (state) { state.policies = { status: 'idle' }; state.transfer = null; }
+          sourceImportOpen = true;
+          renderAuth();
+          renderPolicyState();
+          syncJobAdmission();
+          localizeText($('policyImportError'), () => t('progress.imported_refresh_failed'));
+          setHidden('policyImportError', false);
+        } else if (generation === workspaceGeneration) {
+          throw e;
+        }
+      }
+    }
   }
 }
 $('btnImportPolicySource').addEventListener('click', async () => {
+  const generation = workspaceGeneration;
   try {
     const replace = ['ready', 'partial'].includes(state?.policies?.status);
     if (replace && !confirm(t("text.replace_the_active_policy_source_existing_assessment_results_will"))) return;
@@ -397,21 +487,30 @@ $('btnImportPolicySource').addEventListener('click', async () => {
     let payload;
     if (file) {
       if (!file.size || file.size > 32 * 1024 * 1024 || !/\.zip$/i.test(file.name)) throw new UiError(() => t("text.choose_a_nonempty_policy_zip_at_most_32_mib"));
-      payload = { archive: assessmentArchiveBase64(await file.arrayBuffer()), replace };
+      payload = async () => {
+        const buffer = await file.arrayBuffer();
+        if (generation !== workspaceGeneration) return null;
+        localizeText($('policyImportStatus'), () => t('progress.preparing_zip'));
+        const archive = await preparePolicyArchive(buffer, generation);
+        return { archive, replace };
+      };
     } else {
       const path = $('policyImportPath').value.trim();
       if (!path) throw new UiError(() => t("text.choose_a_policy_zip_or_enter_a_host_folder"));
       payload = { path, replace };
     }
     setHidden('policyImportError', true);
-    await transferPolicySource('import', payload, 'policyImportStatus');
-  } catch (e) { showMessage($('policyImportError'), e); setHidden('policyImportError', false); }
+    await transferPolicySource('import', payload, 'policyImportStatus', false, !!file);
+  } catch (e) {
+    if (generation === workspaceGeneration) { showMessage($('policyImportError'), e); setHidden('policyImportError', false); }
+  }
 });
 $('btnExportPolicySource').addEventListener('click', async () => {
+  const generation = workspaceGeneration;
   try {
     if (!policiesReady()) throw new UiError(() => t("text.load_or_import_policies_before_exporting_a_policy_set"));
     await transferPolicySource('export', { path: $('policyExportPath').value.trim() }, 'policyExportStatus');
-  } catch (e) { showMessage($('policyExportStatus'), e); }
+  } catch (e) { if (generation === workspaceGeneration) showMessage($('policyExportStatus'), e); }
 });
 
 function renderClients() {
@@ -656,8 +755,16 @@ function clearWorkspace() {
   setHidden('policyRefreshError', true);
   exportBusy = false;
   exportStarting = false;
+  sourceTransferBusy = false;
+  sourceTransferOperation = null;
+  setHidden('policyImportProgress', true);
+  setHidden('policyExportProgress', true);
+  setHidden('documentExportStarting', true);
+  setHidden('documentExportProgressError', true);
   clearAssessment();
   clearInterval(logTimer);
+  logTimer = null;
+  logPolling = false;
   logCursor = 0;
   writeText($('log'), '');
   $('summary').innerHTML = '';
@@ -767,6 +874,7 @@ $('btnExport').addEventListener('click', async () => {
   }
   if (generation !== workspaceGeneration) return;
   exportStarting = false;
+  syncJobAdmission();
   const { body } = response;
   if (!response.ok || (body && body.error)) {
     exportBusy = false;
@@ -794,9 +902,28 @@ function startLogPolling() {
 }
 
 async function pollLog() {
+  if (logPolling) return;
   const generation = workspaceGeneration;
-  const { body } = await api('/api/export/log?from=' + logCursor);
-  if (!body || generation !== workspaceGeneration) return;
+  logPolling = true;
+  let response;
+  try { response = await api('/api/export/log?from=' + logCursor); }
+  catch (e) {
+    if (generation === workspaceGeneration) {
+      localizeText($('documentExportProgressError'), () => t('progress.unavailable_retrying'));
+      setHidden('documentExportProgressError', false);
+    }
+    return;
+  } finally {
+    if (generation === workspaceGeneration) logPolling = false;
+  }
+  if (generation !== workspaceGeneration) return;
+  const { body } = response;
+  if (!response.ok || !body) {
+    localizeText($('documentExportProgressError'), () => t('progress.unavailable_retrying'));
+    setHidden('documentExportProgressError', false);
+    return;
+  }
+  setHidden('documentExportProgressError', true);
 
   (body.entries || []).forEach((e) => {
     const span = document.createElement('span');
@@ -1413,6 +1540,7 @@ function showAssessmentError(message) {
 
 function syncJobAdmission() {
   const busy = exportBusy || assessmentBusy || sourceTransferBusy || !!state?.transfer?.running;
+  const transferBusy = sourceTransferBusy || !!state?.transfer?.running;
   $('btnExport').disabled = busy || !policiesReady();
   $('btnAssessmentRun').disabled = busy || assessmentImporting || !policiesReady();
   $('btnRefreshPolicies').disabled = busy || policyReloading || !state?.auth?.connected;
@@ -1422,6 +1550,12 @@ function syncJobAdmission() {
   ['btnImportPolicySource', 'btnReplacePolicySource', 'btnOpenPolicyImport', 'btnExportPolicySource', 'btnShowPolicyExport'].forEach((id) => {
     $(id).disabled = busy || assessmentImporting || (['btnExportPolicySource', 'btnShowPolicyExport'].includes(id) && !policiesReady());
   });
+  ['btnCancelPolicyImport', 'btnBrowsePolicyImport', 'policyImportZip', 'policyImportPath', 'btnBrowsePolicyExport', 'policyExportPath'].forEach((id) => {
+    $(id).disabled = transferBusy;
+  });
+  setHidden('policyImportProgress', !sourceTransferBusy || sourceTransferOperation !== 'import');
+  setHidden('policyExportProgress', !sourceTransferBusy || sourceTransferOperation !== 'export');
+  setHidden('documentExportStarting', !exportStarting);
   ['btnLoadPolicies', 'btnPoliciesNotNow'].forEach((id) => { $(id).disabled = busy || policyReloading; });
   ['btnQueueAssessmentFiles', 'btnQueueAssessmentFolder', 'btnQueueAssessmentPath', 'btnAssessImportBack', 'btnAssessImportNext'].forEach((id) => {
     $(id).disabled = busy || assessmentImporting;
@@ -2082,14 +2216,28 @@ async function start() {
   try {
     await i18n.ready;
     if (!(await loadInitialState())) return;
-    await refreshAssessment();
-    await loadAssessmentCatalog();
-    await loadAppSettings();
-    const { body } = await api('/api/export/log?from=0');
-    if (body && body.running) {
+    const generation = workspaceGeneration;
+    const resumeExport = () => {
       $('cardRun').classList.remove('hidden');
       setDocumentStep('generate');
       startLogPolling();
+    };
+    const resumingExport = !!state?.export?.running;
+    if (resumingExport) resumeExport();
+    await refreshAssessment();
+    await loadAssessmentCatalog();
+    await loadAppSettings();
+    if (generation !== workspaceGeneration || resumingExport) return;
+    try {
+      const response = await api('/api/export/log?from=0');
+      if (generation !== workspaceGeneration) return;
+      if (!response.ok || !response.body) {
+        console.warn(t('progress.unavailable_retrying'), response.status);
+      } else if (response.body.running) {
+        resumeExport();
+      }
+    } catch (e) {
+      if (generation === workspaceGeneration) console.warn(t('progress.unavailable_retrying'), e);
     }
   } finally {
     booting = false;

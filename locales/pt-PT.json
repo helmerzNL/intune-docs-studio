@@ -1,5 +1,18 @@
 {
   "ui": {
+    "progress.reading_zip": "A ler o ficheiro ZIP…",
+    "progress.preparing_zip": "A preparar o ficheiro ZIP para importação…",
+    "progress.reading_files": "A ler ficheiros de políticas",
+    "progress.validating_files": "A validar ficheiros de políticas",
+    "progress.preparing_files": "A preparar ficheiros de políticas",
+    "progress.writing_files": "A escrever ficheiros de políticas",
+    "progress.finishing": "A concluir a transferência de políticas",
+    "progress.files_total": "Ficheiros: {completed} / {total}",
+    "progress.files_count": "Ficheiros: {completed}",
+    "progress.starting_transfer": "A iniciar a transferência de políticas…",
+    "progress.unavailable_retrying": "Progresso temporariamente indisponível. A verificação continua…",
+    "progress.starting_document": "A iniciar a exportação da documentação…",
+    "progress.imported_refresh_failed": "O conjunto de políticas foi importado, mas não foi possível atualizar a área de trabalho. Recarregue a página.",
     "text.portal_browser": "Navegador do portal",
     "text.portal_browser_auto": "Automático (preferência pelo Edge)",
     "text.portal_browser_note": "Utilize apenas um navegador aprovado pela TI. Automático utiliza o Chrome apenas se o Edge não estiver instalado; erros de política ou ligação nunca mudam de navegador. As políticas locais e CDP são verificados antes do início de sessão. Cada navegador tem uma sessão guardada separada.",

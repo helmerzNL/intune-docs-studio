@@ -202,7 +202,8 @@
         <input id="policyImportPath" type="text" spellcheck="false" placeholder="Absolute path on the application host" data-i18n-placeholder="text.absolute_path_on_the_application_host">
       </label>
       <div class="row"><button id="btnBrowsePolicyImport" class="btn"><span data-i18n="text.choose_host_folder">Choose host folder</span></button></div>
-      <p id="policyImportStatus" role="status" aria-live="polite"></p>
+      <p class="transfer-status"><span id="policyImportProgress" class="spinner hidden" aria-hidden="true"></span>
+        <span id="policyImportStatus" role="status" aria-live="polite"></span></p>
       <p id="policyImportError" class="error hidden" role="alert"></p>
       <div class="actions">
         <button id="btnCancelPolicyImport" class="btn ghost"><span data-i18n="text.back">Back</span></button>
@@ -269,7 +270,8 @@
           <p class="muted small"><span data-i18n="text.creates_a_new_policyset_subfolder_does_not_overwrite_existing">Creates a new policy-set subfolder; does not overwrite existing exports. Contains customer-owned policy data, never sign-in tokens or browser sessions.</span></p>
           <div class="row"><button id="btnBrowsePolicyExport" class="btn"><span data-i18n="text.choose_host_folder">Choose host folder</span></button>
             <button id="btnExportPolicySource" class="btn primary"><span data-i18n="text.export_policy_set_285">Export policy set</span></button></div>
-          <p id="policyExportStatus" role="status"></p>
+          <p class="transfer-status"><span id="policyExportProgress" class="spinner hidden" aria-hidden="true"></span>
+            <span id="policyExportStatus" role="status" aria-live="polite"></span></p>
         </div>
       </details>
       <p id="policyRefreshError" class="error hidden" role="alert"></p>
@@ -380,12 +382,16 @@
       <div class="actions">
         <button class="btn primary" id="btnExport"><span data-i18n="text.generate_documentation">Generate documentation</span></button>
       </div>
+      <p id="documentExportStarting" class="transfer-status hidden" role="status" aria-live="polite">
+        <span class="spinner" aria-hidden="true"></span><span data-i18n="progress.starting_document">Starting documentation export…</span>
+      </p>
     </section>
 
     <section class="card hidden" id="cardRun" aria-labelledby="runTitle">
       <h3 id="runTitle" class="card-title"><span data-i18n="text.progress">Progress</span></h3>
       <div class="progress"><div id="bar" class="bar"></div></div>
       <p class="phase"><span id="phase"><span data-i18n="text.starting">Starting</span></span> <span id="pct" class="muted"></span></p>
+      <p id="documentExportProgressError" class="notice hidden" role="status" aria-live="polite"></p>
       <pre id="log" class="log"></pre>
     </section>
 

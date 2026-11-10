@@ -1,5 +1,18 @@
 {
   "ui": {
+    "progress.reading_zip": "Reading ZIP file…",
+    "progress.preparing_zip": "Preparing ZIP file for import…",
+    "progress.reading_files": "Reading policy files",
+    "progress.validating_files": "Validating policy files",
+    "progress.preparing_files": "Preparing policy files",
+    "progress.writing_files": "Writing policy files",
+    "progress.finishing": "Finishing policy transfer",
+    "progress.files_total": "Files: {completed} / {total}",
+    "progress.files_count": "Files: {completed}",
+    "progress.starting_transfer": "Starting policy transfer…",
+    "progress.unavailable_retrying": "Progress temporarily unavailable. Still checking…",
+    "progress.starting_document": "Starting documentation export…",
+    "progress.imported_refresh_failed": "Policy set imported, but the workspace could not be refreshed. Reload the page.",
     "text.portal_browser": "Portal browser",
     "text.portal_browser_auto": "Automatic (Edge preferred)",
     "text.portal_browser_note": "Use only an IT-approved browser. Automatic uses Chrome only if Edge is not installed; policy or connection failures never switch browsers. Local policy and CDP checks run before sign-in. Each browser has a separate saved session.",

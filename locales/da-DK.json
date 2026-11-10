@@ -1,5 +1,18 @@
 {
   "ui": {
+    "progress.reading_zip": "Læser ZIP-filen…",
+    "progress.preparing_zip": "Forbereder ZIP-filen til import…",
+    "progress.reading_files": "Læser politikfiler",
+    "progress.validating_files": "Validerer politikfiler",
+    "progress.preparing_files": "Forbereder politikfiler",
+    "progress.writing_files": "Skriver politikfiler",
+    "progress.finishing": "Afslutter politikoverførslen",
+    "progress.files_total": "Filer: {completed} / {total}",
+    "progress.files_count": "Filer: {completed}",
+    "progress.starting_transfer": "Starter politikoverførslen…",
+    "progress.unavailable_retrying": "Status er midlertidigt utilgængelig. Kontrollen fortsætter…",
+    "progress.starting_document": "Starter dokumentationseksport…",
+    "progress.imported_refresh_failed": "Politiksættet blev importeret, men arbejdsområdet kunne ikke opdateres. Genindlæs siden.",
     "text.portal_browser": "Portalbrowser",
     "text.portal_browser_auto": "Automatisk (Edge foretrækkes)",
     "text.portal_browser_note": "Brug kun en IT-godkendt browser. Automatisk bruger kun Chrome, hvis Edge ikke er installeret; politik- eller forbindelsesfejl skifter aldrig browser. Lokale politikker og CDP kontrolleres før login. Hver browser har en separat gemt session.",

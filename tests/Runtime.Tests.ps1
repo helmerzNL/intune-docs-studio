@@ -215,11 +215,29 @@ Describe 'PowerShell runtime requirements' {
                 } while ([datetime]::UtcNow -lt $deadline)
                 $transfer.error | Should -BeNullOrEmpty
                 $transfer.status | Should -BeExactly 'completed'
+                $transfer.progress.stage | Should -BeExactly 'finishing'
                 $state = Invoke-RestMethod "$base/api/state" -Headers $headers
                 $state.auth.connected | Should -BeFalse
                 $state.policies.source.kind | Should -BeExactly 'offline'
                 $state.policies.status | Should -BeExactly 'partial'
                 $state.policies.count | Should -Be 1
+
+                $exportBody = ConvertTo-Json @{ path = (Join-Path $TestDrive 'http-export') } -Compress
+                $started = Invoke-WebRequest "$base/api/policies/export" -Method Post -Headers $headers `
+                    -Body $exportBody -ContentType application/json -SkipHttpErrorCheck
+                $started.StatusCode | Should -Be 202
+                $deadline = [datetime]::UtcNow.AddSeconds(20)
+                do {
+                    $transfer = Invoke-RestMethod "$base/api/policies/transfer" -Headers $headers
+                    if ($transfer.status -in @('completed', 'failed')) { break }
+                    Start-Sleep -Milliseconds 50
+                } while ([datetime]::UtcNow -lt $deadline)
+                $transfer.error | Should -BeNullOrEmpty
+                $transfer.status | Should -BeExactly 'completed'
+                $transfer.progress.stage | Should -BeExactly 'writing'
+                $transfer.progress.completed | Should -Be 7
+                $transfer.progress.total | Should -Be 7
+                (Test-Path -LiteralPath (Join-Path $transfer.result.path 'policyset.json')) | Should -BeTrue
             }
         }
 

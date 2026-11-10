@@ -1,5 +1,18 @@
 {
   "ui": {
+    "progress.reading_zip": "Lettura del file ZIP…",
+    "progress.preparing_zip": "Preparazione del file ZIP per l’importazione…",
+    "progress.reading_files": "Lettura dei file dei criteri",
+    "progress.validating_files": "Convalida dei file dei criteri",
+    "progress.preparing_files": "Preparazione dei file dei criteri",
+    "progress.writing_files": "Scrittura dei file dei criteri",
+    "progress.finishing": "Completamento del trasferimento dei criteri",
+    "progress.files_total": "File: {completed} / {total}",
+    "progress.files_count": "File: {completed}",
+    "progress.starting_transfer": "Avvio del trasferimento dei criteri…",
+    "progress.unavailable_retrying": "Avanzamento temporaneamente non disponibile. Il controllo continua…",
+    "progress.starting_document": "Avvio dell’esportazione della documentazione…",
+    "progress.imported_refresh_failed": "Il set di criteri è stato importato, ma non è stato possibile aggiornare l’area di lavoro. Ricaricare la pagina.",
     "text.portal_browser": "Browser del portale",
     "text.portal_browser_auto": "Automatico (preferenza per Edge)",
     "text.portal_browser_note": "Usare solo un browser approvato dall'IT. Automatico usa Chrome solo se Edge non è installato; gli errori di criteri o connessione non cambiano mai browser. I criteri locali e CDP vengono verificati prima dell'accesso. Ogni browser ha una sessione salvata separata.",

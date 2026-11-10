@@ -156,6 +156,8 @@ also be zipped. Markdown-only exports and other tools' formats are not supported
 Home displays the active environment, source, timestamps, family counts and
 completeness. Failed imports leave the current source unchanged; replacing a
 loaded source requires confirmation.
+Import and export show the current stage and processed-file counts where known.
+These counts describe the current stage, not a percentage for the whole transfer.
 
 **Export policy set** writes a new uniquely named JSON subfolder, never overwriting
 an existing export. Its version-1 `policyset.json` manifest lists SHA-256 hashes for

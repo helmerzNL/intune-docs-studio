@@ -1,5 +1,18 @@
 {
   "ui": {
+    "progress.reading_zip": "Lecture du fichier ZIP…",
+    "progress.preparing_zip": "Préparation du fichier ZIP pour l’importation…",
+    "progress.reading_files": "Lecture des fichiers de stratégies",
+    "progress.validating_files": "Validation des fichiers de stratégies",
+    "progress.preparing_files": "Préparation des fichiers de stratégies",
+    "progress.writing_files": "Écriture des fichiers de stratégies",
+    "progress.finishing": "Finalisation du transfert des stratégies",
+    "progress.files_total": "Fichiers : {completed} / {total}",
+    "progress.files_count": "Fichiers : {completed}",
+    "progress.starting_transfer": "Démarrage du transfert des stratégies…",
+    "progress.unavailable_retrying": "Progression temporairement indisponible. Nouvelle vérification en cours…",
+    "progress.starting_document": "Démarrage de l’exportation de la documentation…",
+    "progress.imported_refresh_failed": "L’ensemble de stratégies a été importé, mais l’espace de travail n’a pas pu être actualisé. Rechargez la page.",
     "text.portal_browser": "Navigateur du portail",
     "text.portal_browser_auto": "Automatique (Edge préféré)",
     "text.portal_browser_note": "Utilisez uniquement un navigateur approuvé par le service informatique. Le mode automatique utilise Chrome uniquement si Edge n'est pas installé ; aucun changement en cas d'erreur de stratégie ou de connexion. Les stratégies locales et CDP sont vérifiés avant connexion. Chaque navigateur possède sa propre session enregistrée.",

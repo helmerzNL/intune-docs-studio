@@ -46,6 +46,7 @@ function Start-IdsPolicyTransfer {
         running = $true; status = 'running'; operation = $Options.operation
         locale = $Options.Locale
         phase = $(if ($snapshot) { (Get-IdsText -Key 'text.writing_policy_json_files') } else { (Get-IdsText -Key 'text.reading_and_validating_policy_files') })
+        progress = @{ stage = $(if ($Options.operation -eq 'import') { 'reading' } else { 'preparing' }); completed = 0; total = $null }
         error = $null; result = $null; candidate = $null; job = $null; epoch = $State.Assessment.epoch
     })
     $State.PolicyTransfer = $transfer
@@ -58,10 +59,14 @@ function Start-IdsPolicyTransfer {
             foreach ($module in 'BaselinePacks', 'AssessmentCollection', 'AssessmentSettings', 'BaselineArchive', 'AssessmentReports', 'Assessment', 'PolicySnapshots') {
                 . (Join-Path $Root "lib\$module.ps1")
             }
+            $reportProgress = {
+                param($stage, $completed, $total)
+                $Transfer.progress = @{ stage = $stage; completed = $completed; total = $total }
+            }.GetNewClosure()
             if ($Options.operation -eq 'import') {
-                $Transfer.candidate = Import-IdsPolicySnapshot -Path $Options.path -Archive $Options.archive
+                $Transfer.candidate = Import-IdsPolicySnapshot -Path $Options.path -Archive $Options.archive -Progress $reportProgress
             } else {
-                $Transfer.result = Export-IdsPolicySnapshot $Snapshot $Options.path $Root
+                $Transfer.result = Export-IdsPolicySnapshot $Snapshot $Options.path $Root -Progress $reportProgress
             }
             $Transfer.status = 'validated'; $Transfer.phase = (Get-IdsText -Key 'text.finishing')
         } catch {
@@ -169,7 +174,7 @@ function Invoke-IdsPolicyRoute {
             }
             'GET /api/policies/transfer' {
                 $t = $State.PolicyTransfer
-                $response.body = @{ status = $(if ($t) { $t.status } else { 'idle' }); running = [bool]$t.running; phase = $t.phase; error = $t.error; result = $t.result }
+                $response.body = @{ status = $(if ($t) { $t.status } else { 'idle' }); running = [bool]$t.running; phase = $t.phase; progress = $t.progress; error = $t.error; result = $t.result }
             }
         }
     } catch [UnauthorizedAccessException] { $response.status = 403; $response.body = @{ error = $_.Exception.Message }

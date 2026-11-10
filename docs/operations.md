@@ -175,6 +175,9 @@ capture time and completeness support a readable round-trip. **Export policy set
 is available directly on Home for imported sources too, without sign-in.
 Re-export/re-import preserves original source provenance and collection time;
 the new import time describes the current import rather than replacing that evidence.
+During import and export, the dashboard shows the active stage and actual file
+counts when available; these are stage counts, not an overall percentage. If
+progress is temporarily unavailable, the dashboard keeps checking automatically.
 
 Offline documentation and Assessment make no Graph/auth requests, including
 lazy group-name lookups. Only the five policy families can be documented;
