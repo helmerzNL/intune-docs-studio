@@ -1,5 +1,6 @@
 {
   "ui": {
+    "assessment.description_unavailable": "A descrição da Microsoft desta definição não foi fornecida com este conjunto de políticas. Verifique a definição no Intune; o identificador técnico está disponível nos detalhes.",
     "progress.reading_zip": "A ler o ficheiro ZIP…",
     "progress.preparing_zip": "A preparar o ficheiro ZIP para importação…",
     "progress.reading_files": "A ler ficheiros de políticas",
@@ -1197,6 +1198,8 @@
     "report.overview.operator_lte": "no máximo {value}",
     "report.overview.operator_in": "um de {value}",
     "report.overview.operator_set_equals": "exatamente {value}",
-    "report.overview.operator_contains_all": "incluindo pelo menos {value}"
+    "report.overview.operator_contains_all": "incluindo pelo menos {value}",
+    "assessment.setting_name_unavailable": "Definição sem nome legível na origem",
+    "assessment.description_unavailable": "A descrição da Microsoft desta definição não foi fornecida com este conjunto de políticas. Verifique a definição no Intune; o identificador técnico está disponível nos detalhes."
   }
 }

@@ -1,5 +1,6 @@
 {
   "ui": {
+    "assessment.description_unavailable": "De Microsoft-omschrijving van deze instelling is niet meegeleverd met deze beleidsset. Controleer de instelling in Intune; de technische code staat bij de details.",
     "progress.reading_zip": "ZIP-bestand lezen…",
     "progress.preparing_zip": "ZIP-bestand voorbereiden voor import…",
     "progress.reading_files": "Beleidsbestanden lezen",
@@ -1197,6 +1198,8 @@
     "report.overview.operator_lte": "maximaal {value}",
     "report.overview.operator_in": "een van {value}",
     "report.overview.operator_set_equals": "precies {value}",
-    "report.overview.operator_contains_all": "ten minste {value}"
+    "report.overview.operator_contains_all": "ten minste {value}",
+    "assessment.setting_name_unavailable": "Instelling zonder leesbare bronnaam",
+    "assessment.description_unavailable": "De Microsoft-omschrijving van deze instelling is niet meegeleverd met deze beleidsset. Controleer de instelling in Intune; de technische code staat bij de details."
   }
 }

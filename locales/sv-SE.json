@@ -1,5 +1,6 @@
 {
   "ui": {
+    "assessment.description_unavailable": "Microsoft-beskrivningen av den här inställningen följde inte med den här principuppsättningen. Kontrollera inställningen i Intune; den tekniska identifieraren finns i detaljerna.",
     "progress.reading_zip": "Läser ZIP-filen…",
     "progress.preparing_zip": "Förbereder ZIP-filen för import…",
     "progress.reading_files": "Läser principfiler",
@@ -1197,6 +1198,8 @@
     "report.overview.operator_lte": "högst {value}",
     "report.overview.operator_in": "en av {value}",
     "report.overview.operator_set_equals": "exakt {value}",
-    "report.overview.operator_contains_all": "inklusive minst {value}"
+    "report.overview.operator_contains_all": "inklusive minst {value}",
+    "assessment.setting_name_unavailable": "Inställning utan läsbart namn i källan",
+    "assessment.description_unavailable": "Microsoft-beskrivningen av den här inställningen följde inte med den här principuppsättningen. Kontrollera inställningen i Intune; den tekniska identifieraren finns i detaljerna."
   }
 }

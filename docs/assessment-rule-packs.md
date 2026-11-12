@@ -25,6 +25,20 @@ a rule.
 
 ## Customer workflow and interpretation
 
+Assessment comparisons and saved reports use the setting names and descriptions
+supplied in [Intune's setting definitions](https://learn.microsoft.com/en-us/graph/api/resources/intune-deviceconfigv2-devicemanagementconfigurationsettingdefinition?view=graph-rest-beta)
+(`description`, falling back to `helpText` or ADMX `explainText`).
+Technical baseline titles are replaced for presentation only; authored baseline
+recommendations, exact identifiers, typed evidence and verdicts are preserved.
+Descriptions remain in the language supplied by the source, not a generated
+translation. Imported metadata is customer-supplied, not independently verified
+Microsoft documentation. If an offline export omits the definitions, the result
+explicitly reports that the description is unavailable; the application does not
+guess a Microsoft description or download documentation during assessment.
+Reload or re-import a policy set containing the definitions and rerun the
+assessment to include them. Incomplete evidence still requires manual review,
+even when its setting has a readable name and description.
+
 **Assess policies** is a six-step wizard: **Platforms**, **Import packs**, **Baselines**,
 **Context**, **Review & run** and **Results**. **Next** checks the current step;
 **Back** returns without checks. The stepper shows progress and is not

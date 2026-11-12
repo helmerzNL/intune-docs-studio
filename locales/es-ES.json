@@ -1,5 +1,6 @@
 {
   "ui": {
+    "assessment.description_unavailable": "La descripción de Microsoft de esta configuración no se incluyó en este conjunto de directivas. Compruebe la configuración en Intune; el identificador técnico está en los detalles.",
     "progress.reading_zip": "Leyendo archivo ZIP…",
     "progress.preparing_zip": "Preparando archivo ZIP para importar…",
     "progress.reading_files": "Leyendo archivos de directivas",
@@ -1197,6 +1198,8 @@
     "report.overview.operator_lte": "como máximo {value}",
     "report.overview.operator_in": "uno de {value}",
     "report.overview.operator_set_equals": "exactamente {value}",
-    "report.overview.operator_contains_all": "que incluya al menos {value}"
+    "report.overview.operator_contains_all": "que incluya al menos {value}",
+    "assessment.setting_name_unavailable": "Configuración sin nombre legible en el origen",
+    "assessment.description_unavailable": "La descripción de Microsoft de esta configuración no se incluyó en este conjunto de directivas. Compruebe la configuración en Intune; el identificador técnico está en los detalles."
   }
 }

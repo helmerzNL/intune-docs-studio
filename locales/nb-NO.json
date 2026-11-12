@@ -1,5 +1,6 @@
 {
   "ui": {
+    "assessment.description_unavailable": "Microsoft-beskrivelsen av denne innstillingen fulgte ikke med dette policysettet. Kontroller innstillingen i Intune; den tekniske identifikatoren finnes i detaljene.",
     "progress.reading_zip": "Leser ZIP-filen…",
     "progress.preparing_zip": "Klargjør ZIP-filen for import…",
     "progress.reading_files": "Leser policyfiler",
@@ -1197,6 +1198,8 @@
     "report.overview.operator_lte": "høyst {value}",
     "report.overview.operator_in": "en av {value}",
     "report.overview.operator_set_equals": "nøyaktig {value}",
-    "report.overview.operator_contains_all": "inkludert minst {value}"
+    "report.overview.operator_contains_all": "inkludert minst {value}",
+    "assessment.setting_name_unavailable": "Innstilling uten lesbart navn i kilden",
+    "assessment.description_unavailable": "Microsoft-beskrivelsen av denne innstillingen fulgte ikke med dette policysettet. Kontroller innstillingen i Intune; den tekniske identifikatoren finnes i detaljene."
   }
 }

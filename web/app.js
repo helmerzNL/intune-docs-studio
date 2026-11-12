@@ -1238,7 +1238,11 @@ function renderComparisonRows() {
     const more = reason || names.length ? `<details><summary>${h("comparison.more")}</summary>
       ${reason ? `<p>${escapeHtml(reason)}</p>` : ''}${names.length ? `<p>${h("comparison.policies", { names: names.join(', ') })}</p>` : ''}</details>` : '';
     return `${group}<tr class="tone-${statusTones[c.status] || 'muted'}">
-      <td><strong>${escapeHtml(c.title || c.controlId)}</strong>${c.title && c.controlId ? `<span class="muted small control-id">${escapeHtml(c.controlId)}</span>` : ''}</td>
+      <td><strong>${escapeHtml(c.displayTitle || c.title || c.controlId)}</strong>
+        <p>${escapeHtml(c.displayDescription || t("assessment.description_unavailable"))}</p>
+        <details><summary>${h("text.exact_typed_evidence")}</summary>
+          <p>${escapeHtml(c.controlId)}</p>${c.title !== c.controlId ? `<p>${escapeHtml(c.title)}</p>` : ''}
+        </details></td>
       <td><span class="value">${escapeHtml(plainExpectation(c.expected))}</span></td>
       <td><span class="value${c.status === 'aligned' ? '' : ' diff'}">${escapeHtml(plainObservation(c.observed))}</span></td>
       <td class="status-cell">${statusPill(c.status)}</td>
@@ -2037,13 +2041,15 @@ function renderAssessmentEvidence() {
             <p>${h("text.configured_13", { v10: assessmentValue(p.observed || []) })}</p>
           </details></div>`;
       }).join('');
-      return `<tr><td><strong>${escapeHtml(c.controlId)} ${escapeHtml(c.title)}</strong>
+      return `<tr><td><strong>${escapeHtml(c.displayTitle || c.title || c.controlId)}</strong>
+        <p>${escapeHtml(c.displayDescription || t("assessment.description_unavailable"))}</p>
         <p>${escapeHtml(c.packId)} @ ${escapeHtml(c.packVersion)} · ${escapeHtml(assessmentPlatforms[c.platform] || c.platform)} · ${escapeHtml(c.profile)}</p>
         <details><summary>${h("text.framework_references")}</summary><pre>${assessmentText(c.references || [])}</pre></details></td>
         <td><strong>${escapeHtml(assessmentStatuses[c.status] || c.status)}</strong><p>${escapeHtml(c.displayReason ?? c.reason)}</p></td>
         <td><strong>${h("text.expected")}</strong>${renderAssessmentTypedValues(c.expected, true)}
           <strong>${h("text.configured")}</strong>${renderAssessmentTypedValues(c.observed || [], false)}
           <details><summary>${h("text.exact_typed_evidence")}</summary>
+            <p>${escapeHtml(c.controlId)} ${escapeHtml(c.title)}</p>
             <p>${h("text.expected_8", { v11: assessmentValue(c.expected) })}</p><p>${h("text.configured_9", { v12: assessmentValue(c.observed || []) })}</p>
           </details></td>
         <td>${evidence || t("text.no_policy_evidence")}</td></tr>`;

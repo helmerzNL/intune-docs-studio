@@ -1,5 +1,6 @@
 {
   "ui": {
+    "assessment.description_unavailable": "The Microsoft setting description was not supplied with this policy set. Check the setting in Intune; the technical identifier is available in the details.",
     "progress.reading_zip": "Reading ZIP file…",
     "progress.preparing_zip": "Preparing ZIP file for import…",
     "progress.reading_files": "Reading policy files",
@@ -1197,6 +1198,8 @@
     "report.overview.operator_lte": "at most {value}",
     "report.overview.operator_in": "one of {value}",
     "report.overview.operator_set_equals": "exactly {value}",
-    "report.overview.operator_contains_all": "including at least {value}"
+    "report.overview.operator_contains_all": "including at least {value}",
+    "assessment.setting_name_unavailable": "Setting without a readable source name",
+    "assessment.description_unavailable": "The Microsoft setting description was not supplied with this policy set. Check the setting in Intune; the technical identifier is available in the details."
   }
 }

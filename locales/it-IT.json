@@ -1,5 +1,6 @@
 {
   "ui": {
+    "assessment.description_unavailable": "La descrizione Microsoft di questa impostazione non è stata fornita con questo insieme di criteri. Verifica l'impostazione in Intune; l'identificatore tecnico è disponibile nei dettagli.",
     "progress.reading_zip": "Lettura del file ZIP…",
     "progress.preparing_zip": "Preparazione del file ZIP per l’importazione…",
     "progress.reading_files": "Lettura dei file dei criteri",
@@ -1197,6 +1198,8 @@
     "report.overview.operator_lte": "al massimo {value}",
     "report.overview.operator_in": "uno tra {value}",
     "report.overview.operator_set_equals": "esattamente {value}",
-    "report.overview.operator_contains_all": "che includa almeno {value}"
+    "report.overview.operator_contains_all": "che includa almeno {value}",
+    "assessment.setting_name_unavailable": "Impostazione senza nome leggibile nella fonte",
+    "assessment.description_unavailable": "La descrizione Microsoft di questa impostazione non è stata fornita con questo insieme di criteri. Verifica l'impostazione in Intune; l'identificatore tecnico è disponibile nei dettagli."
   }
 }
