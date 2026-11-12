@@ -1,5 +1,6 @@
 {
   "ui": {
+    "assessment.description_unavailable": "Die Microsoft-Beschreibung dieser Einstellung wurde mit diesem Richtliniensatz nicht mitgeliefert. Prüfen Sie die Einstellung in Intune; die technische Kennung steht in den Details.",
     "progress.reading_zip": "ZIP-Datei wird gelesen…",
     "progress.preparing_zip": "ZIP-Datei wird für den Import vorbereitet…",
     "progress.reading_files": "Richtliniendateien werden gelesen",
@@ -1197,6 +1198,8 @@
     "report.overview.operator_lte": "höchstens {value}",
     "report.overview.operator_in": "eines von {value}",
     "report.overview.operator_set_equals": "genau {value}",
-    "report.overview.operator_contains_all": "mindestens einschließlich {value}"
+    "report.overview.operator_contains_all": "mindestens einschließlich {value}",
+    "assessment.setting_name_unavailable": "Einstellung ohne lesbaren Quellnamen",
+    "assessment.description_unavailable": "Die Microsoft-Beschreibung dieser Einstellung wurde mit diesem Richtliniensatz nicht mitgeliefert. Prüfen Sie die Einstellung in Intune; die technische Kennung steht in den Details."
   }
 }

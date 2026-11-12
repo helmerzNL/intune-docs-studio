@@ -165,6 +165,18 @@ function Set-IdsAssessmentEvidencePresentation {
     }
     $Record | Add-Member NoteProperty displayName ([string]$name) -Force
     $Record | Add-Member NoteProperty displayValue ([string]$display) -Force
+    $description = $null
+    if ($Definitions -and $Record.settingId -and $Definitions.ContainsKey($Record.settingId)) {
+        $definition = $Definitions[$Record.settingId]
+        foreach ($field in @('description', 'helpText', 'explainText')) {
+            $text = Get-IdsReportMember $definition $field
+            if ($text -is [string] -and -not [string]::IsNullOrWhiteSpace($text)) {
+                $description = $text
+                break
+            }
+        }
+    }
+    $Record | Add-Member NoteProperty displayDescription ([string]$description) -Force
 }
 
 function Add-IdsAssessmentEvidencePresentation {
@@ -187,6 +199,26 @@ function Add-IdsAssessmentEvidencePresentation {
     foreach ($control in $Evaluation.controls) {
         $control | Add-Member NoteProperty displayReason (Get-IdsAssessmentDisplayReason $control.status $control.reason) -Force
         foreach ($mapping in $control.expected) { Set-IdsAssessmentEvidencePresentation $mapping $allDefinitions -Expected }
+        $technicalTitle = @($control.expected | Where-Object {
+            ($_.settingId -and $control.title -ceq $_.settingId) -or
+            ($_.property -and $control.title -ceq $_.property)
+        }).Count -gt 0 -or $control.title -cmatch '^(device_vendor_|user_vendor_|vendor_msft_)'
+        $title = $control.title
+        if ($technicalTitle) {
+            $names = @(foreach ($mapping in $control.expected) {
+                if ($mapping.family -cin @('deviceConfiguration', 'compliance')) { $mapping.displayName }
+                elseif ($mapping.settingId -and $allDefinitions.ContainsKey($mapping.settingId)) {
+                    $definition = $allDefinitions[$mapping.settingId]
+                    $label = Get-IdsReportMember $definition 'displayName'
+                    if (-not [string]::IsNullOrWhiteSpace($label)) { $label }
+                }
+            }) | Select-Object -Unique
+            $title = if ($names) { $names -join '; ' } else { Get-IdsText 'assessment.setting_name_unavailable' }
+        }
+        $control | Add-Member NoteProperty displayTitle ([string]$title) -Force
+        $descriptions = @($control.expected | ForEach-Object displayDescription |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+        $control | Add-Member NoteProperty displayDescription ($descriptions -join "`n`n") -Force
         foreach ($observation in $control.observed) {
             Set-IdsAssessmentEvidencePresentation $observation $byPolicy[$observation.policyKey]
         }
@@ -233,18 +265,19 @@ function Copy-IdsReportRecord {
         } }
         Control { [ordered]@{
             packId = 'text'; packVersion = 'text'; platform = 'text'; profile = 'text'
-            controlId = 'text'; title = 'text'; status = 'status'; reason = 'text'; displayReason = 'text'
+            controlId = 'text'; title = 'text'; displayTitle = 'text'; displayDescription = 'text'
+            status = 'status'; reason = 'text'; displayReason = 'text'
             expected = 'Mapping[]'; observed = 'Observation[]'; policyResults = 'PolicyResult[]'; references = 'Reference[]'
         } }
         Mapping { [ordered]@{
             family = 'text'; policyTypes = 'text[]'; settingId = 'text'; property = 'text'; instancePath = 'text'
             valueType = 'text'; operator = 'text'; caseSensitive = 'boolean'
-            displayName = 'text'; displayValue = 'text'
+            displayName = 'text'; displayValue = 'text'; displayDescription = 'text'
         } }
         Observation { [ordered]@{
             policyKey = 'text'; family = 'text'; settingId = 'text'; property = 'text'; instancePath = 'text'
             valueType = 'text'; configured = 'boolean'; secret = 'boolean'; supported = 'boolean'
-            displayName = 'text'; displayValue = 'text'
+            displayName = 'text'; displayValue = 'text'; displayDescription = 'text'
         } }
         PolicyResult { [ordered]@{
             policyKey = 'text'; status = 'status'; reason = 'text'; displayReason = 'text'; expected = 'Mapping[]'; observed = 'Observation[]'
@@ -561,7 +594,8 @@ function Add-IdsAssessmentOverviewMarkdown {
         $Lines.Add((Get-IdsText -Key 'report.overview.deviations_header'))
         $Lines.Add('| --- | --- | --- | --- | --- |')
         foreach ($control in $deviations) {
-            $title = if ($control.title) { $control.title } else { $control.controlId }
+            $title = if ($control.displayTitle) { $control.displayTitle }
+                elseif ($control.title) { $control.title } else { $control.controlId }
             $expected = @($control.expected | ForEach-Object { Format-IdsAssessmentPlainExpectation $_ }) -join '; '
             if (-not $expected) { $expected = Get-IdsText -Key 'text.not_available' }
             $Lines.Add('| ' + (@(
@@ -621,7 +655,11 @@ function ConvertTo-IdsProjectedAssessmentMarkdown {
             $lines.Add('')
             $lines.Add("### $(ConvertTo-IdsReportText $record.($section.heading))")
             if ($section.field -ceq 'controls') {
-                $lines.Add("**$(ConvertTo-IdsReportText $record.title)**")
+                $title = if ($record.displayTitle) { $record.displayTitle } else { $record.title }
+                $lines.Add("**$(ConvertTo-IdsReportText $title)**")
+                $description = if ($record.displayDescription) { $record.displayDescription }
+                    else { Get-IdsText 'assessment.description_unavailable' }
+                $lines.Add((ConvertTo-IdsReportText $description))
                 $statusKeys = @{
                     aligned = 'text.aligned'; misaligned = 'text.misaligned'; missing = 'text.missing'
                     potentialConflict = 'text.potential_conflict'; notApplicable = 'text.not_applicable'; notAssessed = 'text.not_assessed'

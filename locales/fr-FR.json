@@ -1,5 +1,6 @@
 {
   "ui": {
+    "assessment.description_unavailable": "La description Microsoft de ce paramètre n'a pas été fournie avec cet ensemble de stratégies. Vérifiez le paramètre dans Intune ; l'identifiant technique figure dans les détails.",
     "progress.reading_zip": "Lecture du fichier ZIP…",
     "progress.preparing_zip": "Préparation du fichier ZIP pour l’importation…",
     "progress.reading_files": "Lecture des fichiers de stratégies",
@@ -1197,6 +1198,8 @@
     "report.overview.operator_lte": "au plus {value}",
     "report.overview.operator_in": "l'un de {value}",
     "report.overview.operator_set_equals": "exactement {value}",
-    "report.overview.operator_contains_all": "comprenant au moins {value}"
+    "report.overview.operator_contains_all": "comprenant au moins {value}",
+    "assessment.setting_name_unavailable": "Paramètre sans nom lisible dans la source",
+    "assessment.description_unavailable": "La description Microsoft de ce paramètre n'a pas été fournie avec cet ensemble de stratégies. Vérifiez le paramètre dans Intune ; l'identifiant technique figure dans les détails."
   }
 }

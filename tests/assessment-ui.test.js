@@ -308,6 +308,36 @@ test('overview scorecards and the plain comparison table explain results for non
   assert.equal(element('assessmentComparisonEmpty').classList.contains('hidden'), false);
 });
 
+test('comparison presents source descriptions and keeps raw setting identifiers in technical details', async () => {
+  const d = await assessmentDashboard();
+  const id = 'device_vendor_msft_policy_config_synthetic_firewall';
+  const result = {
+    controls: [{
+      controlId: id, title: id, displayTitle: 'Synthetic <firewall>',
+      displayDescription: 'Synthetic explanation: blocks <unwanted> connections.',
+      status: 'notAssessed', reason: 'Incomplete settings read.',
+      expected: [{ settingId: id, displayName: 'Synthetic <firewall>', expected: true, operator: 'eq' }],
+      observed: [], policyResults: []
+    }]
+  };
+  d.run(`renderAssessmentResult(${JSON.stringify(result)})`);
+  const html = d.element('assessmentComparison').innerHTML;
+  assert.match(html, /<strong>Synthetic &lt;firewall&gt;<\/strong>/);
+  assert.match(html, /Synthetic explanation: blocks &lt;unwanted&gt; connections\./);
+  assert.doesNotMatch(html, new RegExp(`<strong>${id}</strong>|class="control-id"[^>]*>${id}`));
+  assert.match(html, new RegExp(`<details>.*?<summary>.*?${id}`, 's'));
+  assert.match(d.element('assessmentResults').innerHTML, /Synthetic &lt;firewall&gt;/);
+  assert.match(d.element('assessmentResults').innerHTML, /blocks &lt;unwanted&gt;/);
+  assert.equal(d.run('assessmentResult.controls[0].title'), id);
+  assert.equal(d.run('assessmentResult.controls[0].status'), 'notAssessed');
+
+  delete result.controls[0].displayDescription;
+  d.run(`renderAssessmentResult(${JSON.stringify(result)})`);
+  assert.match(d.element('assessmentComparison').innerHTML, /Microsoft setting description was not supplied/);
+  await d.run("window.IdsI18n.setLocale('nl-NL')");
+  assert.match(d.element('assessmentComparison').innerHTML, /Microsoft-omschrijving.*niet meegeleverd/);
+});
+
 const syntheticPacks = () => ['windows11', 'macos', 'iosIpados', 'androidEnterprise'].map((platform, i) => ({
   schemaVersion: 1, id: `synthetic-${platform.toLowerCase()}`, version: '1.0.0', sha256: String(i).repeat(64),
   origin: i === 3 ? 'imported' : 'bundled',

@@ -82,6 +82,73 @@ BeforeAll {
 }
 
 Describe 'Standalone assessment reports' {
+    It 'uses source setting names and descriptions for technical control titles without changing incomplete verdicts' {
+        $id = 'device_vendor_msft_policy_config_synthetic_enablefirewall'
+        $setting = [pscustomobject]@{
+            settingDefinitions = @([pscustomobject]@{
+                id = $id; displayName = 'Synthetic firewall'
+                description = 'Synthetic explanation: blocks unwanted incoming connections.'
+            })
+            settingInstance = New-IdsTestSettingInstance -Id $id -Value @{ value = $true }
+        }
+        $policy = New-IdsTestAssessmentPolicy -Settings @($setting)
+        $policy.platform = 'windows11'
+        $policy.settingsComplete = $false
+        $collection = New-IdsTestAssessmentCollection @($policy)
+        $snapshot = ConvertTo-IdsAssessmentSnapshot $collection
+        $result = New-ReportResult
+        $control = $result.packs[0].controls[0]
+        $control.title = $id
+        $control.mappings[0].settingId = $id
+        $control.mappings[0].policyTypes = @('deviceManagementConfigurationPolicy')
+        $evaluation = Compare-IdsAssessment $result.packs $snapshot $result.context
+        $canonical = $evaluation | ConvertTo-Json -Depth 64
+        Add-IdsAssessmentEvidencePresentation $collection $evaluation
+        $actual = $evaluation.controls[0]
+        $actual.displayTitle | Should -Be 'Synthetic firewall'
+        $actual.displayDescription | Should -Be 'Synthetic explanation: blocks unwanted incoming connections.'
+        $actual.title | Should -Be $id
+        $actual.status | Should -Be 'notAssessed'
+        $actual.reason | Should -Be (($canonical | ConvertFrom-Json).controls[0].reason)
+        $actual.expected[0].displayDescription | Should -Be $actual.displayDescription
+        $result.controls = $evaluation.controls
+        $projected = ConvertTo-IdsReportProjection $result
+        $projected.controls[0].displayDescription | Should -Be $actual.displayDescription
+        $projected.controls[0].expected[0].displayDescription | Should -Be $actual.displayDescription
+        $markdown = [Net.WebUtility]::HtmlDecode((ConvertTo-IdsAssessmentMarkdown $result))
+        ($markdown -split '## Technical details')[0] | Should -Match '\| Synthetic firewall \|'
+        $markdown | Should -Match 'Synthetic explanation: blocks unwanted incoming connections\.'
+
+        $control.title = 'An authored baseline recommendation'
+        $evaluation = Compare-IdsAssessment $result.packs $snapshot $result.context
+        Add-IdsAssessmentEvidencePresentation $collection $evaluation
+        $evaluation.controls[0].displayTitle | Should -Be 'An authored baseline recommendation'
+    }
+
+    It 'does not invent Microsoft descriptions when no definition was supplied' {
+        $result = New-ReportResult
+        $control = $result.controls[0]
+        $control.title = $control.expected[0].settingId
+        $collection = New-IdsTestAssessmentCollection
+        Add-IdsAssessmentEvidencePresentation $collection $result
+        $control.displayTitle | Should -Be (Get-IdsText 'assessment.setting_name_unavailable')
+        $control.displayDescription | Should -BeNullOrEmpty
+        $control.expected[0].displayDescription | Should -BeNullOrEmpty
+        $control.expected[0].settingId | Should -Be 'synthetic.required'
+    }
+
+    It 'uses Graph help text and ADMX explanation text when a description is absent' {
+        foreach ($field in @('helpText', 'explainText')) {
+            $definition = @{ id = 'synthetic.setting'; displayName = 'Synthetic setting'; description = ' ' }
+            $definition[$field] = 'Synthetic explanation supplied by the setting definition.'
+            $mapping = [pscustomobject]@{
+                family = 'settingsCatalog'; settingId = 'synthetic.setting'; expected = $true
+            }
+            Set-IdsAssessmentEvidencePresentation $mapping @{ 'synthetic.setting' = $definition } -Expected
+            $mapping.displayDescription | Should -Be 'Synthetic explanation supplied by the setting definition.'
+        }
+    }
+
     It 'escapes every Markdown and HTML delimiter exactly once and preserves other Unicode text' {
         $text = -join (@(0..127 | ForEach-Object { [char]$_ }) + @([char]0x00e9, [char]0x6f22))
         $expected = [Text.StringBuilder]::new()
